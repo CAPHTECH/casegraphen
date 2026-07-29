@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.workflow.execution_plan.v1",
+  "title": "CaseGraphen ExecutionPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "plan_id",
+    "case_space_id",
+    "base_revision_id",
+    "steps",
+    "provenance",
+    "review_status",
+    "metadata"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.workflow.execution_plan.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "plan_id": {
+      "$ref": "#/$defs/id"
+    },
+    "case_space_id": {
+      "$ref": "#/$defs/id"
+    },
+    "base_revision_id": {
+      "$ref": "#/$defs/id"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/execution_step"
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "review_status": {
+      "$ref": "#/$defs/review_status"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "^(document|log|api|human|ai|code|external|custom:.+)$"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "source_local_id": {
+          "type": "string"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "confidence",
+        "review_status"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/source_ref"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "review_status": {
+          "$ref": "#/$defs/review_status"
+        },
+        "extraction_method": {
+          "type": "string"
+        },
+        "extractor_id": {
+          "type": "string"
+        },
+        "reviewer_id": {
+          "type": "string"
+        },
+        "reviewed_at": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "review_status": {
+      "enum": [
+        "unreviewed",
+        "reviewed",
+        "rejected",
+        "accepted"
+      ]
+    },
+    "case_morphism_type": {
+      "type": "string",
+      "pattern": "^(create|update|retire|relate|unrelate|review|evidence_attach|completion_accept|completion_reject|projection|migration|close|custom:.+)$"
+    },
+    "case_cell_type": {
+      "type": "string",
+      "pattern": "^(case|scenario|goal|work|decision|event|evidence|proof|review|obstruction|completion|projection|revision|morphism|external_ref|custom:.+)$"
+    },
+    "case_cell_lifecycle": {
+      "enum": [
+        "proposed",
+        "active",
+        "waiting",
+        "resolved",
+        "retired",
+        "accepted",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "allowed_transition_class": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "morphism_type",
+        "target_cell_types",
+        "to_lifecycles"
+      ],
+      "properties": {
+        "morphism_type": {
+          "$ref": "#/$defs/case_morphism_type"
+        },
+        "target_cell_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_cell_type"
+          }
+        },
+        "to_lifecycles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_cell_lifecycle"
+          }
+        }
+      }
+    },
+    "execution_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_id",
+        "work_cell_id",
+        "worker_binding_id",
+        "success_evidence_requirement_ids",
+        "allowed_transition_classes"
+      ],
+      "properties": {
+        "step_id": {
+          "$ref": "#/$defs/id"
+        },
+        "work_cell_id": {
+          "$ref": "#/$defs/id"
+        },
+        "worker_binding_id": {
+          "$ref": "#/$defs/id"
+        },
+        "input_projection_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "success_evidence_requirement_ids": {
+          "$ref": "#/$defs/id_array"
+        },
+        "allowed_transition_classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/allowed_transition_class"
+          }
+        }
+      }
+    }
+  }
+}

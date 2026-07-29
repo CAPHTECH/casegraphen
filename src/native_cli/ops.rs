@@ -16,7 +16,10 @@ use crate::{
         NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
-    native_review::{check_native_close, NativeCloseCheckRequest, NativeOperationGate},
+    native_review::{
+        check_native_close, declared_source_boundary_id, NativeCloseCheckRequest,
+        NativeOperationGate,
+    },
     native_store::NativeCaseStore,
     topology::TopologyReportOptions,
 };
@@ -27,12 +30,14 @@ use std::path::Path;
 mod io;
 mod lift;
 mod mutations;
+mod plan;
 use io::{
     case_space_checksum, known_ids, proposal_path, proposal_value, provenance, read_morphism,
     read_proposal, timestamp, write_json,
 };
 pub(super) use lift::{case_import, case_new, lift_structured_source};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
+pub(super) use plan::{plan_check, plan_propose, plan_review};
 
 pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) action: ReviewAction,
@@ -41,6 +46,15 @@ pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) reason: &'a str,
     pub(super) base_revision_id: &'a Id,
     pub(super) evidence_ids: &'a [Id],
+}
+
+pub(super) struct NativePlanReviewOptions<'a> {
+    pub(super) plan_id: &'a Id,
+    pub(super) action: ReviewAction,
+    pub(super) reviewer_id: &'a Id,
+    pub(super) reason: &'a str,
+    pub(super) base_revision_id: &'a Id,
+    pub(super) gate_options: &'a NativePlanGateOptions,
 }
 
 pub(super) fn case_reason(
@@ -173,6 +187,15 @@ pub(super) fn case_close_check(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NativeCloseGateOptions {
     pub(super) close_policy_id: Option<Id>,
+    pub(super) actor_id: Option<Id>,
+    pub(super) capability_ids: Vec<Id>,
+    pub(super) operation_scope_id: Option<Id>,
+    pub(super) audience: Option<ProjectionAudience>,
+    pub(super) source_boundary_id: Option<Id>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct NativePlanGateOptions {
     pub(super) actor_id: Option<Id>,
     pub(super) capability_ids: Vec<Id>,
     pub(super) operation_scope_id: Option<Id>,
@@ -550,24 +573,6 @@ fn close_operation_gate(
             source_boundary_id,
         },
     })
-}
-
-fn declared_source_boundary_id(case_space: &CaseSpace) -> Option<Id> {
-    case_space
-        .metadata
-        .get("source_boundary")
-        .and_then(Value::as_object)
-        .and_then(|boundary| boundary.get("id"))
-        .and_then(Value::as_str)
-        .and_then(|value| Id::new(value.to_owned()).ok())
-        .or_else(|| {
-            case_space
-                .morphism_log
-                .first()
-                .and_then(|entry| entry.morphism.metadata.get("source_boundary_id"))
-                .and_then(Value::as_str)
-                .and_then(|value| Id::new(value.to_owned()).ok())
-        })
 }
 
 fn retarget_latest_revision(

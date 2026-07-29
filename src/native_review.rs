@@ -21,6 +21,7 @@ pub enum NativeReviewTargetKind {
     Completion,
     Evidence,
     Morphism,
+    Plan,
     ResidualRisk,
     Waiver,
 }
@@ -60,6 +61,20 @@ pub struct NativeOperationGate {
     pub capability_ids: Vec<Id>,
     pub source_boundary_id: Id,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeOperationGateError {
+    message: String,
+    witness_ids: Vec<Id>,
+}
+
+impl std::fmt::Display for NativeOperationGateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NativeOperationGateError {}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -210,6 +225,95 @@ pub fn check_native_close(
         invariant_results,
         blocker_ids,
     })
+}
+
+pub fn check_operation_gate(
+    case_space: &CaseSpace,
+    gate: &NativeOperationGate,
+    expected_operation: &str,
+) -> Result<(), NativeOperationGateError> {
+    let violations = operation_gate_violations(case_space, gate, expected_operation);
+    if violations.is_empty() {
+        return Ok(());
+    }
+    let witness_ids = violations
+        .iter()
+        .flat_map(|violation| operation_gate_violation_witnesses(case_space, gate, *violation))
+        .collect();
+    let labels = violations
+        .iter()
+        .map(|violation| violation.label())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(NativeOperationGateError {
+        message: format!("operation gate for {expected_operation:?} violates: {labels}"),
+        witness_ids,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationGateViolation {
+    Operation,
+    Scope,
+    Audience,
+    Capabilities,
+    SourceBoundary,
+}
+
+impl OperationGateViolation {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Operation => "operation",
+            Self::Scope => "operation_scope_id",
+            Self::Audience => "audience",
+            Self::Capabilities => "capability_ids",
+            Self::SourceBoundary => "source_boundary_id",
+        }
+    }
+}
+
+fn operation_gate_violations(
+    case_space: &CaseSpace,
+    gate: &NativeOperationGate,
+    expected_operation: &str,
+) -> Vec<OperationGateViolation> {
+    let mut violations = Vec::new();
+    if gate.operation != expected_operation {
+        violations.push(OperationGateViolation::Operation);
+    }
+    if gate.operation_scope_id != case_space.case_space_id {
+        violations.push(OperationGateViolation::Scope);
+    }
+    if !matches!(
+        gate.audience,
+        ProjectionAudience::Audit | ProjectionAudience::System
+    ) {
+        violations.push(OperationGateViolation::Audience);
+    }
+    if gate.capability_ids.is_empty() {
+        violations.push(OperationGateViolation::Capabilities);
+    }
+    if declared_source_boundary_id(case_space).as_ref() != Some(&gate.source_boundary_id) {
+        violations.push(OperationGateViolation::SourceBoundary);
+    }
+    violations
+}
+
+fn operation_gate_violation_witnesses(
+    case_space: &CaseSpace,
+    gate: &NativeOperationGate,
+    violation: OperationGateViolation,
+) -> Vec<Id> {
+    match violation {
+        OperationGateViolation::Operation
+        | OperationGateViolation::Audience
+        | OperationGateViolation::Capabilities => vec![gate.actor_id.clone()],
+        OperationGateViolation::Scope => vec![
+            gate.operation_scope_id.clone(),
+            case_space.case_space_id.clone(),
+        ],
+        OperationGateViolation::SourceBoundary => vec![gate.source_boundary_id.clone()],
+    }
 }
 
 fn close_invariants(
@@ -394,24 +498,8 @@ fn policy_capability_gate_invariant(
             "Close checks must include an operation gate with actor, capability, scope, audience, and source boundary.",
         );
     };
-    if gate.operation != "close-check" {
-        witness_ids.push(gate.actor_id.clone());
-    }
-    if gate.operation_scope_id != case_space.case_space_id {
-        witness_ids.push(gate.operation_scope_id.clone());
-        witness_ids.push(case_space.case_space_id.clone());
-    }
-    if !matches!(
-        gate.audience,
-        ProjectionAudience::Audit | ProjectionAudience::System
-    ) {
-        witness_ids.push(gate.actor_id.clone());
-    }
-    if gate.capability_ids.is_empty() {
-        witness_ids.push(gate.actor_id.clone());
-    }
-    if declared_source_boundary_id(case_space).as_ref() != Some(&gate.source_boundary_id) {
-        witness_ids.push(gate.source_boundary_id.clone());
+    if let Err(error) = check_operation_gate(case_space, gate, "close-check") {
+        witness_ids.extend(error.witness_ids);
     }
     close_invariant(
         "close:native-policy-capability-gate",
@@ -420,7 +508,7 @@ fn policy_capability_gate_invariant(
     )
 }
 
-fn declared_source_boundary_id(case_space: &CaseSpace) -> Option<Id> {
+pub(crate) fn declared_source_boundary_id(case_space: &CaseSpace) -> Option<Id> {
     source_boundary_id_from_value(case_space.metadata.get("source_boundary")).or_else(|| {
         case_space
             .morphism_log
@@ -506,6 +594,7 @@ fn require_review_request(
                 )))
             }
         }
+        NativeReviewTargetKind::Plan => Ok(()),
         NativeReviewTargetKind::ResidualRisk => {
             require_obstruction_target(case_space, &request.target_id)
         }

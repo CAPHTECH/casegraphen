@@ -266,6 +266,7 @@ pub(super) fn target_kind_stem(target_kind: NativeReviewTargetKind) -> &'static 
         NativeReviewTargetKind::Completion => "completion",
         NativeReviewTargetKind::Evidence => "evidence",
         NativeReviewTargetKind::Morphism => "morphism",
+        NativeReviewTargetKind::Plan => "plan",
         NativeReviewTargetKind::ResidualRisk => "residual-risk",
         NativeReviewTargetKind::Waiver => "waiver",
     }

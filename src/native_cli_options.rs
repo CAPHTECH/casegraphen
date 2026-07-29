@@ -22,6 +22,7 @@ pub(super) struct NativeOptions {
     pub(super) space_id: Option<Id>,
     pub(super) revision_id: Option<Id>,
     pub(super) base_revision_id: Option<Id>,
+    pub(super) plan_id: Option<Id>,
     pub(super) morphism_id: Option<Id>,
     pub(super) target_id: Option<Id>,
     pub(super) cell_id: Option<Id>,
@@ -88,6 +89,7 @@ impl NativeOptions {
             Some("--base-revision") | Some("--base-revision-id") => {
                 self.base_revision_id = Some(require_id(args, "--base-revision-id")?)
             }
+            Some("--plan-id") => self.plan_id = Some(require_id(args, "--plan-id")?),
             Some("--morphism-id") => self.morphism_id = Some(require_id(args, "--morphism-id")?),
             Some("--target-id") => self.target_id = Some(require_id(args, "--target-id")?),
             Some("--cell-id") => self.cell_id = Some(require_id(args, "--cell-id")?),
@@ -167,6 +169,7 @@ impl NativeOptions {
             "--right-case-space-id" => self.right_case_space_id.clone(),
             "--space-id" => self.space_id.clone(),
             "--revision-id" => self.revision_id.clone(),
+            "--plan-id" => self.plan_id.clone(),
             "--reviewer-id" => self.reviewer_id.clone(),
             "--morphism-id" => self.morphism_id.clone(),
             "--target-id" => self.target_id.clone(),

@@ -1958,6 +1958,309 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
 }
 
 #[test]
+fn native_execution_plan_propose_check_and_accept_with_gate() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:plan-accept-base");
+    let input_path = directory.join("execution-plan.accept.json");
+    write_execution_plan(
+        &input_path,
+        "plan:native-accept",
+        "revision:plan-accept-base",
+        "work:review-native-contract",
+    );
+
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        input_path.to_str().expect("plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let propose_json = stdout_json(&propose);
+    let content_hash = propose_json["result"]["plan_content_hash"]
+        .as_str()
+        .expect("plan content hash")
+        .to_owned();
+    assert_eq!(content_hash.len(), 64);
+    assert!(content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let stored_path = directory
+        .join("plans")
+        .join("plan~3anative-accept.execution.plan.json");
+    assert_eq!(
+        json_file(stored_path.clone())["review_status"],
+        json!("unreviewed")
+    );
+
+    let check = run_cli(&[
+        "plan",
+        "check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:native-accept",
+        "--format",
+        "json",
+    ]);
+    assert!(check.status.success(), "stderr: {}", stderr(&check));
+    let check_json = stdout_json(&check);
+    assert_eq!(
+        check_json["result"]["frontier_cell_ids"],
+        json!([
+            "goal:native-case-contract",
+            "case:native-contract-example",
+            "work:review-native-contract"
+        ])
+    );
+    assert_eq!(
+        check_json["result"]["step_readiness"][0]["on_readiness_frontier"],
+        json!(true)
+    );
+    assert_eq!(
+        check_json["result"]["plan_content_hash"],
+        json!(content_hash)
+    );
+
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:native-accept",
+        "--reviewer-id",
+        "reviewer:plan-accept",
+        "--reason",
+        "Accept the bounded native execution plan",
+        "--base-revision-id",
+        "revision:plan-accept-base",
+        "--actor-id",
+        "actor:plan-accept",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accept_json = stdout_json(&accept);
+    let entry = &accept_json["result"]["entry"];
+    assert_eq!(
+        accept_json["metadata"]["command"],
+        json!("casegraphen plan accept")
+    );
+    assert_eq!(entry["actor_id"], json!("actor:plan-accept"));
+    assert_eq!(
+        entry["morphism"]["metadata"],
+        json!({
+            "native_review_schema_version": 1,
+            "review_id": entry["morphism"]["metadata"]["review_id"],
+            "target_kind": "plan",
+            "target_id": "plan:native-accept",
+            "action": "accept",
+            "outcome_review_status": "accepted",
+            "reviewer_id": "reviewer:plan-accept",
+            "reviewed_at": entry["morphism"]["metadata"]["reviewed_at"],
+            "reason": "Accept the bounded native execution plan",
+            "plan_content_hash": content_hash,
+        })
+    );
+    assert_eq!(
+        accept_json["result"]["operation_gate"]["operation"],
+        json!("plan-review")
+    );
+    assert_eq!(json_file(stored_path)["review_status"], json!("accepted"));
+
+    let history = run_native_case_store_command(&directory, "history");
+    let history_json = stdout_json(&history);
+    assert_eq!(
+        history_json["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        2
+    );
+    assert_eq!(
+        history_json["result"]["entries"][1]["morphism"]["metadata"]["plan_content_hash"],
+        json!(content_hash)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:plan-failure-base");
+    let input_path = directory.join("execution-plan.no-gate.json");
+    write_execution_plan(
+        &input_path,
+        "plan:no-gate",
+        "revision:plan-failure-base",
+        "work:review-native-contract",
+    );
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        input_path.to_str().expect("plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+
+    let no_gate = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:no-gate",
+        "--reviewer-id",
+        "reviewer:no-gate",
+        "--reason",
+        "This must not be accepted without an operation gate",
+        "--base-revision-id",
+        "revision:plan-failure-base",
+        "--format",
+        "json",
+    ]);
+    assert!(!no_gate.status.success());
+    assert!(stderr(&no_gate).contains("--actor-id"));
+
+    let unknown_path = directory.join("execution-plan.unknown-work.json");
+    write_execution_plan(
+        &unknown_path,
+        "plan:unknown-work",
+        "revision:plan-failure-base",
+        "work:not-present",
+    );
+    let unknown = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        unknown_path.to_str().expect("plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!unknown.status.success());
+    assert!(stderr(&unknown).contains("work:not-present"));
+    assert!(stderr(&unknown).contains("missing work_cell_id"));
+
+    let history = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_execution_plan_reject_records_review_and_rewrites_plan() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:plan-reject-base");
+    let input_path = directory.join("execution-plan.reject.json");
+    write_execution_plan(
+        &input_path,
+        "plan:native-reject",
+        "revision:plan-reject-base",
+        "work:review-native-contract",
+    );
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        input_path.to_str().expect("plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let content_hash = stdout_json(&propose)["result"]["plan_content_hash"].clone();
+
+    let reject = run_cli(&[
+        "plan",
+        "reject",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:native-reject",
+        "--reviewer-id",
+        "reviewer:plan-reject",
+        "--reason",
+        "Reject the execution plan",
+        "--base-revision-id",
+        "revision:plan-reject-base",
+        "--format",
+        "json",
+    ]);
+    assert!(reject.status.success(), "stderr: {}", stderr(&reject));
+    let reject_json = stdout_json(&reject);
+    assert_eq!(
+        reject_json["result"]["entry"]["actor_id"],
+        json!("reviewer:plan-reject")
+    );
+    assert_eq!(
+        reject_json["result"]["entry"]["morphism"]["metadata"]["target_kind"],
+        json!("plan")
+    );
+    assert_eq!(
+        reject_json["result"]["entry"]["morphism"]["metadata"]["action"],
+        json!("reject")
+    );
+    assert_eq!(
+        reject_json["result"]["entry"]["morphism"]["metadata"]["plan_content_hash"],
+        content_hash
+    );
+    assert_eq!(
+        json_file(
+            directory
+                .join("plans")
+                .join("plan~3anative-reject.execution.plan.json")
+        )["review_status"],
+        json!("rejected")
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_typed_morphism_materializes_payload_end_to_end() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -3167,6 +3470,48 @@ fn write_native_metadata_morphism_with_metadata(
     .expect("write native morphism");
 }
 
+fn write_execution_plan(path: &Path, plan_id: &str, base_revision_id: &str, work_cell_id: &str) {
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": base_revision_id,
+        "steps": [
+            {
+                "step_id": format!("step:{plan_id}"),
+                "work_cell_id": work_cell_id,
+                "worker_binding_id": "worker_binding:native-integration",
+                "success_evidence_requirement_ids": [
+                    "evidence:native-schema-json-valid"
+                ],
+                "allowed_transition_classes": [
+                    {
+                        "morphism_type": "update",
+                        "target_cell_types": ["work"],
+                        "to_lifecycles": ["resolved"]
+                    }
+                ]
+            }
+        ],
+        "provenance": {
+            "source": {
+                "kind": "human",
+                "title": "Native execution plan integration test"
+            },
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&plan).expect("serialize execution plan"),
+    )
+    .expect("write execution plan");
+}
+
 fn invalid_core_extensions(target_id: &str) -> Value {
     json!({
         "valuations": [
@@ -3271,6 +3616,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/workflow.report.example.json",
         "schemas/casegraphen/native.case.space.example.json",
         "schemas/casegraphen/native.case.report.example.json",
+        "schemas/casegraphen/execution.plan.example.json",
         "schemas/casegraphen/report-schema-aliases.json",
         "schemas/casegraphen/case.graph.schema.json",
         "schemas/casegraphen/coverage.policy.schema.json",
@@ -3281,6 +3627,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/workflow.operation.report.schema.json",
         "schemas/casegraphen/native.case.space.schema.json",
         "schemas/casegraphen/native.case.report.schema.json",
+        "schemas/casegraphen/execution.plan.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
         "examples/casegraphen/reference/workflow.graph.json",
         "examples/casegraphen/reference/reports/workflow.reason.report.json",
@@ -3299,6 +3646,10 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/native.case.report.schema.json",
             "schemas/casegraphen/native.case.report.example.json",
+        ),
+        (
+            "schemas/casegraphen/execution.plan.schema.json",
+            "schemas/casegraphen/execution.plan.example.json",
         ),
     ]
     .iter()

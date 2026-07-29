@@ -1,5 +1,5 @@
 use super::{
-    ops::NativeCloseGateOptions,
+    ops::{NativeCloseGateOptions, NativePlanGateOptions},
     options::{required_segment, NativeOptions},
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
@@ -34,6 +34,7 @@ impl NativeCliCommand {
             "morphism" => {
                 Self::parse_morphism(required_segment(&mut args, "morphism operation")?, args)
             }
+            "plan" => Self::parse_plan(required_segment(&mut args, "plan operation")?, args),
             "review" => Self::parse_review(required_segment(&mut args, "review operation")?, args),
             "evidence" => {
                 Self::parse_evidence(required_segment(&mut args, "evidence operation")?, args)
@@ -400,6 +401,55 @@ impl NativeCliCommand {
                 output: options.output,
             }),
             _ => Err(NativeCliError::usage("unsupported native morphism command")),
+        }
+    }
+
+    fn parse_plan(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let operation = operation
+            .to_str()
+            .ok_or_else(|| NativeCliError::usage("plan operation must be UTF-8"))?;
+        let options = NativeOptions::parse(args)?;
+        match operation {
+            "propose" => Ok(Self::PlanPropose {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                input: options.require_path("--input")?,
+                output: options.output,
+            }),
+            "check" => Ok(Self::PlanCheck {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                plan_id: options.require_id("--plan-id")?,
+                output: options.output,
+            }),
+            "accept" | "reject" => Ok(Self::PlanReview {
+                action: if operation == "accept" {
+                    ReviewAction::Accept
+                } else {
+                    ReviewAction::Reject
+                },
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                plan_id: options.require_id("--plan-id")?,
+                reviewer_id: options.require_id("--reviewer-id")?,
+                reason: options.require_string("--reason")?,
+                base_revision_id: options
+                    .base_revision_id
+                    .clone()
+                    .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+                gate_options: NativePlanGateOptions {
+                    actor_id: options.actor_id,
+                    capability_ids: options.capability_ids,
+                    operation_scope_id: options.operation_scope_id,
+                    audience: options.audience,
+                    source_boundary_id: options.source_boundary_id,
+                },
+                output: options.output,
+            }),
+            _ => Err(NativeCliError::usage("unsupported native plan command")),
         }
     }
 

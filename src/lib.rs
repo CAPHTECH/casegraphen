@@ -3,6 +3,7 @@
 
 pub mod cli;
 pub mod core_extension_bridge;
+pub mod exec;
 pub mod math_diagnostics;
 pub mod model;
 pub mod native_cli;

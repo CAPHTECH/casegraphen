@@ -192,6 +192,47 @@ fn parses_lift_adapters() {
 
 #[test]
 fn parses_native_mutation_command_families() {
+    let plan = NativeCliCommand::parse(
+        "plan",
+        args(&[
+            "accept",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--plan-id",
+            "plan:demo",
+            "--reviewer-id",
+            "reviewer:demo",
+            "--reason",
+            "Accepted execution plan",
+            "--base-revision-id",
+            "revision:base",
+            "--actor-id",
+            "actor:demo",
+            "--capability-id",
+            "capability:plan-review",
+            "--operation-scope-id",
+            "case_space:demo",
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:demo",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect("plan accept command");
+    assert!(matches!(
+        plan,
+        NativeCliCommand::PlanReview {
+            action: ReviewAction::Accept,
+            gate_options,
+            ..
+        } if gate_options.capability_ids
+            == vec![Id::new("capability:plan-review").expect("capability id")]
+    ));
+
     let review = NativeCliCommand::parse(
         "review",
         args(&[

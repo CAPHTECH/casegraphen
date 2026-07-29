@@ -20,7 +20,8 @@ mod reporting;
 use ops::{
     case_close_check, case_import, case_new, case_reason, case_topology, case_topology_diff,
     cell_transition, evidence_attach, lift_structured_source, morphism_apply, morphism_check,
-    morphism_propose, morphism_reject, projection_apply, review_apply, NativeCloseGateOptions,
+    morphism_propose, morphism_reject, plan_check, plan_propose, plan_review, projection_apply,
+    review_apply, NativeCloseGateOptions, NativePlanGateOptions, NativePlanReviewOptions,
     NativeReviewApplyOptions,
 };
 use reporting::report;
@@ -152,6 +153,29 @@ pub(crate) enum NativeCliCommand {
         revision_id: Id,
         output: Option<PathBuf>,
     },
+    PlanPropose {
+        store: PathBuf,
+        case_space_id: Id,
+        input: PathBuf,
+        output: Option<PathBuf>,
+    },
+    PlanCheck {
+        store: PathBuf,
+        case_space_id: Id,
+        plan_id: Id,
+        output: Option<PathBuf>,
+    },
+    PlanReview {
+        action: ReviewAction,
+        store: PathBuf,
+        case_space_id: Id,
+        plan_id: Id,
+        reviewer_id: Id,
+        reason: String,
+        base_revision_id: Id,
+        gate_options: NativePlanGateOptions,
+        output: Option<PathBuf>,
+    },
     Review {
         action: ReviewAction,
         store: PathBuf,
@@ -216,6 +240,9 @@ impl NativeCliCommand {
             | Self::MorphismCheck { output, .. }
             | Self::MorphismApply { output, .. }
             | Self::MorphismReject { output, .. }
+            | Self::PlanPropose { output, .. }
+            | Self::PlanCheck { output, .. }
+            | Self::PlanReview { output, .. }
             | Self::Review { output, .. }
             | Self::EvidenceAttach { output, .. }
             | Self::CellTransition { output, .. } => output.as_ref(),
@@ -247,6 +274,9 @@ impl NativeCliCommand {
             | Self::MorphismCheck { .. }
             | Self::MorphismApply { .. }
             | Self::MorphismReject { .. }
+            | Self::PlanPropose { .. }
+            | Self::PlanCheck { .. }
+            | Self::PlanReview { .. }
             | Self::Review { .. }
             | Self::EvidenceAttach { .. }
             | Self::CellTransition { .. } => self.run_morphism_value(),
@@ -438,6 +468,40 @@ impl NativeCliCommand {
                 reviewer_id,
                 reason,
                 revision_id,
+            )?,
+            Self::PlanPropose {
+                store,
+                case_space_id,
+                input,
+                ..
+            } => plan_propose(store, case_space_id, input)?,
+            Self::PlanCheck {
+                store,
+                case_space_id,
+                plan_id,
+                ..
+            } => plan_check(store, case_space_id, plan_id)?,
+            Self::PlanReview {
+                action,
+                store,
+                case_space_id,
+                plan_id,
+                reviewer_id,
+                reason,
+                base_revision_id,
+                gate_options,
+                ..
+            } => plan_review(
+                store,
+                case_space_id,
+                NativePlanReviewOptions {
+                    plan_id,
+                    action: *action,
+                    reviewer_id,
+                    reason,
+                    base_revision_id,
+                    gate_options,
+                },
             )?,
             Self::Review {
                 action,

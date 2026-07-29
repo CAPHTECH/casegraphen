@@ -1,6 +1,80 @@
 use super::*;
 
 #[test]
+fn generalized_operation_gate_accepts_a_matching_plan_review_gate() {
+    let space = fixture_space();
+    let gate = NativeOperationGate {
+        actor_id: id("actor:plan-review"),
+        operation: "plan-review".to_owned(),
+        operation_scope_id: space.case_space_id.clone(),
+        audience: ProjectionAudience::System,
+        capability_ids: vec![id("capability:plan-review")],
+        source_boundary_id: id("source_boundary:review-fixture"),
+    };
+
+    check_operation_gate(&space, &gate, "plan-review").expect("matching operation gate");
+}
+
+#[test]
+fn generalized_operation_gate_rejects_each_rule_violation() {
+    let space = fixture_space();
+    let valid = NativeOperationGate {
+        actor_id: id("actor:plan-review"),
+        operation: "plan-review".to_owned(),
+        operation_scope_id: space.case_space_id.clone(),
+        audience: ProjectionAudience::Audit,
+        capability_ids: vec![id("capability:plan-review")],
+        source_boundary_id: id("source_boundary:review-fixture"),
+    };
+    let cases = [
+        (
+            "operation",
+            NativeOperationGate {
+                operation: "close-check".to_owned(),
+                ..valid.clone()
+            },
+        ),
+        (
+            "operation_scope_id",
+            NativeOperationGate {
+                operation_scope_id: id("case_space:other"),
+                ..valid.clone()
+            },
+        ),
+        (
+            "audience",
+            NativeOperationGate {
+                audience: ProjectionAudience::AiAgent,
+                ..valid.clone()
+            },
+        ),
+        (
+            "capability_ids",
+            NativeOperationGate {
+                capability_ids: Vec::new(),
+                ..valid.clone()
+            },
+        ),
+        (
+            "source_boundary_id",
+            NativeOperationGate {
+                source_boundary_id: id("source_boundary:other"),
+                ..valid
+            },
+        ),
+    ];
+
+    for (expected_violation, gate) in cases {
+        let error =
+            check_operation_gate(&space, &gate, "plan-review").expect_err(expected_violation);
+        assert!(
+            error.to_string().contains(expected_violation),
+            "{expected_violation}: {error}"
+        );
+    }
+}
+
+#[test]
 fn close_requires_validation_evidence_to_name_existing_evidence() {
     let space = fixture_space();
     let close = check_native_close(

@@ -1,0 +1,39 @@
+{
+  "schema": "highergraphen.case.workflow.execution_plan.v1",
+  "schema_version": 1,
+  "plan_id": "plan:native-contract-review",
+  "case_space_id": "case_space:native-case-management-contract",
+  "base_revision_id": "revision:native-contract-v1",
+  "steps": [
+    {
+      "step_id": "step:review-native-contract",
+      "work_cell_id": "work:review-native-contract",
+      "worker_binding_id": "worker_binding:native-contract-review",
+      "input_projection_id": null,
+      "success_evidence_requirement_ids": [
+        "evidence:native-schema-json-valid"
+      ],
+      "allowed_transition_classes": [
+        {
+          "morphism_type": "update",
+          "target_cell_types": [
+            "work"
+          ],
+          "to_lifecycles": [
+            "resolved"
+          ]
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "source": {
+      "kind": "human",
+      "title": "Native contract execution plan example"
+    },
+    "confidence": 1.0,
+    "review_status": "unreviewed"
+  },
+  "review_status": "unreviewed",
+  "metadata": {}
+}
