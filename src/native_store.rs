@@ -1,5 +1,5 @@
 use crate::native_model::{
-    CaseSpace, MorphismLogEntry, Revision, NATIVE_CASE_SPACE_SCHEMA,
+    apply_morphism, CaseSpace, MorphismLogEntry, Revision, NATIVE_CASE_SPACE_SCHEMA,
     NATIVE_CASE_SPACE_SCHEMA_VERSION, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
 };
 use higher_graphen_core::Id;
@@ -317,6 +317,7 @@ fn validate_append(
             format!("entry sequence must be {}", existing_entries.len() + 1),
         ));
     }
+    require_previous_entry_hash(path, entry, existing_entries.last())?;
     if entry.source_revision_id.as_ref() != Some(&current.revision.revision_id) {
         return Err(NativeStoreError::ReplayMismatch {
             path: path.to_owned(),
@@ -372,6 +373,7 @@ fn validate_log_entries(
     for (index, entry) in entries.iter().enumerate() {
         require_log_entry_contract(path, entry)?;
         require_entry_morphism_match(path, entry)?;
+        require_previous_entry_hash(path, entry, index.checked_sub(1).map(|i| &entries[i]))?;
         if let Some(expected_id) = expected_case_space_id {
             if &entry.case_space_id != expected_id {
                 return Err(NativeStoreError::ReplayMismatch {
@@ -447,6 +449,7 @@ fn require_importable_materialized_log(
     let entry = &case_space.morphism_log[0];
     require_log_entry_contract(path, entry)?;
     require_entry_morphism_match(path, entry)?;
+    require_previous_entry_hash(path, entry, None)?;
     if entry.sequence != 1 {
         return Err(NativeStoreError::ReplayMismatch {
             path: path.to_owned(),
@@ -522,15 +525,8 @@ fn apply_bounded_morphism(
     entry: &MorphismLogEntry,
 ) -> NativeStoreResult<()> {
     let morphism = &entry.morphism;
-    if !morphism.added_ids.is_empty()
-        || !morphism.updated_ids.is_empty()
-        || !morphism.retired_ids.is_empty()
-    {
-        return Err(invalid_morphism(
-            path,
-            "native store replay only accepts metadata-only morphisms until typed reducers exist",
-        ));
-    }
+    apply_morphism(case_space, morphism)
+        .map_err(|error| invalid_morphism(path, error.to_string()))?;
     require_referenced_ids_exist(path, case_space, &morphism.preserved_ids)?;
     require_referenced_ids_exist(path, case_space, &morphism.evidence_ids)?;
     Ok(())
@@ -609,6 +605,49 @@ fn require_entry_morphism_match(path: &Path, entry: &MorphismLogEntry) -> Native
         ));
     }
     Ok(())
+}
+
+fn require_previous_entry_hash(
+    path: &Path,
+    entry: &MorphismLogEntry,
+    previous: Option<&MorphismLogEntry>,
+) -> NativeStoreResult<()> {
+    let Some(previous) = previous else {
+        if entry.previous_entry_hash.is_some() {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: format!(
+                    "genesis log entry {} must not set previous_entry_hash",
+                    entry.entry_id
+                ),
+            });
+        }
+        return Ok(());
+    };
+
+    let expected = crate::native_hash::morphism_log_entry_hash(previous).map_err(|source| {
+        NativeStoreError::Json {
+            path: path.to_owned(),
+            source,
+        }
+    })?;
+    match entry.previous_entry_hash.as_deref() {
+        None => Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "log entry {} is missing previous_entry_hash; expected {} for predecessor {}",
+                entry.entry_id, expected, previous.entry_id
+            ),
+        }),
+        Some(actual) if actual != expected => Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "log entry {} has previous_entry_hash {}, expected {} for predecessor {}",
+                entry.entry_id, actual, expected, previous.entry_id
+            ),
+        }),
+        Some(_) => Ok(()),
+    }
 }
 
 fn require_case_space_matches_entry(

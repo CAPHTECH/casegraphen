@@ -466,7 +466,12 @@ fn generated_morphism(space: &CaseSpace, sequence: u64) -> MorphismLogEntry {
         recorded_at: "2026-04-26T00:10:00Z".to_owned(),
         provenance: provenance(SourceKind::Ai, ReviewStatus::Unreviewed),
         source_ids: vec![id("source:test")],
-        previous_entry_hash: None,
+        previous_entry_hash: space
+            .morphism_log
+            .last()
+            .map(crate::native_hash::morphism_log_entry_hash)
+            .transpose()
+            .expect("previous entry hash"),
         replay_checksum: "fixture-generated".to_owned(),
     }
 }
@@ -474,6 +479,12 @@ fn generated_morphism(space: &CaseSpace, sequence: u64) -> MorphismLogEntry {
 fn append_review_for_test(space: &mut CaseSpace, morphism: CaseMorphism, entry_id: &str) {
     let previous_revision_id = space.revision.revision_id.clone();
     let target_revision_id = morphism.target_revision_id.clone();
+    let previous_entry_hash = space
+        .morphism_log
+        .last()
+        .map(crate::native_hash::morphism_log_entry_hash)
+        .transpose()
+        .expect("previous entry hash");
     space.morphism_log.push(MorphismLogEntry {
         schema: NATIVE_MORPHISM_LOG_ENTRY_SCHEMA.to_owned(),
         schema_version: 1,
@@ -488,7 +499,7 @@ fn append_review_for_test(space: &mut CaseSpace, morphism: CaseMorphism, entry_i
         recorded_at: "2026-04-26T00:20:00Z".to_owned(),
         provenance: provenance(SourceKind::Human, ReviewStatus::Accepted),
         source_ids: vec![id("source:test")],
-        previous_entry_hash: None,
+        previous_entry_hash,
         replay_checksum: "fixture-review".to_owned(),
     });
     space.revision.revision_id = target_revision_id;

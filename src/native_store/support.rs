@@ -1,7 +1,6 @@
 use super::{CaseSpace, MorphismLogEntry, NativeStoreError, NativeStoreResult};
 use higher_graphen_core::Id;
 use serde::Serialize;
-use serde_json::Value;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -92,27 +91,10 @@ pub(super) fn require_relative_store_path(path: &Path, value: &str) -> NativeSto
 }
 
 pub(super) fn case_space_checksum(case_space: &CaseSpace) -> NativeStoreResult<String> {
-    let mut value = serde_json::to_value(case_space).map_err(|source| NativeStoreError::Json {
+    crate::native_hash::case_space_checksum(case_space).map_err(|source| NativeStoreError::Json {
         path: PathBuf::from("<case-space-checksum>"),
         source,
-    })?;
-    if let Value::Object(object) = &mut value {
-        if let Some(Value::Object(revision)) = object.get_mut("revision") {
-            revision.insert("checksum".to_owned(), Value::String(String::new()));
-        }
-        if let Some(Value::Array(log)) = object.get_mut("morphism_log") {
-            for entry in log {
-                if let Value::Object(entry) = entry {
-                    entry.insert("replay_checksum".to_owned(), Value::String(String::new()));
-                }
-            }
-        }
-    }
-    let canonical = serde_json::to_string(&value).map_err(|source| NativeStoreError::Json {
-        path: PathBuf::from("<case-space-checksum>"),
-        source,
-    })?;
-    Ok(format!("fnv1a64:{:016x}", fnv1a64(canonical.as_bytes())))
+    })
 }
 
 pub(super) fn path_segment(id: &Id) -> String {
@@ -133,13 +115,4 @@ pub(super) fn invalid_morphism(path: &Path, reason: impl Into<String>) -> Native
         path: path.to_owned(),
         reason: reason.into(),
     }
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
 }

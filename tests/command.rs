@@ -1958,6 +1958,205 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
 }
 
 #[test]
+fn native_typed_morphism_materializes_payload_end_to_end() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-typed-base");
+
+    let morphism_path = directory.join("typed-add.case_morphism.json");
+    let morphism = json!({
+        "morphism_id": "morphism:native-typed-add",
+        "morphism_type": "create",
+        "source_revision_id": "revision:native-typed-base",
+        "target_revision_id": "revision:native-typed-added",
+        "added_ids": [
+            "work:native-typed-reducer",
+            "relation:native-typed-depends-on-goal"
+        ],
+        "updated_ids": [],
+        "retired_ids": [],
+        "preserved_ids": ["goal:native-case-contract"],
+        "violated_invariant_ids": [],
+        "review_status": "unreviewed",
+        "evidence_ids": [],
+        "source_ids": ["source:native-typed-integration"],
+        "metadata": {
+            "payload": {
+                "added_cells": [
+                    {
+                        "id": "work:native-typed-reducer",
+                        "cell_type": "work",
+                        "space_id": "space:higher-graphen-casegraphen",
+                        "title": "Exercise typed morphism reducers",
+                        "lifecycle": "proposed",
+                        "source_ids": ["source:native-typed-integration"],
+                        "structure_ids": [],
+                        "provenance": {
+                            "source": {
+                                "kind": "human",
+                                "title": "Typed reducer integration test"
+                            },
+                            "confidence": 1.0,
+                            "review_status": "unreviewed"
+                        },
+                        "metadata": {}
+                    }
+                ],
+                "added_relations": [
+                    {
+                        "id": "relation:native-typed-depends-on-goal",
+                        "relation_type": "depends_on",
+                        "relation_strength": "hard",
+                        "from_id": "work:native-typed-reducer",
+                        "to_id": "goal:native-case-contract",
+                        "evidence_ids": [],
+                        "source_ids": ["source:native-typed-integration"],
+                        "provenance": {
+                            "source": {
+                                "kind": "human",
+                                "title": "Typed reducer integration test"
+                            },
+                            "confidence": 1.0,
+                            "review_status": "unreviewed"
+                        },
+                        "metadata": {}
+                    }
+                ]
+            }
+        }
+    });
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&morphism).expect("serialize typed morphism"),
+    )
+    .expect("write typed morphism");
+
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+
+    let check = run_cli(&[
+        "morphism",
+        "check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--morphism-id",
+        "morphism:native-typed-add",
+        "--format",
+        "json",
+    ]);
+    assert!(check.status.success(), "stderr: {}", stderr(&check));
+    assert_eq!(stdout_json(&check)["result"]["valid"], json!(true));
+    assert_eq!(stdout_json(&check)["result"]["applicable"], json!(true));
+
+    let apply = run_cli(&[
+        "morphism",
+        "apply",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--morphism-id",
+        "morphism:native-typed-add",
+        "--base-revision-id",
+        "revision:native-typed-base",
+        "--reviewer-id",
+        "reviewer:native-typed-integration",
+        "--reason",
+        "Accept typed reducer integration morphism",
+        "--format",
+        "json",
+    ]);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let apply_json = stdout_json(&apply);
+    let previous_hash = apply_json["result"]["entry"]["previous_entry_hash"]
+        .as_str()
+        .expect("previous entry hash");
+    assert_eq!(previous_hash.len(), 64);
+    assert!(previous_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+
+    let replay = run_cli(&[
+        "space",
+        "replay",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(replay.status.success(), "stderr: {}", stderr(&replay));
+    let replay_json = stdout_json(&replay);
+    let replay_space = &replay_json["result"]["replay"]["case_space"];
+    assert!(replay_space["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .iter()
+        .any(|cell| cell["id"] == json!("work:native-typed-reducer")));
+    assert!(replay_space["case_relations"]
+        .as_array()
+        .expect("replayed relations")
+        .iter()
+        .any(|relation| {
+            relation["id"] == json!("relation:native-typed-depends-on-goal")
+                && relation["relation_type"] == json!("depends_on")
+        }));
+
+    let history = run_cli(&[
+        "case",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(history.status.success(), "stderr: {}", stderr(&history));
+    let history_json = stdout_json(&history);
+    assert_eq!(
+        history_json["result"]["entries"][1]["morphism"]["metadata"]["payload"]["added_cells"][0]
+            ["id"],
+        json!("work:native-typed-reducer")
+    );
+    assert_eq!(
+        history_json["result"]["entries"][1]["morphism"]["metadata"]["payload"]["added_relations"]
+            [0]["id"],
+        json!("relation:native-typed-depends-on-goal")
+    );
+
+    let validate = run_cli(&[
+        "space",
+        "validate",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(validate.status.success(), "stderr: {}", stderr(&validate));
+    assert_eq!(
+        stdout_json(&validate)["result"]["validation"]["valid"],
+        json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_morphism_check_uses_metadata_core_extensions_as_applicability_gate() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

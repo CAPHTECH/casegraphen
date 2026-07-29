@@ -1,7 +1,7 @@
 use higher_graphen_core::{Id, Provenance, ReviewStatus, Severity};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
-use std::{fmt, str::FromStr};
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
 pub const NATIVE_CASE_SPACE_SCHEMA: &str = "highergraphen.case.space.v1";
 pub const NATIVE_CASE_SPACE_SCHEMA_VERSION: u32 = 1;
@@ -155,6 +155,28 @@ pub enum CaseCellLifecycle {
     Superseded,
 }
 
+impl CaseCellLifecycle {
+    pub fn can_transition_to(self, target: Self) -> bool {
+        self == target
+            || matches!(
+                (self, target),
+                (
+                    Self::Proposed,
+                    Self::Active | Self::Rejected | Self::Retired
+                ) | (
+                    Self::Active,
+                    Self::Waiting | Self::Resolved | Self::Retired | Self::Superseded
+                ) | (Self::Waiting, Self::Active | Self::Retired)
+                    | (
+                        Self::Resolved,
+                        Self::Accepted | Self::Active | Self::Retired
+                    )
+                    | (Self::Accepted, Self::Superseded | Self::Retired)
+                    | (Self::Rejected | Self::Superseded, Self::Retired)
+            )
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseRelation {
@@ -247,6 +269,321 @@ pub struct CaseMorphism {
     pub evidence_ids: Vec<Id>,
     pub source_ids: Vec<Id>,
     pub metadata: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MorphismPayload {
+    #[serde(default)]
+    pub added_cells: Vec<CaseCell>,
+    #[serde(default)]
+    pub added_relations: Vec<CaseRelation>,
+    #[serde(default)]
+    pub updated_cells: Vec<CaseCell>,
+    #[serde(default)]
+    pub updated_relations: Vec<CaseRelation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MorphismApplyError {
+    reason: String,
+}
+
+impl MorphismApplyError {
+    fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for MorphismApplyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for MorphismApplyError {}
+
+pub fn apply_morphism(
+    case_space: &mut CaseSpace,
+    morphism: &CaseMorphism,
+) -> Result<(), MorphismApplyError> {
+    let payload = morphism_payload(morphism)?;
+    let (declared_added, declared_updated) = validate_declared_morphism_ids(morphism)?;
+    let (payload_added, payload_updated) = validate_payload_ids(morphism, &payload)?;
+    require_matching_ids(
+        morphism,
+        "added_ids",
+        &declared_added,
+        "payload added_cells and added_relations",
+        &payload_added,
+    )?;
+    require_matching_ids(
+        morphism,
+        "updated_ids",
+        &declared_updated,
+        "payload updated_cells and updated_relations",
+        &payload_updated,
+    )?;
+
+    let mut next = case_space.clone();
+    let mut known_ids = materialized_ids(&next);
+
+    for cell in payload.added_cells {
+        if !known_ids.insert(cell.id.clone()) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot add cell {}: id already exists",
+                morphism.morphism_id, cell.id
+            )));
+        }
+        next.case_cells.push(cell);
+    }
+    for relation in payload.added_relations {
+        if !known_ids.insert(relation.id.clone()) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot add relation {}: id already exists",
+                morphism.morphism_id, relation.id
+            )));
+        }
+        next.case_relations.push(relation);
+    }
+
+    for cell in payload.updated_cells {
+        let existing = next
+            .case_cells
+            .iter_mut()
+            .find(|candidate| candidate.id == cell.id)
+            .ok_or_else(|| {
+                MorphismApplyError::new(format!(
+                    "morphism {} cannot update cell {}: cell does not exist",
+                    morphism.morphism_id, cell.id
+                ))
+            })?;
+        require_lifecycle_transition(morphism, &cell.id, existing.lifecycle, cell.lifecycle)?;
+        *existing = cell;
+    }
+    for relation in payload.updated_relations {
+        let existing = next
+            .case_relations
+            .iter_mut()
+            .find(|candidate| candidate.id == relation.id)
+            .ok_or_else(|| {
+                MorphismApplyError::new(format!(
+                    "morphism {} cannot update relation {}: relation does not exist",
+                    morphism.morphism_id, relation.id
+                ))
+            })?;
+        *existing = relation;
+    }
+
+    for id in &morphism.retired_ids {
+        if let Some(cell) = next
+            .case_cells
+            .iter_mut()
+            .find(|candidate| candidate.id == *id)
+        {
+            require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
+            cell.lifecycle = CaseCellLifecycle::Retired;
+        } else if let Some(index) = next
+            .case_relations
+            .iter()
+            .position(|candidate| candidate.id == *id)
+        {
+            next.case_relations.remove(index);
+        } else {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot retire {}: id does not exist",
+                morphism.morphism_id, id
+            )));
+        }
+    }
+
+    let cell_ids = next
+        .case_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .collect::<BTreeSet<_>>();
+    for relation in &next.case_relations {
+        if !cell_ids.contains(&relation.from_id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} leaves relation {} with missing from_id cell {}",
+                morphism.morphism_id, relation.id, relation.from_id
+            )));
+        }
+        if !cell_ids.contains(&relation.to_id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} leaves relation {} with missing to_id cell {}",
+                morphism.morphism_id, relation.id, relation.to_id
+            )));
+        }
+    }
+
+    *case_space = next;
+    Ok(())
+}
+
+fn morphism_payload(morphism: &CaseMorphism) -> Result<MorphismPayload, MorphismApplyError> {
+    match morphism.metadata.get("payload") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|error| {
+            MorphismApplyError::new(format!(
+                "morphism {} has malformed metadata.payload: {error}",
+                morphism.morphism_id
+            ))
+        }),
+        None => Ok(MorphismPayload::default()),
+    }
+}
+
+fn validate_declared_morphism_ids(
+    morphism: &CaseMorphism,
+) -> Result<(BTreeSet<Id>, BTreeSet<Id>), MorphismApplyError> {
+    let mut all = BTreeSet::new();
+    let added = collect_unique_ids(morphism, "added_ids", &morphism.added_ids, &mut all)?;
+    let updated = collect_unique_ids(morphism, "updated_ids", &morphism.updated_ids, &mut all)?;
+    collect_unique_ids(morphism, "retired_ids", &morphism.retired_ids, &mut all)?;
+    Ok((added, updated))
+}
+
+fn collect_unique_ids(
+    morphism: &CaseMorphism,
+    list_name: &str,
+    ids: &[Id],
+    all: &mut BTreeSet<Id>,
+) -> Result<BTreeSet<Id>, MorphismApplyError> {
+    let mut list = BTreeSet::new();
+    for id in ids {
+        if !list.insert(id.clone()) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} contains duplicate id {} in {}",
+                morphism.morphism_id, id, list_name
+            )));
+        }
+        if !all.insert(id.clone()) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} contains duplicate id {} across added_ids, updated_ids, and retired_ids",
+                morphism.morphism_id, id
+            )));
+        }
+    }
+    Ok(list)
+}
+
+fn validate_payload_ids(
+    morphism: &CaseMorphism,
+    payload: &MorphismPayload,
+) -> Result<(BTreeSet<Id>, BTreeSet<Id>), MorphismApplyError> {
+    let mut all = BTreeSet::new();
+    let mut added = BTreeSet::new();
+    let mut updated = BTreeSet::new();
+    collect_payload_ids(
+        morphism,
+        "added_cells",
+        payload.added_cells.iter().map(|cell| &cell.id),
+        &mut added,
+        &mut all,
+    )?;
+    collect_payload_ids(
+        morphism,
+        "added_relations",
+        payload.added_relations.iter().map(|relation| &relation.id),
+        &mut added,
+        &mut all,
+    )?;
+    collect_payload_ids(
+        morphism,
+        "updated_cells",
+        payload.updated_cells.iter().map(|cell| &cell.id),
+        &mut updated,
+        &mut all,
+    )?;
+    collect_payload_ids(
+        morphism,
+        "updated_relations",
+        payload
+            .updated_relations
+            .iter()
+            .map(|relation| &relation.id),
+        &mut updated,
+        &mut all,
+    )?;
+    Ok((added, updated))
+}
+
+fn collect_payload_ids<'a>(
+    morphism: &CaseMorphism,
+    list_name: &str,
+    ids: impl Iterator<Item = &'a Id>,
+    target: &mut BTreeSet<Id>,
+    all: &mut BTreeSet<Id>,
+) -> Result<(), MorphismApplyError> {
+    for id in ids {
+        if !all.insert(id.clone()) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} payload contains duplicate id {} in or across payload lists (at {})",
+                morphism.morphism_id, id, list_name
+            )));
+        }
+        target.insert(id.clone());
+    }
+    Ok(())
+}
+
+fn require_matching_ids(
+    morphism: &CaseMorphism,
+    declared_name: &str,
+    declared: &BTreeSet<Id>,
+    payload_name: &str,
+    payload: &BTreeSet<Id>,
+) -> Result<(), MorphismApplyError> {
+    if declared == payload {
+        return Ok(());
+    }
+    Err(MorphismApplyError::new(format!(
+        "morphism {} {} [{}] do not match {} [{}]",
+        morphism.morphism_id,
+        declared_name,
+        display_ids(declared),
+        payload_name,
+        display_ids(payload)
+    )))
+}
+
+fn display_ids(ids: &BTreeSet<Id>) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn materialized_ids(case_space: &CaseSpace) -> BTreeSet<Id> {
+    case_space
+        .case_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .chain(
+            case_space
+                .case_relations
+                .iter()
+                .map(|relation| relation.id.clone()),
+        )
+        .collect()
+}
+
+fn require_lifecycle_transition(
+    morphism: &CaseMorphism,
+    cell_id: &Id,
+    source: CaseCellLifecycle,
+    target: CaseCellLifecycle,
+) -> Result<(), MorphismApplyError> {
+    if source.can_transition_to(target) {
+        Ok(())
+    } else {
+        Err(MorphismApplyError::new(format!(
+            "morphism {} cannot transition cell {} lifecycle from {:?} to {:?}",
+            morphism.morphism_id, cell_id, source, target
+        )))
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -555,6 +892,263 @@ mod tests {
         assert!(
             serde_json::from_value::<CaseMorphismType>(Value::String("custom:".to_owned()))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn reducer_adds_a_cell_and_relation() {
+        let mut space = fixture_space();
+        let mut cell = space.case_cells[2].clone();
+        cell.id = id("work:typed-reducer");
+        cell.title = "Apply typed reducer".to_owned();
+        cell.lifecycle = CaseCellLifecycle::Proposed;
+        let mut relation = space.case_relations[0].clone();
+        relation.id = id("relation:typed-reducer-depends-on-goal");
+        relation.relation_type = CaseRelationType::DependsOn;
+        relation.from_id = cell.id.clone();
+        relation.to_id = id("goal:native-case-contract");
+        relation.evidence_ids.clear();
+        let mut morphism = fixture_morphism(&space);
+        morphism.added_ids = vec![cell.id.clone(), relation.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_cells: vec![cell.clone()],
+                added_relations: vec![relation.clone()],
+                ..MorphismPayload::default()
+            },
+        );
+
+        apply_morphism(&mut space, &morphism).expect("apply typed additions");
+
+        assert!(space.case_cells.contains(&cell));
+        assert!(space.case_relations.contains(&relation));
+    }
+
+    #[test]
+    fn reducer_replaces_an_updated_cell_wholesale() {
+        let mut space = fixture_space();
+        let mut updated = space.case_cells[0].clone();
+        updated.title = "Updated native case contract".to_owned();
+        updated.summary = None;
+        updated.lifecycle = CaseCellLifecycle::Waiting;
+        let mut morphism = fixture_morphism(&space);
+        morphism.updated_ids = vec![updated.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                updated_cells: vec![updated.clone()],
+                ..MorphismPayload::default()
+            },
+        );
+
+        apply_morphism(&mut space, &morphism).expect("apply cell update");
+
+        assert_eq!(
+            space
+                .case_cells
+                .iter()
+                .find(|cell| cell.id == updated.id)
+                .expect("updated cell"),
+            &updated
+        );
+    }
+
+    #[test]
+    fn reducer_retires_a_cell_and_removes_a_relation() {
+        let mut space = fixture_space();
+        let cell_id = id("work:review-native-contract");
+        let relation_id = id("relation:case-covers-goal");
+        let mut morphism = fixture_morphism(&space);
+        morphism.retired_ids = vec![cell_id.clone(), relation_id.clone()];
+
+        apply_morphism(&mut space, &morphism).expect("apply retirements");
+
+        assert_eq!(
+            space
+                .case_cells
+                .iter()
+                .find(|cell| cell.id == cell_id)
+                .expect("retired cell")
+                .lifecycle,
+            CaseCellLifecycle::Retired
+        );
+        assert!(!space
+            .case_relations
+            .iter()
+            .any(|relation| relation.id == relation_id));
+    }
+
+    #[test]
+    fn reducer_rejects_payload_and_added_id_mismatch() {
+        let mut space = fixture_space();
+        let mut cell = space.case_cells[2].clone();
+        cell.id = id("work:undeclared-payload");
+        let mut morphism = fixture_morphism(&space);
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_cells: vec![cell],
+                ..MorphismPayload::default()
+            },
+        );
+
+        let error = apply_morphism(&mut space, &morphism).expect_err("mismatched added ids");
+
+        assert!(error.to_string().contains("added_ids"));
+        assert!(error
+            .to_string()
+            .contains("payload added_cells and added_relations"));
+    }
+
+    #[test]
+    fn reducer_rejects_unknown_updated_and_retired_ids() {
+        let space = fixture_space();
+        let mut unknown_update = space.case_cells[0].clone();
+        unknown_update.id = id("work:missing-update");
+        let mut update_morphism = fixture_morphism(&space);
+        update_morphism.updated_ids = vec![unknown_update.id.clone()];
+        set_payload(
+            &mut update_morphism,
+            MorphismPayload {
+                updated_cells: vec![unknown_update],
+                ..MorphismPayload::default()
+            },
+        );
+        let update_error =
+            apply_morphism(&mut space.clone(), &update_morphism).expect_err("unknown updated cell");
+        assert!(update_error
+            .to_string()
+            .contains("cannot update cell work:missing-update: cell does not exist"));
+
+        let mut retire_morphism = fixture_morphism(&space);
+        retire_morphism.retired_ids = vec![id("relation:missing-retirement")];
+        let retire_error =
+            apply_morphism(&mut space.clone(), &retire_morphism).expect_err("unknown retired id");
+        assert!(retire_error
+            .to_string()
+            .contains("cannot retire relation:missing-retirement: id does not exist"));
+    }
+
+    #[test]
+    fn reducer_rejects_duplicate_payload_ids() {
+        let mut space = fixture_space();
+        let mut cell = space.case_cells[2].clone();
+        cell.id = id("work:duplicate-payload");
+        let mut morphism = fixture_morphism(&space);
+        morphism.added_ids = vec![cell.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_cells: vec![cell.clone(), cell],
+                ..MorphismPayload::default()
+            },
+        );
+
+        let error = apply_morphism(&mut space, &morphism).expect_err("duplicate payload id");
+
+        assert!(error
+            .to_string()
+            .contains("duplicate id work:duplicate-payload"));
+    }
+
+    #[test]
+    fn reducer_rejects_a_relation_to_a_missing_cell() {
+        let mut space = fixture_space();
+        let mut relation = space.case_relations[0].clone();
+        relation.id = id("relation:missing-endpoint");
+        relation.from_id = id("work:not-present");
+        let mut morphism = fixture_morphism(&space);
+        morphism.added_ids = vec![relation.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_relations: vec![relation],
+                ..MorphismPayload::default()
+            },
+        );
+
+        let error = apply_morphism(&mut space, &morphism).expect_err("missing relation endpoint");
+
+        assert!(error.to_string().contains(
+            "relation relation:missing-endpoint with missing from_id cell work:not-present"
+        ));
+    }
+
+    #[test]
+    fn reducer_rejects_an_illegal_lifecycle_transition() {
+        let mut space = fixture_space();
+        let mut updated = space.case_cells[0].clone();
+        updated.lifecycle = CaseCellLifecycle::Accepted;
+        let mut morphism = fixture_morphism(&space);
+        morphism.updated_ids = vec![updated.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                updated_cells: vec![updated],
+                ..MorphismPayload::default()
+            },
+        );
+
+        let error =
+            apply_morphism(&mut space, &morphism).expect_err("illegal lifecycle transition");
+
+        assert!(error.to_string().contains(
+            "cannot transition cell goal:native-case-contract lifecycle from Active to Accepted"
+        ));
+    }
+
+    #[test]
+    fn reducer_accepts_a_metadata_only_morphism() {
+        let mut space = fixture_space();
+        let before = space.clone();
+        let morphism = fixture_morphism(&space);
+
+        apply_morphism(&mut space, &morphism).expect("metadata-only morphism");
+
+        assert_eq!(space, before);
+    }
+
+    #[test]
+    fn reducer_rejects_a_malformed_payload() {
+        let mut space = fixture_space();
+        let mut morphism = fixture_morphism(&space);
+        morphism
+            .metadata
+            .insert("payload".to_owned(), serde_json::json!({"unknown": []}));
+
+        let error = apply_morphism(&mut space, &morphism).expect_err("malformed payload");
+
+        assert!(error.to_string().contains("malformed metadata.payload"));
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    fn fixture_space() -> CaseSpace {
+        serde_json::from_str(NATIVE_EXAMPLE).expect("native case space example")
+    }
+
+    fn fixture_morphism(space: &CaseSpace) -> CaseMorphism {
+        CaseMorphism {
+            morphism_id: id("morphism:typed-reducer-test"),
+            morphism_type: CaseMorphismType::Update,
+            source_revision_id: Some(space.revision.revision_id.clone()),
+            target_revision_id: id("revision:typed-reducer-test"),
+            added_ids: Vec::new(),
+            updated_ids: Vec::new(),
+            retired_ids: Vec::new(),
+            preserved_ids: Vec::new(),
+            violated_invariant_ids: Vec::new(),
+            review_status: ReviewStatus::Accepted,
+            evidence_ids: Vec::new(),
+            source_ids: Vec::new(),
+            metadata: Map::new(),
+        }
+    }
+
+    fn set_payload(morphism: &mut CaseMorphism, payload: MorphismPayload) {
+        morphism.metadata.insert(
+            "payload".to_owned(),
+            serde_json::to_value(payload).expect("serialize morphism payload"),
         );
     }
 

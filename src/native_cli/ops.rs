@@ -11,9 +11,10 @@ use crate::{
     math_diagnostics::{native_close_temporal_diagnostics, native_morphism_temporal_diagnostics},
     native_eval::evaluate_native_case,
     native_model::{
-        CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType, CaseSpace,
-        MorphismLogEntry, ProjectionAudience, ReviewAction, Revision, NATIVE_CASE_SPACE_SCHEMA,
-        NATIVE_CASE_SPACE_SCHEMA_VERSION, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
+        apply_morphism, CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType,
+        CaseSpace, MorphismLogEntry, ProjectionAudience, ReviewAction, Revision,
+        NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
+        NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
     native_review::{check_native_close, NativeCloseCheckRequest, NativeOperationGate},
     native_store::NativeCaseStore,
@@ -604,15 +605,10 @@ fn validate_candidate_morphism(
             "morphism target_revision_id must advance the revision",
         ));
     }
-    if !morphism.added_ids.is_empty()
-        || !morphism.updated_ids.is_empty()
-        || !morphism.retired_ids.is_empty()
-    {
-        return Err(NativeCliError::invalid(
-            "native morphism CLI currently accepts metadata-only morphisms",
-        ));
-    }
-    let known = known_ids(case_space);
+    let mut candidate = case_space.clone();
+    apply_morphism(&mut candidate, morphism)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    let known = known_ids(&candidate);
     for id in morphism.preserved_ids.iter().chain(&morphism.evidence_ids) {
         if !known.contains(id) {
             return Err(NativeCliError::invalid(format!(
@@ -628,6 +624,11 @@ fn entry_for_morphism(
     morphism: CaseMorphism,
     actor_id: Option<Id>,
 ) -> Result<MorphismLogEntry, NativeCliError> {
+    let previous_entry_hash = case_space
+        .morphism_log
+        .last()
+        .map(crate::native_hash::morphism_log_entry_hash)
+        .transpose()?;
     Ok(MorphismLogEntry {
         schema: NATIVE_MORPHISM_LOG_ENTRY_SCHEMA.to_owned(),
         schema_version: NATIVE_CASE_SPACE_SCHEMA_VERSION,
@@ -645,7 +646,7 @@ fn entry_for_morphism(
         recorded_at: timestamp(),
         provenance: provenance(SourceKind::Human, ReviewStatus::Accepted),
         source_ids: morphism.source_ids.clone(),
-        previous_entry_hash: None,
+        previous_entry_hash,
         replay_checksum: String::new(),
         morphism,
     })
@@ -703,6 +704,8 @@ fn checksum_after_append(
     entry: &MorphismLogEntry,
 ) -> Result<String, NativeCliError> {
     let mut next = case_space.clone();
+    apply_morphism(&mut next, &entry.morphism)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     next.morphism_log.push(entry.clone());
     next.revision = Revision {
         revision_id: entry.target_revision_id.clone(),
@@ -716,4 +719,45 @@ fn checksum_after_append(
         metadata: Map::new(),
     };
     case_space_checksum(&next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NATIVE_EXAMPLE: &str =
+        include_str!("../../schemas/casegraphen/native.case.space.example.json");
+
+    #[test]
+    fn non_genesis_entry_hashes_its_predecessor() {
+        let case_space: CaseSpace =
+            serde_json::from_str(NATIVE_EXAMPLE).expect("native case space example");
+        let morphism = CaseMorphism {
+            morphism_id: id_lossy("morphism:entry-hash-test"),
+            morphism_type: CaseMorphismType::Review,
+            source_revision_id: Some(case_space.revision.revision_id.clone()),
+            target_revision_id: id_lossy("revision:entry-hash-test"),
+            added_ids: Vec::new(),
+            updated_ids: Vec::new(),
+            retired_ids: Vec::new(),
+            preserved_ids: Vec::new(),
+            violated_invariant_ids: Vec::new(),
+            review_status: ReviewStatus::Accepted,
+            evidence_ids: Vec::new(),
+            source_ids: Vec::new(),
+            metadata: Map::new(),
+        };
+
+        let entry =
+            entry_for_morphism(&case_space, morphism, None).expect("build morphism log entry");
+        let expected = crate::native_hash::morphism_log_entry_hash(
+            case_space
+                .morphism_log
+                .last()
+                .expect("genesis morphism log entry"),
+        )
+        .expect("predecessor hash");
+
+        assert_eq!(entry.previous_entry_hash, Some(expected));
+    }
 }

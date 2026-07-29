@@ -124,30 +124,7 @@ pub(super) fn known_ids(case_space: &CaseSpace) -> Vec<Id> {
 }
 
 pub(super) fn case_space_checksum(case_space: &CaseSpace) -> Result<String, NativeCliError> {
-    let mut value = serde_json::to_value(case_space)?;
-    if let Value::Object(object) = &mut value {
-        if let Some(Value::Object(revision)) = object.get_mut("revision") {
-            revision.insert("checksum".to_owned(), Value::String(String::new()));
-        }
-        if let Some(Value::Array(log)) = object.get_mut("morphism_log") {
-            for entry in log {
-                if let Value::Object(entry) = entry {
-                    entry.insert("replay_checksum".to_owned(), Value::String(String::new()));
-                }
-            }
-        }
-    }
-    let canonical = serde_json::to_string(&value)?;
-    Ok(format!("fnv1a64:{:016x}", fnv1a64(canonical.as_bytes())))
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+    crate::native_hash::case_space_checksum(case_space).map_err(NativeCliError::from)
 }
 
 pub(super) fn provenance(kind: SourceKind, review_status: ReviewStatus) -> Provenance {
