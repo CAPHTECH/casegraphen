@@ -35,7 +35,7 @@ fn canonical_json_sha256(value: &impl Serialize) -> Result<String, serde_json::E
     Ok(sha256_hex(canonical.as_bytes()))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     const INITIAL: [u32; 8] = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,

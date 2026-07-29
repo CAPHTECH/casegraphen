@@ -1,5 +1,5 @@
 use crate::native_eval::evaluate_native_case;
-use crate::native_model::ProjectionAudience;
+use crate::native_model::{ProjectionAudience, ReviewAction};
 use crate::native_store::{NativeCaseStore, NativeStoreError};
 use crate::topology::TopologyReportOptions;
 use higher_graphen_core::Id;
@@ -19,8 +19,9 @@ mod path_helpers;
 mod reporting;
 use ops::{
     case_close_check, case_import, case_new, case_reason, case_topology, case_topology_diff,
-    lift_structured_source, morphism_apply, morphism_check, morphism_propose, morphism_reject,
-    projection_apply, NativeCloseGateOptions,
+    cell_transition, evidence_attach, lift_structured_source, morphism_apply, morphism_check,
+    morphism_propose, morphism_reject, projection_apply, review_apply, NativeCloseGateOptions,
+    NativeReviewApplyOptions,
 };
 use reporting::report;
 
@@ -151,6 +152,36 @@ pub(crate) enum NativeCliCommand {
         revision_id: Id,
         output: Option<PathBuf>,
     },
+    Review {
+        action: ReviewAction,
+        store: PathBuf,
+        case_space_id: Id,
+        target_id: Id,
+        reviewer_id: Id,
+        reason: String,
+        base_revision_id: Id,
+        evidence_ids: Vec<Id>,
+        output: Option<PathBuf>,
+    },
+    EvidenceAttach {
+        store: PathBuf,
+        case_space_id: Id,
+        base_revision_id: Id,
+        input: PathBuf,
+        satisfies_ids: Vec<Id>,
+        actor_id: Id,
+        output: Option<PathBuf>,
+    },
+    CellTransition {
+        store: PathBuf,
+        case_space_id: Id,
+        base_revision_id: Id,
+        cell_id: Id,
+        lifecycle: String,
+        actor_id: Id,
+        reason: Option<String>,
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,7 +215,10 @@ impl NativeCliCommand {
             | Self::MorphismPropose { output, .. }
             | Self::MorphismCheck { output, .. }
             | Self::MorphismApply { output, .. }
-            | Self::MorphismReject { output, .. } => output.as_ref(),
+            | Self::MorphismReject { output, .. }
+            | Self::Review { output, .. }
+            | Self::EvidenceAttach { output, .. }
+            | Self::CellTransition { output, .. } => output.as_ref(),
         }
     }
 
@@ -212,7 +246,10 @@ impl NativeCliCommand {
             Self::MorphismPropose { .. }
             | Self::MorphismCheck { .. }
             | Self::MorphismApply { .. }
-            | Self::MorphismReject { .. } => self.run_morphism_value(),
+            | Self::MorphismReject { .. }
+            | Self::Review { .. }
+            | Self::EvidenceAttach { .. }
+            | Self::CellTransition { .. } => self.run_morphism_value(),
         }
     }
 
@@ -401,6 +438,62 @@ impl NativeCliCommand {
                 reviewer_id,
                 reason,
                 revision_id,
+            )?,
+            Self::Review {
+                action,
+                store,
+                case_space_id,
+                target_id,
+                reviewer_id,
+                reason,
+                base_revision_id,
+                evidence_ids,
+                ..
+            } => review_apply(
+                store,
+                case_space_id,
+                NativeReviewApplyOptions {
+                    action: *action,
+                    target_id,
+                    reviewer_id,
+                    reason,
+                    base_revision_id,
+                    evidence_ids,
+                },
+            )?,
+            Self::EvidenceAttach {
+                store,
+                case_space_id,
+                base_revision_id,
+                input,
+                satisfies_ids,
+                actor_id,
+                ..
+            } => evidence_attach(
+                store,
+                case_space_id,
+                base_revision_id,
+                input,
+                satisfies_ids,
+                actor_id,
+            )?,
+            Self::CellTransition {
+                store,
+                case_space_id,
+                base_revision_id,
+                cell_id,
+                lifecycle,
+                actor_id,
+                reason,
+                ..
+            } => cell_transition(
+                store,
+                case_space_id,
+                base_revision_id,
+                cell_id,
+                lifecycle,
+                actor_id,
+                reason.as_deref(),
             )?,
             _ => unreachable!("run_morphism_value called for case command"),
         })

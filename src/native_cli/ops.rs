@@ -26,11 +26,22 @@ use std::path::Path;
 
 mod io;
 mod lift;
+mod mutations;
 use io::{
     case_space_checksum, known_ids, proposal_path, proposal_value, provenance, read_morphism,
     read_proposal, timestamp, write_json,
 };
 pub(super) use lift::{case_import, case_new, lift_structured_source};
+pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
+
+pub(super) struct NativeReviewApplyOptions<'a> {
+    pub(super) action: ReviewAction,
+    pub(super) target_id: &'a Id,
+    pub(super) reviewer_id: &'a Id,
+    pub(super) reason: &'a str,
+    pub(super) base_revision_id: &'a Id,
+    pub(super) evidence_ids: &'a [Id],
+}
 
 pub(super) fn case_reason(
     store: &Path,
@@ -273,12 +284,7 @@ pub(super) fn morphism_apply(
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
-    if &replay.current_revision_id != base_revision_id {
-        return Err(NativeCliError::invalid(format!(
-            "base revision {base_revision_id} is stale; current revision is {}",
-            replay.current_revision_id
-        )));
-    }
+    require_current_revision(&replay.current_revision_id, base_revision_id)?;
     let mut morphism = read_proposal(store, case_space_id, morphism_id)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
     morphism.review_status = ReviewStatus::Accepted;
@@ -295,13 +301,13 @@ pub(super) fn morphism_apply(
             .metadata
             .insert("review_reason".to_owned(), json!(reason.trim()));
     }
-    let mut entry = entry_for_morphism(&replay.case_space, morphism.clone(), None)?;
-    entry.replay_checksum = checksum_after_append(&replay.case_space, &entry)?;
-    let record = store_api.append_morphism(case_space_id, entry.clone())?;
-    Ok(report(
+    append_validated_morphism(
+        &store_api,
+        &replay.case_space,
+        morphism,
+        None,
         "casegraphen morphism apply",
-        json!({ "record": record, "entry": entry }),
-    ))
+    )
 }
 
 pub(super) fn morphism_reject(
@@ -617,6 +623,33 @@ fn validate_candidate_morphism(
         }
     }
     Ok(())
+}
+
+fn require_current_revision(
+    current_revision_id: &Id,
+    base_revision_id: &Id,
+) -> Result<(), NativeCliError> {
+    if current_revision_id == base_revision_id {
+        Ok(())
+    } else {
+        Err(NativeCliError::invalid(format!(
+            "base revision {base_revision_id} is stale; current revision is {current_revision_id}"
+        )))
+    }
+}
+
+fn append_validated_morphism(
+    store: &NativeCaseStore,
+    case_space: &CaseSpace,
+    morphism: CaseMorphism,
+    actor_id: Option<Id>,
+    command: &str,
+) -> Result<Value, NativeCliError> {
+    validate_candidate_morphism(case_space, &morphism)?;
+    let mut entry = entry_for_morphism(case_space, morphism, actor_id)?;
+    entry.replay_checksum = checksum_after_append(case_space, &entry)?;
+    let record = store.append_morphism(&case_space.case_space_id, entry.clone())?;
+    Ok(report(command, json!({ "record": record, "entry": entry })))
 }
 
 fn entry_for_morphism(

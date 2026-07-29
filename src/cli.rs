@@ -136,6 +136,15 @@ impl Command {
             Some("morphism") => NativeCliCommand::parse("morphism", args)
                 .map(Self::Native)
                 .map_err(CliError::from),
+            Some("review") => NativeCliCommand::parse("review", args)
+                .map(Self::Native)
+                .map_err(CliError::from),
+            Some("evidence") => NativeCliCommand::parse("evidence", args)
+                .map(Self::Native)
+                .map_err(CliError::from),
+            Some("cell") => NativeCliCommand::parse("cell", args)
+                .map(Self::Native)
+                .map_err(CliError::from),
             Some("cg") => CgWorkflowBridgeCommand::parse(args)
                 .map(Self::CgWorkflowBridge)
                 .map_err(CliError::usage),

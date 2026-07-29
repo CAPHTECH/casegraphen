@@ -2157,6 +2157,399 @@ fn native_typed_morphism_materializes_payload_end_to_end() {
 }
 
 #[test]
+fn native_review_accept_appends_history_and_satisfies_close_review() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let native_path = directory.join("native.unreviewed-morphism.json");
+    let mut native_case = json_file(native_case_fixture());
+    native_case["morphism_log"][0]["morphism"]["review_status"] = json!("unreviewed");
+    fs::write(
+        &native_path,
+        serde_json::to_string_pretty(&native_case).expect("serialize native case"),
+    )
+    .expect("write native case");
+    import_native_case_space_from_input(&directory, &native_path, "revision:native-review-base");
+
+    let accept = run_cli(&[
+        "review",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "morphism:create-native-contract",
+        "--reviewer-id",
+        "reviewer:native-review-cli",
+        "--reason",
+        "Accept the imported morphism after explicit review",
+        "--base-revision-id",
+        "revision:native-review-base",
+        "--evidence-id",
+        "evidence:native-schema-json-valid",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accept_json = stdout_json(&accept);
+    let entry = &accept_json["result"]["entry"];
+    assert_eq!(
+        accept_json["metadata"]["command"],
+        json!("casegraphen review accept")
+    );
+    assert_eq!(entry["actor_id"], json!("reviewer:native-review-cli"));
+    assert_eq!(
+        entry["morphism"]["metadata"],
+        json!({
+            "native_review_schema_version": 1,
+            "review_id": entry["morphism"]["metadata"]["review_id"],
+            "target_kind": "morphism",
+            "target_id": "morphism:create-native-contract",
+            "action": "accept",
+            "outcome_review_status": "accepted",
+            "reviewer_id": "reviewer:native-review-cli",
+            "reviewed_at": entry["morphism"]["metadata"]["reviewed_at"],
+            "reason": "Accept the imported morphism after explicit review"
+        })
+    );
+    assert_eq!(
+        entry["morphism"]["evidence_ids"],
+        json!(["evidence:native-schema-json-valid"])
+    );
+    let current_revision = accept_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("review revision")
+        .to_owned();
+
+    let history = run_cli(&[
+        "case",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(history.status.success(), "stderr: {}", stderr(&history));
+    assert!(stdout_json(&history)["result"]["entries"]
+        .as_array()
+        .expect("history entries")
+        .iter()
+        .any(|candidate| {
+            candidate["morphism"]["metadata"]["target_id"]
+                == json!("morphism:create-native-contract")
+                && candidate["morphism"]["metadata"]["action"] == json!("accept")
+        }));
+
+    let close_check = run_cli(&[
+        "invariant",
+        "close-check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &current_revision,
+        "--validation-evidence-id",
+        "evidence:native-schema-json-valid",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        close_check.status.success(),
+        "stderr: {}",
+        stderr(&close_check)
+    );
+    assert!(
+        stdout_json(&close_check)["result"]["close_check"]["invariant_results"]
+            .as_array()
+            .expect("close invariants")
+            .iter()
+            .any(|invariant| {
+                invariant["invariant_id"] == json!("close:native-morphisms-reviewed")
+                    && invariant["passed"] == json!(true)
+            })
+    );
+
+    let empty_reason = run_cli(&[
+        "review",
+        "reject",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "goal:native-case-contract",
+        "--reviewer-id",
+        "reviewer:native-review-cli",
+        "--reason",
+        "   ",
+        "--base-revision-id",
+        &current_revision,
+        "--format",
+        "json",
+    ]);
+    assert!(!empty_reason.status.success());
+    assert!(stderr(&empty_reason).contains("review reason must not be empty"));
+
+    let stale = run_cli(&[
+        "review",
+        "reopen",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "goal:native-case-contract",
+        "--reviewer-id",
+        "reviewer:native-review-cli",
+        "--reason",
+        "Exercise stale base handling",
+        "--base-revision-id",
+        "revision:native-review-base",
+        "--format",
+        "json",
+    ]);
+    assert!(!stale.status.success());
+    assert!(stderr(&stale).contains(&format!(
+        "base revision revision:native-review-base is stale; current revision is {current_revision}"
+    )));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-evidence-base");
+    let input_path = directory.join("attached-evidence-cell.json");
+    let output_path = directory.join("evidence-attach.report.json");
+    let mut evidence_cell = json_file(native_case_fixture())["case_cells"][3].clone();
+    evidence_cell["id"] = json!("evidence:attached-cli");
+    evidence_cell["title"] = json!("Attached CLI evidence");
+    evidence_cell["lifecycle"] = json!("active");
+    evidence_cell["provenance"]["review_status"] = json!("unreviewed");
+    evidence_cell["source_ids"] = json!(["source:attached-cli"]);
+    evidence_cell["metadata"] = json!({"evidence_boundary": "source_backed"});
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&evidence_cell).expect("serialize evidence cell"),
+    )
+    .expect("write evidence cell");
+
+    let attach = run_cli(&[
+        "evidence",
+        "attach",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:native-evidence-base",
+        "--input",
+        input_path.to_str().expect("evidence path"),
+        "--satisfies",
+        "goal:native-case-contract",
+        "--actor-id",
+        "actor:native-evidence-cli",
+        "--format",
+        "json",
+        "--output",
+        output_path.to_str().expect("output path"),
+    ]);
+    assert!(attach.status.success(), "stderr: {}", stderr(&attach));
+    assert!(stdout(&attach).is_empty());
+    let attach_json = json_file(output_path);
+    let entry = &attach_json["result"]["entry"];
+    let attached_cell = &entry["morphism"]["metadata"]["payload"]["added_cells"][0];
+    let relation = &entry["morphism"]["metadata"]["payload"]["added_relations"][0];
+    assert_eq!(
+        attach_json["metadata"]["command"],
+        json!("casegraphen evidence attach")
+    );
+    assert_eq!(entry["actor_id"], json!("actor:native-evidence-cli"));
+    assert_eq!(entry["morphism"]["morphism_type"], json!("evidence_attach"));
+    assert_eq!(
+        entry["morphism"]["added_ids"],
+        json!([
+            "evidence:attached-cli",
+            "relation:evidence:evidence~3aattached-cli:1"
+        ])
+    );
+    assert_eq!(
+        attached_cell["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+    let content_hash = attached_cell["metadata"]["content_hash"]
+        .as_str()
+        .expect("content hash");
+    assert_eq!(content_hash.len(), 64);
+    assert!(content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(
+        relation,
+        &json!({
+            "id": "relation:evidence:evidence~3aattached-cli:1",
+            "relation_type": "satisfies_evidence_requirement",
+            "relation_strength": "hard",
+            "from_id": "evidence:attached-cli",
+            "to_id": "goal:native-case-contract",
+            "evidence_ids": ["evidence:attached-cli"],
+            "source_ids": ["source:attached-cli"],
+            "provenance": attached_cell["provenance"],
+            "metadata": {}
+        })
+    );
+
+    let replay = run_native_case_store_command(&directory, "replay");
+    let replay_space = &stdout_json(&replay)["result"]["replay"]["case_space"];
+    assert!(replay_space["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .iter()
+        .any(|cell| {
+            cell["id"] == json!("evidence:attached-cli")
+                && cell["metadata"]["content_hash"] == json!(content_hash)
+                && cell["provenance"]["review_status"] == json!("unreviewed")
+        }));
+    assert!(replay_space["case_relations"]
+        .as_array()
+        .expect("replayed relations")
+        .iter()
+        .any(|candidate| candidate == relation));
+
+    let reason = run_native_case_store_command(&directory, "reason");
+    assert!(
+        stdout_json(&reason)["result"]["evaluation"]["evidence_findings"]
+            ["source_backed_evidence_ids"]
+            .as_array()
+            .expect("reason evidence ids")
+            .contains(&json!("evidence:attached-cli"))
+    );
+    let evidence = run_native_case_store_command(&directory, "evidence");
+    assert!(
+        stdout_json(&evidence)["result"]["evidence_findings"]["source_backed_evidence_ids"]
+            .as_array()
+            .expect("evidence ids")
+            .contains(&json!("evidence:attached-cli"))
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-transition-base");
+    let original_goal = json_file(native_case_fixture())["case_cells"][0].clone();
+
+    let resolve = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:native-transition-base",
+        "--cell-id",
+        "goal:native-case-contract",
+        "--to",
+        "resolved",
+        "--actor-id",
+        "actor:native-transition-cli",
+        "--reason",
+        "The goal is complete",
+        "--format",
+        "json",
+    ]);
+    assert!(resolve.status.success(), "stderr: {}", stderr(&resolve));
+    let resolve_json = stdout_json(&resolve);
+    assert_eq!(
+        resolve_json["metadata"]["command"],
+        json!("casegraphen cell transition")
+    );
+    assert_eq!(
+        resolve_json["result"]["entry"]["actor_id"],
+        json!("actor:native-transition-cli")
+    );
+    assert_eq!(
+        resolve_json["result"]["entry"]["morphism"]["metadata"]["transition"],
+        json!({
+            "from": "active",
+            "to": "resolved",
+            "reason": "The goal is complete"
+        })
+    );
+    let mut expected_goal = original_goal;
+    expected_goal["lifecycle"] = json!("resolved");
+    assert_eq!(
+        resolve_json["result"]["entry"]["morphism"]["metadata"]["payload"]["updated_cells"][0],
+        expected_goal
+    );
+    let resolved_revision = resolve_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("resolved revision")
+        .to_owned();
+
+    let retire = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &resolved_revision,
+        "--cell-id",
+        "goal:native-case-contract",
+        "--to",
+        "retired",
+        "--actor-id",
+        "actor:native-transition-cli",
+        "--format",
+        "json",
+    ]);
+    assert!(retire.status.success(), "stderr: {}", stderr(&retire));
+    let retire_json = stdout_json(&retire);
+    let retired_revision = retire_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("retired revision")
+        .to_owned();
+    assert_eq!(
+        retire_json["result"]["entry"]["morphism"]["metadata"]["transition"]["reason"],
+        Value::Null
+    );
+
+    let illegal = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &retired_revision,
+        "--cell-id",
+        "goal:native-case-contract",
+        "--to",
+        "active",
+        "--actor-id",
+        "actor:native-transition-cli",
+        "--format",
+        "json",
+    ]);
+    assert!(!illegal.status.success());
+    assert!(stderr(&illegal).contains(
+        "cannot transition cell goal:native-case-contract lifecycle from Retired to Active"
+    ));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_morphism_check_uses_metadata_core_extensions_as_applicability_gate() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

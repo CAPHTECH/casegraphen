@@ -189,3 +189,91 @@ fn parses_lift_adapters() {
     .expect("native lift command");
     assert!(matches!(native, NativeCliCommand::CaseImport { .. }));
 }
+
+#[test]
+fn parses_native_mutation_command_families() {
+    let review = NativeCliCommand::parse(
+        "review",
+        args(&[
+            "waive",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--target-id",
+            "work:demo",
+            "--reviewer-id",
+            "reviewer:demo",
+            "--reason",
+            "Deferred by waiver",
+            "--base-revision-id",
+            "revision:base",
+            "--evidence-id",
+            "evidence:demo",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect("review waive command");
+    assert!(matches!(
+        review,
+        NativeCliCommand::Review {
+            action: ReviewAction::Defer,
+            evidence_ids,
+            ..
+        } if evidence_ids == vec![Id::new("evidence:demo").expect("evidence id")]
+    ));
+
+    let evidence = NativeCliCommand::parse(
+        "evidence",
+        args(&[
+            "attach",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--base-revision-id",
+            "revision:base",
+            "--input",
+            "evidence.json",
+            "--satisfies",
+            "goal:demo",
+            "--actor-id",
+            "actor:demo",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect("evidence attach command");
+    assert!(matches!(
+        evidence,
+        NativeCliCommand::EvidenceAttach { satisfies_ids, .. }
+            if satisfies_ids == vec![Id::new("goal:demo").expect("goal id")]
+    ));
+
+    let transition = NativeCliCommand::parse(
+        "cell",
+        args(&[
+            "transition",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--base-revision-id",
+            "revision:base",
+            "--cell-id",
+            "work:demo",
+            "--to",
+            "resolved",
+            "--actor-id",
+            "actor:demo",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect("cell transition command");
+    assert!(matches!(
+        transition,
+        NativeCliCommand::CellTransition { lifecycle, .. } if lifecycle == "resolved"
+    ));
+}

@@ -23,15 +23,20 @@ pub(super) struct NativeOptions {
     pub(super) revision_id: Option<Id>,
     pub(super) base_revision_id: Option<Id>,
     pub(super) morphism_id: Option<Id>,
+    pub(super) target_id: Option<Id>,
+    pub(super) cell_id: Option<Id>,
     pub(super) reviewer_id: Option<Id>,
     pub(super) close_policy_id: Option<Id>,
     pub(super) actor_id: Option<Id>,
+    pub(super) evidence_ids: Vec<Id>,
+    pub(super) satisfies_ids: Vec<Id>,
     pub(super) capability_ids: Vec<Id>,
     pub(super) operation_scope_id: Option<Id>,
     pub(super) audience: Option<ProjectionAudience>,
     pub(super) source_boundary_id: Option<Id>,
     pub(super) title: Option<String>,
     pub(super) reason: Option<String>,
+    pub(super) lifecycle: Option<String>,
     pub(super) validation_evidence_ids: Vec<Id>,
     pub(super) higher_order: bool,
     pub(super) max_dimension: Option<Dimension>,
@@ -84,11 +89,15 @@ impl NativeOptions {
                 self.base_revision_id = Some(require_id(args, "--base-revision-id")?)
             }
             Some("--morphism-id") => self.morphism_id = Some(require_id(args, "--morphism-id")?),
+            Some("--target-id") => self.target_id = Some(require_id(args, "--target-id")?),
+            Some("--cell-id") => self.cell_id = Some(require_id(args, "--cell-id")?),
             Some("--reviewer-id") => self.reviewer_id = Some(require_id(args, "--reviewer-id")?),
             Some("--close-policy-id") => {
                 self.close_policy_id = Some(require_id(args, "--close-policy-id")?)
             }
             Some("--actor-id") => self.actor_id = Some(require_id(args, "--actor-id")?),
+            Some("--evidence-id") => self.evidence_ids.push(require_id(args, "--evidence-id")?),
+            Some("--satisfies") => self.satisfies_ids.push(require_id(args, "--satisfies")?),
             Some("--capability-id") => self
                 .capability_ids
                 .push(require_id(args, "--capability-id")?),
@@ -106,6 +115,7 @@ impl NativeOptions {
             }
             Some("--title") => self.title = Some(require_string(args, "--title")?),
             Some("--reason") => self.reason = Some(require_string(args, "--reason")?),
+            Some("--to") => self.lifecycle = Some(require_string(args, "--to")?),
             Some("--validation-evidence-id") => self
                 .validation_evidence_ids
                 .push(require_id(args, "--validation-evidence-id")?),
@@ -159,6 +169,9 @@ impl NativeOptions {
             "--revision-id" => self.revision_id.clone(),
             "--reviewer-id" => self.reviewer_id.clone(),
             "--morphism-id" => self.morphism_id.clone(),
+            "--target-id" => self.target_id.clone(),
+            "--cell-id" => self.cell_id.clone(),
+            "--actor-id" => self.actor_id.clone(),
             _ => None,
         }
         .ok_or_else(|| NativeCliError::usage(format!("{flag} <id> is required")))
@@ -168,6 +181,7 @@ impl NativeOptions {
         match flag {
             "--title" => self.title.clone(),
             "--reason" => self.reason.clone(),
+            "--to" => self.lifecycle.clone(),
             _ => None,
         }
         .ok_or_else(|| NativeCliError::usage(format!("{flag} <text> is required")))

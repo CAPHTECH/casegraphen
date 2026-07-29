@@ -3,6 +3,7 @@ use super::{
     options::{required_segment, NativeOptions},
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
+use crate::native_model::ReviewAction;
 use std::ffi::OsString;
 
 impl NativeCliCommand {
@@ -33,6 +34,11 @@ impl NativeCliCommand {
             "morphism" => {
                 Self::parse_morphism(required_segment(&mut args, "morphism operation")?, args)
             }
+            "review" => Self::parse_review(required_segment(&mut args, "review operation")?, args),
+            "evidence" => {
+                Self::parse_evidence(required_segment(&mut args, "evidence operation")?, args)
+            }
+            "cell" => Self::parse_cell(required_segment(&mut args, "cell operation")?, args),
             _ => Err(NativeCliError::usage("unsupported native namespace")),
         }
     }
@@ -395,6 +401,81 @@ impl NativeCliCommand {
             }),
             _ => Err(NativeCliError::usage("unsupported native morphism command")),
         }
+    }
+
+    fn parse_review(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let action = match operation.to_str() {
+            Some("accept") => ReviewAction::Accept,
+            Some("reject") => ReviewAction::Reject,
+            Some("reopen") => ReviewAction::Reopen,
+            Some("waive") => ReviewAction::Defer,
+            Some(_) | None => {
+                return Err(NativeCliError::usage("unsupported native review command"))
+            }
+        };
+        let options = NativeOptions::parse(args)?;
+        Ok(Self::Review {
+            action,
+            store: options.require_store()?,
+            case_space_id: options.require_id("--case-space-id")?,
+            target_id: options.require_id("--target-id")?,
+            reviewer_id: options.require_id("--reviewer-id")?,
+            reason: options.require_string("--reason")?,
+            base_revision_id: options
+                .base_revision_id
+                .clone()
+                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            evidence_ids: options.evidence_ids,
+            output: options.output,
+        })
+    }
+
+    fn parse_evidence(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        if operation.to_str() != Some("attach") {
+            return Err(NativeCliError::usage("unsupported native evidence command"));
+        }
+        let options = NativeOptions::parse(args)?;
+        Ok(Self::EvidenceAttach {
+            store: options.require_store()?,
+            case_space_id: options.require_id("--case-space-id")?,
+            base_revision_id: options
+                .base_revision_id
+                .clone()
+                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            input: options.require_path("--input")?,
+            actor_id: options.require_id("--actor-id")?,
+            satisfies_ids: options.satisfies_ids,
+            output: options.output,
+        })
+    }
+
+    fn parse_cell(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        if operation.to_str() != Some("transition") {
+            return Err(NativeCliError::usage("unsupported native cell command"));
+        }
+        let options = NativeOptions::parse(args)?;
+        Ok(Self::CellTransition {
+            store: options.require_store()?,
+            case_space_id: options.require_id("--case-space-id")?,
+            base_revision_id: options
+                .base_revision_id
+                .clone()
+                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            cell_id: options.require_id("--cell-id")?,
+            lifecycle: options.require_string("--to")?,
+            actor_id: options.require_id("--actor-id")?,
+            reason: options.reason,
+            output: options.output,
+        })
     }
 }
 
