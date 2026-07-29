@@ -1,8 +1,7 @@
 //! Shared topology diagnostics for CaseGraphen data models.
 
 use crate::{
-    model, native_model, workflow_model::WorkflowCaseGraph,
-    workflow_workspace::WorkflowHistoryEntry,
+    native_model, workflow_model::WorkflowCaseGraph, workflow_workspace::WorkflowHistoryEntry,
 };
 use higher_graphen_core::{CoreError, Id};
 use higher_graphen_structure::space::{Dimension, GraphAnalyticsReport};
@@ -151,49 +150,6 @@ pub struct OptionalDimensionDelta {
 
 /// Error returned while building or summarizing a topology report.
 pub type TopologyReportError = CoreError;
-
-/// Lifts a structured case graph into a finite complex and summarizes it.
-pub fn case_graph_topology(
-    graph: &model::CaseGraph,
-) -> Result<CaseTopologyReport, TopologyReportError> {
-    case_graph_topology_with_options(graph, TopologyReportOptions::baseline())
-}
-
-/// Lifts a structured case graph into a finite complex and summarizes it.
-pub fn case_graph_topology_with_options(
-    graph: &model::CaseGraph,
-    options: TopologyReportOptions,
-) -> Result<CaseTopologyReport, TopologyReportError> {
-    let mut lift = LiftBuilder::new(
-        graph.space_id.clone(),
-        cell_id("complex", "case_graph", &graph.case_graph_id)?,
-        "CaseGraphen case graph topology",
-    )?;
-
-    for case in &graph.cases {
-        lift.add_node("case", &case.id, &case.title)?;
-    }
-    for scenario in &graph.scenarios {
-        lift.add_node("scenario", &scenario.id, &scenario.title)?;
-    }
-    for goal in &graph.coverage_goals {
-        lift.add_node("coverage_goal", &goal.id, &goal.coverage_type)?;
-    }
-    for review in &graph.review_records {
-        lift.add_node("review_record", &review.id, "review record")?;
-    }
-    for relation in &graph.relations {
-        lift.add_relation(
-            "case_relation",
-            &relation.id,
-            &relation.relation_type,
-            &relation.from_id,
-            &relation.to_id,
-        )?;
-    }
-
-    lift.finish(options)
-}
 
 /// Lifts a workflow case graph into a finite complex and summarizes it.
 pub fn workflow_topology(
@@ -473,134 +429,11 @@ fn optional_dimension_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::CaseGraph;
-    use higher_graphen_structure::topology::PersistenceInterval;
-    use std::collections::BTreeMap;
 
     const WORKFLOW_EXAMPLE: &str =
         include_str!("../schemas/casegraphen/workflow.graph.example.json");
     const NATIVE_EXAMPLE: &str =
         include_str!("../schemas/casegraphen/native.case.space.example.json");
-
-    #[test]
-    fn case_graph_topology_serializes_homology() {
-        let graph = crate::fixtures::sample_graph();
-        let report = case_graph_topology(&graph).expect("case graph topology");
-
-        assert_eq!(report.space_id, graph.space_id);
-        assert_eq!(report.topology.homology.betti_number(0), 2);
-        assert_eq!(report.topology.homology.betti_number(1), 0);
-        assert_eq!(report.source_mapping.nodes.len(), 3);
-        assert_eq!(report.source_mapping.relations.len(), 1);
-
-        let value = serde_json::to_value(&report).expect("serialize report");
-        assert!(value.get("topology").is_some());
-        assert!(value["topology"].get("homology").is_some());
-        assert!(value.get("source_mapping").is_some());
-        assert!(value.get("higher_order").is_none());
-    }
-
-    #[test]
-    fn case_graph_topology_can_include_higher_order_persistence() {
-        let graph = crate::fixtures::sample_graph();
-        let report = case_graph_topology_with_options(
-            &graph,
-            TopologyReportOptions::higher_order(Some(1), 2),
-        )
-        .expect("case graph higher-order topology");
-
-        let higher_order = report.higher_order.expect("higher-order report");
-        assert_eq!(higher_order.options.max_dimension, Some(1));
-        assert_eq!(higher_order.options.min_persistence_stages, 2);
-        assert!(higher_order.cell_count > 0);
-        assert_eq!(higher_order.stage_count, higher_order.cell_count);
-        assert!(higher_order.persistence.is_some());
-        assert!(higher_order.summary.is_some());
-    }
-
-    #[test]
-    fn higher_order_summary_reflects_persistence_intervals() {
-        let graph = crate::fixtures::sample_graph();
-        let report = case_graph_topology_with_options(
-            &graph,
-            TopologyReportOptions::higher_order(Some(1), 2),
-        )
-        .expect("case graph higher-order topology");
-        let higher_order = report.higher_order.expect("higher-order report");
-        let persistence = higher_order.persistence.as_ref().expect("persistence");
-        let summary = higher_order.summary.as_ref().expect("summary");
-        let last_stage_index = persistence.stages.len() - 1;
-
-        assert_eq!(
-            summary.interval_count_by_dimension,
-            interval_counts_by_dimension(&persistence.intervals)
-        );
-        assert_eq!(
-            summary.open_interval_count_by_dimension,
-            interval_counts_by_dimension(
-                &persistence
-                    .intervals
-                    .iter()
-                    .filter(|interval| interval.is_open())
-                    .cloned()
-                    .collect::<Vec<_>>()
-            )
-        );
-        assert_eq!(
-            summary.persistent_interval_count_by_dimension,
-            interval_counts_by_dimension(&persistence.persistent_intervals)
-        );
-        assert_eq!(
-            summary
-                .longest_lifetime_interval
-                .as_ref()
-                .expect("longest interval")
-                .lifetime_stages,
-            persistence
-                .intervals
-                .iter()
-                .map(|interval| interval.lifetime_stages(last_stage_index))
-                .max()
-                .expect("interval lifetime")
-        );
-
-        let value = serde_json::to_value(&higher_order).expect("serialize higher-order report");
-        assert!(value.get("summary").is_some());
-        assert!(value["summary"]
-            .get("persistent_interval_count_by_dimension")
-            .is_some());
-    }
-
-    #[test]
-    fn higher_order_summary_respects_dimension_and_persistence_options() {
-        let graph = crate::fixtures::sample_graph();
-        let report = case_graph_topology_with_options(
-            &graph,
-            TopologyReportOptions::higher_order(Some(0), 2),
-        )
-        .expect("case graph higher-order topology");
-        let higher_order = report.higher_order.expect("higher-order report");
-        let summary = higher_order.summary.expect("summary");
-
-        assert_eq!(higher_order.cell_count, 3);
-        assert_eq!(higher_order.stage_count, 3);
-        assert_eq!(summary.interval_count_by_dimension, counts(&[(0, 3)]));
-        assert_eq!(summary.open_interval_count_by_dimension, counts(&[(0, 3)]));
-        assert_eq!(
-            summary.persistent_interval_count_by_dimension,
-            counts(&[(0, 2)])
-        );
-        assert_eq!(summary.highest_nonzero_betti_dimension, Some(0));
-        assert_eq!(summary.max_betti_rank, 3);
-        assert_eq!(summary.max_betti_rank_dimension, Some(0));
-
-        let longest = summary
-            .longest_lifetime_interval
-            .expect("longest lifetime interval");
-        assert_eq!(longest.dimension, 0);
-        assert_eq!(longest.lifetime_stages, 3);
-        assert!(longest.is_open);
-    }
 
     #[test]
     fn workflow_topology_serializes_homology() {
@@ -630,43 +463,5 @@ mod tests {
         assert!(!report.source_mapping.relations.is_empty());
 
         serde_json::to_value(&report).expect("serialize native topology");
-    }
-
-    #[test]
-    fn relation_with_missing_endpoint_is_skipped() {
-        let mut graph = CaseGraph::empty(
-            Id::new("case_graph:missing-endpoint").expect("case graph id"),
-            Id::new("space:missing-endpoint").expect("space id"),
-        );
-        graph.relations.push(model::CaseRelation {
-            id: Id::new("relation:missing").expect("relation id"),
-            relation_type: "depends_on".to_owned(),
-            from_id: Id::new("case:missing").expect("from id"),
-            to_id: Id::new("coverage:missing").expect("to id"),
-            evidence_ids: Vec::new(),
-            provenance: crate::fixtures::sample_graph().relations[0]
-                .provenance
-                .clone(),
-        });
-
-        let report = case_graph_topology(&graph).expect("case graph topology");
-
-        assert!(report.source_mapping.relations.is_empty());
-        assert_eq!(report.source_mapping.skipped_relations.len(), 1);
-        assert_eq!(report.topology.vertex_count, 0);
-    }
-
-    fn interval_counts_by_dimension(
-        intervals: &[PersistenceInterval],
-    ) -> BTreeMap<Dimension, usize> {
-        let mut counts = BTreeMap::new();
-        for interval in intervals {
-            *counts.entry(interval.dimension).or_insert(0) += 1;
-        }
-        counts
-    }
-
-    fn counts(entries: &[(Dimension, usize)]) -> BTreeMap<Dimension, usize> {
-        entries.iter().copied().collect()
     }
 }

@@ -1,9 +1,6 @@
 use crate::{
-    eval::{detect_conflicts, detect_missing_cases, evaluate_coverage, validate_case_graph},
-    model::ProjectionDefinition,
     native_cli::NativeCliCommand,
-    report,
-    store::{read_case_graph, read_coverage_policy, read_projection, write_report, LocalCaseStore},
+    store::write_report,
     topology::TopologyReportOptions,
     workflow_eval::cli_reports::{
         workflow_completions_json, workflow_correspond_json, workflow_evidence_json,
@@ -15,22 +12,14 @@ use crate::{
 };
 #[path = "cli_error.rs"]
 mod cli_error;
-#[path = "cli_legacy_reports.rs"]
-mod cli_legacy_reports;
 #[path = "cli_required.rs"]
 mod cli_required;
 mod options;
 
 use cli_error::CliError;
-use cli_legacy_reports::run_create;
 use cli_required::required_segment;
 use options::Options;
-use std::{
-    env,
-    ffi::OsString,
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
+use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 const USAGE: &str = include_str!("cli_usage.txt");
 
@@ -60,59 +49,6 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), CliError> {
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
     Version,
-    Create {
-        case_graph_id: String,
-        space_id: String,
-        store: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Inspect {
-        input: PathBuf,
-        output: Option<PathBuf>,
-    },
-    List {
-        store: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Validate {
-        input: PathBuf,
-        output: Option<PathBuf>,
-    },
-    HistoryTopology {
-        input: PathBuf,
-        topology_options: TopologyReportOptions,
-        output: Option<PathBuf>,
-    },
-    HistoryTopologyDiff {
-        left: PathBuf,
-        right: PathBuf,
-        topology_options: TopologyReportOptions,
-        output: Option<PathBuf>,
-    },
-    Coverage {
-        input: PathBuf,
-        coverage: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Missing {
-        input: PathBuf,
-        coverage: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Conflicts {
-        input: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Project {
-        input: PathBuf,
-        projection: PathBuf,
-        output: Option<PathBuf>,
-    },
-    Compare {
-        left: PathBuf,
-        right: PathBuf,
-        output: Option<PathBuf>,
-    },
     WorkflowReason {
         input: PathBuf,
         output: Option<PathBuf>,
@@ -172,34 +108,6 @@ impl Command {
         let mut args = args.into_iter();
         match required_segment(&mut args, "command")?.to_str() {
             Some("version") | Some("--version") | Some("-V") => Ok(Self::Version),
-            Some("create") => Self::parse_create(args),
-            Some("inspect") => {
-                Self::parse_one_input(args, |input, output| Self::Inspect { input, output })
-            }
-            Some("list") => Self::parse_list(args),
-            Some("validate") => {
-                Self::parse_one_input(args, |input, output| Self::Validate { input, output })
-            }
-            Some("history") => Self::parse_history(args),
-            Some("coverage") => {
-                Self::parse_policy_command(args, |input, coverage, output| Self::Coverage {
-                    input,
-                    coverage,
-                    output,
-                })
-            }
-            Some("missing") => {
-                Self::parse_policy_command(args, |input, coverage, output| Self::Missing {
-                    input,
-                    coverage,
-                    output,
-                })
-            }
-            Some("conflicts") => {
-                Self::parse_one_input(args, |input, output| Self::Conflicts { input, output })
-            }
-            Some("project") => Self::parse_project(args),
-            Some("compare") => Self::parse_compare(args),
             Some("workflow") => Self::parse_workflow(args),
             Some("lift") => NativeCliCommand::parse("lift", args)
                 .map(Self::Native)
@@ -233,43 +141,6 @@ impl Command {
                 .map_err(CliError::usage),
             Some(_) | None => Err(CliError::usage("unsupported command segment")),
         }
-    }
-
-    fn parse_history(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let mut args = args;
-        match required_segment(&mut args, "history operation")?.to_str() {
-            Some("topology") => Self::parse_topology(
-                args,
-                |input, topology_options, output| Self::HistoryTopology {
-                    input,
-                    topology_options,
-                    output,
-                },
-                |left, right, topology_options, output| Self::HistoryTopologyDiff {
-                    left,
-                    right,
-                    topology_options,
-                    output,
-                },
-            ),
-            Some(_) | None => Err(CliError::usage("unsupported history command segment")),
-        }
-    }
-
-    fn parse_create(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let options = Options::parse(args)?;
-        Ok(Self::Create {
-            case_graph_id: options
-                .case_graph_id
-                .ok_or_else(|| CliError::usage("--case-graph-id <id> is required"))?,
-            space_id: options
-                .space_id
-                .ok_or_else(|| CliError::usage("--space-id <id> is required"))?,
-            store: options
-                .store
-                .ok_or_else(|| CliError::usage("--store <dir> is required"))?,
-            output: options.output,
-        })
     }
 
     fn parse_one_input(
@@ -323,58 +194,6 @@ impl Command {
             topology_options,
             options.output,
         ))
-    }
-
-    fn parse_list(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let options = Options::parse(args)?;
-        Ok(Self::List {
-            store: options
-                .store
-                .ok_or_else(|| CliError::usage("--store <dir> is required"))?,
-            output: options.output,
-        })
-    }
-
-    fn parse_policy_command(
-        args: impl Iterator<Item = OsString>,
-        constructor: impl FnOnce(PathBuf, PathBuf, Option<PathBuf>) -> Self,
-    ) -> Result<Self, CliError> {
-        let options = Options::parse(args)?;
-        Ok(constructor(
-            options
-                .input
-                .ok_or_else(|| CliError::usage("--input <path> is required"))?,
-            options
-                .coverage
-                .ok_or_else(|| CliError::usage("--coverage <path> is required"))?,
-            options.output,
-        ))
-    }
-
-    fn parse_project(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let options = Options::parse(args)?;
-        Ok(Self::Project {
-            input: options
-                .input
-                .ok_or_else(|| CliError::usage("--input <path> is required"))?,
-            projection: options
-                .projection
-                .ok_or_else(|| CliError::usage("--projection <path> is required"))?,
-            output: options.output,
-        })
-    }
-
-    fn parse_compare(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
-        let options = Options::parse(args)?;
-        Ok(Self::Compare {
-            left: options
-                .left
-                .ok_or_else(|| CliError::usage("--left <path> is required"))?,
-            right: options
-                .right
-                .ok_or_else(|| CliError::usage("--right <path> is required"))?,
-            output: options.output,
-        })
     }
 
     fn parse_workflow(args: impl Iterator<Item = OsString>) -> Result<Self, CliError> {
@@ -469,18 +288,7 @@ impl Command {
     fn output(&self) -> Option<&PathBuf> {
         match self {
             Self::Version => None,
-            Self::Create { output, .. }
-            | Self::Inspect { output, .. }
-            | Self::List { output, .. }
-            | Self::Validate { output, .. }
-            | Self::HistoryTopology { output, .. }
-            | Self::HistoryTopologyDiff { output, .. }
-            | Self::Coverage { output, .. }
-            | Self::Missing { output, .. }
-            | Self::Conflicts { output, .. }
-            | Self::Project { output, .. }
-            | Self::Compare { output, .. }
-            | Self::WorkflowReason { output, .. }
+            Self::WorkflowReason { output, .. }
             | Self::WorkflowValidate { output, .. }
             | Self::WorkflowReadiness { output, .. }
             | Self::WorkflowObstructions { output, .. }
@@ -499,37 +307,6 @@ impl Command {
     fn run_json(&self) -> Result<String, CliError> {
         match self {
             Self::Version => Ok(format!("casegraphen {}", env!("CARGO_PKG_VERSION"))),
-            Self::Create {
-                case_graph_id,
-                space_id,
-                store,
-                ..
-            } => run_create(case_graph_id, space_id, store),
-            Self::Inspect { input, .. } => run_inspect(input),
-            Self::List { store, .. } => run_list(store),
-            Self::Validate { input, .. } => run_validate(input),
-            Self::HistoryTopology {
-                input,
-                topology_options,
-                ..
-            } => run_topology(input, *topology_options),
-            Self::HistoryTopologyDiff {
-                left,
-                right,
-                topology_options,
-                ..
-            } => run_topology_diff(left, right, *topology_options),
-            Self::Coverage {
-                input, coverage, ..
-            } => run_coverage(input, coverage),
-            Self::Missing {
-                input, coverage, ..
-            } => run_missing(input, coverage),
-            Self::Conflicts { input, .. } => run_conflicts(input),
-            Self::Project {
-                input, projection, ..
-            } => run_project(input, projection),
-            Self::Compare { left, right, .. } => run_compare(left, right),
             Self::WorkflowReason { input, .. } => {
                 workflow_reason_json(input).map_err(CliError::from)
             }
@@ -574,121 +351,4 @@ impl Command {
             Self::Native(command) => command.run_json().map_err(CliError::from),
         }
     }
-}
-
-fn run_inspect(input: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    serialize(&report::inspect_report(
-        "casegraphen inspect",
-        input,
-        &graph,
-    ))
-}
-
-fn run_list(store: &Path) -> Result<String, CliError> {
-    let entries = LocalCaseStore::new(store.to_path_buf()).list_graphs()?;
-    serialize(&report::list_report("casegraphen list", store, entries))
-}
-
-fn run_validate(input: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    let result = validate_case_graph(&graph);
-    serialize(&report::validate_report(
-        "casegraphen validate",
-        input,
-        &graph,
-        result,
-    ))
-}
-
-fn run_topology(input: &Path, topology_options: TopologyReportOptions) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    serialize(&report::topology_report(
-        "casegraphen history topology",
-        input,
-        &graph,
-        topology_options,
-    ))
-}
-
-fn run_topology_diff(
-    left: &Path,
-    right: &Path,
-    topology_options: TopologyReportOptions,
-) -> Result<String, CliError> {
-    let left_graph = read_case_graph(left)?;
-    let right_graph = read_case_graph(right)?;
-    serialize(&report::topology_diff_report(
-        "casegraphen history topology diff",
-        left,
-        right,
-        &left_graph,
-        &right_graph,
-        topology_options,
-    ))
-}
-
-fn run_coverage(input: &Path, coverage: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    let policy = read_coverage_policy(coverage)?;
-    let result = evaluate_coverage(&graph, &policy);
-    serialize(&report::coverage_report(
-        "casegraphen coverage",
-        input,
-        coverage,
-        &graph,
-        result,
-    ))
-}
-
-fn run_missing(input: &Path, coverage: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    let policy = read_coverage_policy(coverage)?;
-    let result = detect_missing_cases(&graph, &policy);
-    serialize(&report::missing_report(
-        "casegraphen missing",
-        input,
-        coverage,
-        &graph,
-        result,
-    ))
-}
-
-fn run_conflicts(input: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    let result = detect_conflicts(&graph);
-    serialize(&report::conflicts_report(
-        "casegraphen conflicts",
-        input,
-        &graph,
-        result,
-    ))
-}
-
-fn run_project(input: &Path, projection: &Path) -> Result<String, CliError> {
-    let graph = read_case_graph(input)?;
-    let _definition: ProjectionDefinition = read_projection(projection)?;
-    serialize(&report::project_report(
-        "casegraphen project",
-        input,
-        projection,
-        &graph,
-        report::operation_projection(&graph),
-    ))
-}
-
-fn run_compare(left: &Path, right: &Path) -> Result<String, CliError> {
-    let left_graph = read_case_graph(left)?;
-    let right_graph = read_case_graph(right)?;
-    serialize(&report::compare_report(
-        "casegraphen compare",
-        left,
-        right,
-        &left_graph,
-        &right_graph,
-    ))
-}
-
-fn serialize(report: &impl serde::Serialize) -> Result<String, CliError> {
-    serde_json::to_string(report).map_err(CliError::from)
 }

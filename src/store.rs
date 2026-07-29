@@ -1,13 +1,9 @@
-use crate::model::{
-    CaseGraph, CoveragePolicy, ProjectionDefinition, CASE_GRAPH_SCHEMA, COVERAGE_POLICY_SCHEMA,
-    PROJECTION_SCHEMA,
-};
+use crate::model::{ProjectionDefinition, PROJECTION_SCHEMA};
 use crate::workflow_eval::{validate_workflow_graph, WorkflowValidationError};
 use crate::workflow_model::{
     WorkflowCaseGraph, WORKFLOW_GRAPH_SCHEMA, WORKFLOW_GRAPH_SCHEMA_VERSION,
 };
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -35,62 +31,6 @@ pub enum StoreError {
     },
 }
 
-pub struct LocalCaseStore {
-    root: PathBuf,
-}
-
-impl LocalCaseStore {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    pub fn create_graph(&self, graph: &CaseGraph) -> StoreResult<PathBuf> {
-        fs::create_dir_all(&self.root).map_err(|source| StoreError::Io {
-            path: self.root.clone(),
-            source,
-        })?;
-        let path = self.path_for_graph(graph);
-        write_json(&path, graph)?;
-        Ok(path)
-    }
-
-    pub fn list_graphs(&self) -> StoreResult<Vec<Value>> {
-        let entries = fs::read_dir(&self.root).map_err(|source| StoreError::Io {
-            path: self.root.clone(),
-            source,
-        })?;
-        let mut graphs = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| StoreError::Io {
-                path: self.root.clone(),
-                source,
-            })?;
-            collect_graph_entry(&entry.path(), &mut graphs)?;
-        }
-        graphs.sort_by_key(|value| value["case_graph_id"].as_str().unwrap_or("").to_owned());
-        Ok(graphs)
-    }
-
-    fn path_for_graph(&self, graph: &CaseGraph) -> PathBuf {
-        self.root.join(format!(
-            "{}.case.graph.json",
-            file_stem(&graph.case_graph_id)
-        ))
-    }
-}
-
-pub fn read_case_graph(path: &Path) -> StoreResult<CaseGraph> {
-    let graph: CaseGraph = read_json(path)?;
-    require_schema(path, &graph.schema, CASE_GRAPH_SCHEMA)?;
-    Ok(graph)
-}
-
-pub fn read_coverage_policy(path: &Path) -> StoreResult<CoveragePolicy> {
-    let policy: CoveragePolicy = read_json(path)?;
-    require_schema(path, &policy.schema, COVERAGE_POLICY_SCHEMA)?;
-    Ok(policy)
-}
-
 pub fn read_projection(path: &Path) -> StoreResult<ProjectionDefinition> {
     let projection: ProjectionDefinition = read_json(path)?;
     require_schema(path, &projection.schema, PROJECTION_SCHEMA)?;
@@ -110,20 +50,6 @@ pub fn read_workflow_graph(path: &Path) -> StoreResult<WorkflowCaseGraph> {
 
 pub fn write_report(path: &Path, report: &impl serde::Serialize) -> StoreResult<()> {
     write_json(path, report)
-}
-
-fn collect_graph_entry(path: &Path, graphs: &mut Vec<Value>) -> StoreResult<()> {
-    if !is_graph_file(path) {
-        return Ok(());
-    }
-    let graph = read_case_graph(path)?;
-    graphs.push(json!({
-        "case_graph_id": graph.case_graph_id,
-        "space_id": graph.space_id,
-        "path": path.display().to_string(),
-        "counts": crate::eval::graph_counts(&graph)
-    }));
-    Ok(())
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> StoreResult<T> {
@@ -168,25 +94,6 @@ fn require_schema_version(path: &Path, actual: u32, expected: u32) -> StoreResul
     })
 }
 
-fn is_graph_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".case.graph.json"))
-}
-
-fn file_stem(id: &higher_graphen_core::Id) -> String {
-    let mut stem = String::new();
-    for byte in id.as_str().bytes() {
-        match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' => {
-                stem.push(byte as char);
-            }
-            _ => stem.push_str(&format!("~{byte:02x}")),
-        }
-    }
-    stem
-}
-
 impl std::fmt::Display for StoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -205,52 +112,7 @@ impl std::error::Error for StoreError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::sample_graph;
-
-    #[test]
-    fn local_store_round_trips_graph_headers() {
-        let root =
-            std::env::temp_dir().join(format!("casegraphen-store-test-{}", std::process::id()));
-        let store = LocalCaseStore::new(root.clone());
-        let path = store.create_graph(&sample_graph()).expect("create graph");
-        let entries = store.list_graphs().expect("list graphs");
-
-        assert_eq!(
-            entries[0]["case_graph_id"],
-            json!("case_graph:architecture-smoke")
-        );
-        assert!(path.exists());
-
-        fs::remove_dir_all(root).expect("remove temp store");
-    }
-
-    #[test]
-    fn local_store_keeps_distinct_graph_ids_with_similar_path_segments() {
-        let root = std::env::temp_dir().join(format!(
-            "casegraphen-store-collision-test-{}",
-            std::process::id()
-        ));
-        let store = LocalCaseStore::new(root.clone());
-        let mut first = sample_graph();
-        first.case_graph_id = "case_graph:a:b".try_into().expect("first id");
-        let mut second = sample_graph();
-        second.case_graph_id = "case_graph:a-b".try_into().expect("second id");
-
-        let first_path = store.create_graph(&first).expect("create first graph");
-        let second_path = store.create_graph(&second).expect("create second graph");
-
-        assert_ne!(first_path, second_path);
-        let entries = store.list_graphs().expect("list graphs");
-        assert_eq!(entries.len(), 2);
-        assert!(entries
-            .iter()
-            .any(|entry| entry["case_graph_id"] == json!("case_graph:a:b")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry["case_graph_id"] == json!("case_graph:a-b")));
-
-        fs::remove_dir_all(root).expect("remove temp store");
-    }
+    use serde_json::{json, Value};
 
     #[test]
     fn read_workflow_graph_rejects_unsupported_schema() {
