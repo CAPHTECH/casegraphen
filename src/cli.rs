@@ -16,19 +16,20 @@ mod cli_error;
 mod cli_required;
 mod options;
 
+use crate::exec::worker::CliExitCode;
 use cli_error::CliError;
 use cli_required::required_segment;
 use options::Options;
-use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{env, ffi::OsString, path::PathBuf};
 
 const USAGE: &str = include_str!("cli_usage.txt");
 
-pub fn main_entry() -> ExitCode {
+pub fn main_entry() -> CliExitCode {
     match run(env::args_os().skip(1)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => CliExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
-            ExitCode::FAILURE
+            CliExitCode::FAILURE
         }
     }
 }
@@ -137,6 +138,12 @@ impl Command {
                 .map(Self::Native)
                 .map_err(CliError::from),
             Some("plan") => NativeCliCommand::parse("plan", args)
+                .map(Self::Native)
+                .map_err(CliError::from),
+            Some("binding") => NativeCliCommand::parse("binding", args)
+                .map(Self::Native)
+                .map_err(CliError::from),
+            Some("run") => NativeCliCommand::parse("run", args)
                 .map(Self::Native)
                 .map_err(CliError::from),
             Some("review") => NativeCliCommand::parse("review", args)

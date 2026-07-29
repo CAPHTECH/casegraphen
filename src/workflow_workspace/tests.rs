@@ -167,10 +167,7 @@ fn unique_temp_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time since epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "casegraphen-workflow-workspace-{label}-{}-{nanos}",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("casegraphen-workflow-workspace-{label}-{nanos}"))
 }
 
 fn remove_temp_dir(path: &Path) {

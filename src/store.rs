@@ -113,13 +113,15 @@ impl std::error::Error for StoreError {}
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn read_workflow_graph_rejects_unsupported_schema() {
-        let root = std::env::temp_dir().join(format!(
-            "casegraphen-workflow-store-test-{}",
-            std::process::id()
-        ));
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time since epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("casegraphen-workflow-store-test-{nanos}"));
         fs::create_dir_all(&root).expect("create temp store");
         let path = root.join("bad.workflow.graph.json");
         let mut value: Value = serde_json::from_str(include_str!(

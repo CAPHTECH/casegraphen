@@ -1,7 +1,11 @@
 use super::*;
 use crate::native_model::{CaseMorphismType, CaseSpace};
 use higher_graphen_core::{Id, ReviewStatus};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const NATIVE_EXAMPLE: &str =
     include_str!("../../schemas/casegraphen/native.case.space.example.json");
@@ -322,10 +326,11 @@ fn rewrite_history(store: &NativeCaseStore, case_space_id: &Id, history: &[Morph
 }
 
 fn temp_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "casegraphen-native-store-{name}-{}",
-        std::process::id()
-    ));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time since epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("casegraphen-native-store-{name}-{nanos}"));
     let _ = fs::remove_dir_all(&root);
     root
 }

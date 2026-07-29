@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.workflow.worker_report.v1",
+  "title": "CaseGraphen WorkerReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "report_id",
+    "binding_id",
+    "binding_content_hash",
+    "work_cell_id",
+    "plan_id",
+    "step_id",
+    "exit_status",
+    "timed_out",
+    "outputs",
+    "trust_boundary",
+    "started_at",
+    "finished_at",
+    "metadata"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.workflow.worker_report.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "report_id": {
+      "$ref": "#/$defs/id"
+    },
+    "binding_id": {
+      "$ref": "#/$defs/id"
+    },
+    "binding_content_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "work_cell_id": {
+      "$ref": "#/$defs/id"
+    },
+    "plan_id": {
+      "$ref": "#/$defs/id"
+    },
+    "step_id": {
+      "$ref": "#/$defs/id"
+    },
+    "exit_status": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/output"
+      }
+    },
+    "trust_boundary": {
+      "const": "local_process_output_untrusted_until_validated_and_reviewed"
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "finished_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "content_hash",
+        "byte_len",
+        "truncated"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "stdout",
+            "stderr"
+          ]
+        },
+        "content_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byte_len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

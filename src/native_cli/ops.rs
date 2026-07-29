@@ -27,10 +27,13 @@ use higher_graphen_core::{Id, Provenance, ReviewStatus, SourceKind};
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
+mod binding;
 mod io;
 mod lift;
 mod mutations;
 mod plan;
+mod run;
+pub(super) use binding::binding_register;
 use io::{
     case_space_checksum, known_ids, proposal_path, proposal_value, provenance, read_morphism,
     read_proposal, timestamp, write_json,
@@ -38,6 +41,7 @@ use io::{
 pub(super) use lift::{case_import, case_new, lift_structured_source};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
 pub(super) use plan::{plan_check, plan_propose, plan_review};
+pub(super) use run::run_step;
 
 pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) action: ReviewAction,
@@ -55,6 +59,25 @@ pub(super) struct NativePlanReviewOptions<'a> {
     pub(super) reason: &'a str,
     pub(super) base_revision_id: &'a Id,
     pub(super) gate_options: &'a NativePlanGateOptions,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeRunGateOptions {
+    pub(super) actor_id: Id,
+    pub(super) capability_ids: Vec<Id>,
+    pub(super) operation_scope_id: Id,
+    pub(super) audience: ProjectionAudience,
+    pub(super) source_boundary_id: Id,
+}
+
+pub(super) struct NativeRunStepOptions<'a> {
+    pub(super) case_space_id: &'a Id,
+    pub(super) plan_id: &'a Id,
+    pub(super) base_revision_id: &'a Id,
+    pub(super) actor_id: &'a Id,
+    pub(super) enabled_worker_kinds: &'a [String],
+    pub(super) retry_step_id: Option<&'a Id>,
+    pub(super) gate_options: &'a NativeRunGateOptions,
 }
 
 pub(super) fn case_reason(

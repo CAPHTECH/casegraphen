@@ -29,6 +29,8 @@ pub(super) struct NativeOptions {
     pub(super) reviewer_id: Option<Id>,
     pub(super) close_policy_id: Option<Id>,
     pub(super) actor_id: Option<Id>,
+    pub(super) gate_actor_id: Option<Id>,
+    pub(super) retry_step_id: Option<Id>,
     pub(super) evidence_ids: Vec<Id>,
     pub(super) satisfies_ids: Vec<Id>,
     pub(super) capability_ids: Vec<Id>,
@@ -39,6 +41,8 @@ pub(super) struct NativeOptions {
     pub(super) reason: Option<String>,
     pub(super) lifecycle: Option<String>,
     pub(super) validation_evidence_ids: Vec<Id>,
+    pub(super) enabled_worker_kinds: Vec<String>,
+    pub(super) run_step: bool,
     pub(super) higher_order: bool,
     pub(super) max_dimension: Option<Dimension>,
     pub(super) min_persistence_stages: usize,
@@ -98,6 +102,10 @@ impl NativeOptions {
                 self.close_policy_id = Some(require_id(args, "--close-policy-id")?)
             }
             Some("--actor-id") => self.actor_id = Some(require_id(args, "--actor-id")?),
+            Some("--gate-actor-id") => {
+                self.gate_actor_id = Some(require_id(args, "--gate-actor-id")?)
+            }
+            Some("--retry-step") => self.retry_step_id = Some(require_id(args, "--retry-step")?),
             Some("--evidence-id") => self.evidence_ids.push(require_id(args, "--evidence-id")?),
             Some("--satisfies") => self.satisfies_ids.push(require_id(args, "--satisfies")?),
             Some("--capability-id") => self
@@ -121,6 +129,10 @@ impl NativeOptions {
             Some("--validation-evidence-id") => self
                 .validation_evidence_ids
                 .push(require_id(args, "--validation-evidence-id")?),
+            Some("--enable-worker") => self
+                .enabled_worker_kinds
+                .push(require_string(args, "--enable-worker")?),
+            Some("--step") => self.run_step = true,
             Some("--higher-order") => self.higher_order = true,
             Some("--max-dimension") => {
                 self.max_dimension = Some(require_dimension(args, "--max-dimension")?)

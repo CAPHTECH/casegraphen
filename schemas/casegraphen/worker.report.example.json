@@ -1,0 +1,32 @@
+{
+  "schema": "highergraphen.case.workflow.worker_report.v1",
+  "schema_version": 1,
+  "report_id": "worker_report:example-run",
+  "binding_id": "worker_binding:native-contract-review",
+  "binding_content_hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "work_cell_id": "work:review-native-contract",
+  "plan_id": "plan:native-contract-review",
+  "step_id": "step:review-native-contract",
+  "exit_status": 0,
+  "timed_out": false,
+  "outputs": [
+    {
+      "name": "stdout",
+      "content_hash": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
+      "byte_len": 7,
+      "truncated": false
+    },
+    {
+      "name": "stderr",
+      "content_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "byte_len": 0,
+      "truncated": false
+    }
+  ],
+  "trust_boundary": "local_process_output_untrusted_until_validated_and_reviewed",
+  "started_at": "unix:1770000000",
+  "finished_at": "unix:1770000001",
+  "metadata": {
+    "input_report": "input.report.json"
+  }
+}

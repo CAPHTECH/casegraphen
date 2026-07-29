@@ -1,10 +1,14 @@
 use super::{
     append_validated_morphism,
+    binding::read_registered_worker_binding,
     io::{read_json, timestamp, write_json},
     require_current_revision, NativePlanGateOptions, NativePlanReviewOptions,
 };
 use crate::{
-    exec::{validate_execution_plan, ExecutionPlan},
+    exec::{
+        binding::worker_binding_content_hash, execution_plan_content_hash, validate_execution_plan,
+        ExecutionPlan,
+    },
     native_eval::evaluate_native_case,
     native_model::{CaseSpace, ReviewAction},
     native_review::{
@@ -35,8 +39,9 @@ pub(in crate::native_cli) fn plan_propose(
 ) -> Result<Value, NativeCliError> {
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
-    let plan = read_plan_file(input)?;
+    let mut plan = read_plan_file(input)?;
     validate_plan_for_current_case_space(&plan, case_space_id, &replay.case_space)?;
+    record_worker_binding_hashes(store, &mut plan)?;
     let path = plan_path(store, &plan.plan_id);
     if path.exists() {
         return Err(NativeCliError::invalid(format!(
@@ -249,7 +254,10 @@ fn validate_plan_for_current_case_space(
     Ok(())
 }
 
-fn read_stored_plan(path: &Path, expected_plan_id: &Id) -> Result<ExecutionPlan, NativeCliError> {
+pub(super) fn read_stored_plan(
+    path: &Path,
+    expected_plan_id: &Id,
+) -> Result<ExecutionPlan, NativeCliError> {
     let plan = read_plan_file(path)?;
     if plan.plan_id != *expected_plan_id {
         return Err(NativeCliError::invalid(format!(
@@ -271,12 +279,33 @@ fn write_plan_file(path: &Path, plan: &ExecutionPlan) -> Result<(), NativeCliErr
 }
 
 fn plan_content_hash(plan: &ExecutionPlan) -> Result<String, NativeCliError> {
-    let canonical = serde_json::to_string(&serde_json::to_value(plan)?)?;
-    Ok(crate::native_hash::sha256_hex(canonical.as_bytes()))
+    execution_plan_content_hash(plan).map_err(NativeCliError::from)
 }
 
-fn plan_path(store: &Path, plan_id: &Id) -> PathBuf {
+pub(super) fn plan_path(store: &Path, plan_id: &Id) -> PathBuf {
     store
         .join(PLAN_DIRECTORY)
         .join(format!("{}.execution.plan.json", path_segment(plan_id)))
+}
+
+fn record_worker_binding_hashes(
+    store: &Path,
+    plan: &mut ExecutionPlan,
+) -> Result<(), NativeCliError> {
+    let mut hashes = serde_json::Map::new();
+    for binding_id in plan
+        .steps
+        .iter()
+        .map(|step| &step.worker_binding_id)
+        .collect::<BTreeSet<_>>()
+    {
+        let binding = read_registered_worker_binding(store, binding_id)?;
+        hashes.insert(
+            binding_id.to_string(),
+            Value::String(worker_binding_content_hash(&binding)?),
+        );
+    }
+    plan.metadata
+        .insert("worker_binding_hashes".to_owned(), Value::Object(hashes));
+    Ok(())
 }

@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fmt;
 
+pub mod binding;
+pub mod records;
+pub mod worker;
+
 pub const EXECUTION_PLAN_SCHEMA: &str = "highergraphen.case.workflow.execution_plan.v1";
 pub const EXECUTION_PLAN_SCHEMA_VERSION: u32 = 1;
 
@@ -192,6 +196,20 @@ pub fn transition_permitted(
     payload_lifecycles_permitted && retired_cells_permitted
 }
 
+pub fn execution_plan_content_hash(plan: &ExecutionPlan) -> Result<String, serde_json::Error> {
+    let mut normalized = plan.clone();
+    normalized.review_status = ReviewStatus::Unreviewed;
+    let canonical = serde_json::to_string(&serde_json::to_value(normalized)?)?;
+    Ok(crate::native_hash::sha256_hex(canonical.as_bytes()))
+}
+
+pub fn accepted_plan_content_hash_matches(
+    plan: &ExecutionPlan,
+    recorded_content_hash: &str,
+) -> Result<bool, serde_json::Error> {
+    Ok(execution_plan_content_hash(plan)? == recorded_content_hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +314,20 @@ mod tests {
             &morphism,
             &case_space
         ));
+    }
+
+    #[test]
+    fn accepted_plan_hash_normalizes_review_status_to_unreviewed() {
+        let mut plan: ExecutionPlan =
+            serde_json::from_str(EXECUTION_PLAN_EXAMPLE).expect("execution plan example");
+        let proposed_hash = execution_plan_content_hash(&plan).expect("proposed plan hash");
+        plan.review_status = ReviewStatus::Accepted;
+
+        assert!(accepted_plan_content_hash_matches(&plan, &proposed_hash)
+            .expect("accepted plan hash verification"));
+        plan.metadata
+            .insert("tampered".to_owned(), Value::Bool(true));
+        assert!(!accepted_plan_content_hash_matches(&plan, &proposed_hash)
+            .expect("tampered plan hash verification"));
     }
 }

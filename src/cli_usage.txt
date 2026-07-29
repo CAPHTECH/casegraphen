@@ -14,6 +14,8 @@ usage:
   casegraphen plan check --store <dir> --case-space-id <id> --plan-id <id> --format json [--output <path>]
   casegraphen plan accept --store <dir> --case-space-id <id> --plan-id <id> --reviewer-id <id> --reason <text> --base-revision-id <id> --actor-id <id> --capability-id <id> [--capability-id <id> ...] --operation-scope-id <id> --audience audit|system --source-boundary-id <id> --format json [--output <path>]
   casegraphen plan reject --store <dir> --case-space-id <id> --plan-id <id> --reviewer-id <id> --reason <text> --base-revision-id <id> [--actor-id <id>] [--capability-id <id> ...] [--operation-scope-id <id>] [--audience audit|system] [--source-boundary-id <id>] --format json [--output <path>]
+  casegraphen binding register --store <dir> --input <worker.binding.json> --format json [--output <path>]
+  casegraphen run --step --store <dir> --case-space-id <id> --plan-id <id> --base-revision-id <id> --actor-id <id> --enable-worker shell --gate-actor-id <id> --capability-id <id> [--capability-id <id> ...] --operation-scope-id <id> --audience audit|system --source-boundary-id <id> [--retry-step <step-id>] --format json [--output <path>]
   casegraphen review accept|reject|reopen|waive --store <dir> --case-space-id <id> --target-id <id> --reviewer-id <id> --reason <text> --base-revision-id <id> [--evidence-id <id>]... --format json [--output <path>]
   casegraphen evidence attach --store <dir> --case-space-id <id> --base-revision-id <id> --input <evidence-cell.json> [--satisfies <target-id>]... --actor-id <id> --format json [--output <path>]
   casegraphen cell transition --store <dir> --case-space-id <id> --base-revision-id <id> --cell-id <id> --to <lifecycle> --actor-id <id> [--reason <text>] --format json [--output <path>]

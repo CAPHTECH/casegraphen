@@ -18,11 +18,11 @@ mod path_helpers;
 #[path = "native_cli_reporting.rs"]
 mod reporting;
 use ops::{
-    case_close_check, case_import, case_new, case_reason, case_topology, case_topology_diff,
-    cell_transition, evidence_attach, lift_structured_source, morphism_apply, morphism_check,
-    morphism_propose, morphism_reject, plan_check, plan_propose, plan_review, projection_apply,
-    review_apply, NativeCloseGateOptions, NativePlanGateOptions, NativePlanReviewOptions,
-    NativeReviewApplyOptions,
+    binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
+    case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
+    morphism_check, morphism_propose, morphism_reject, plan_check, plan_propose, plan_review,
+    projection_apply, review_apply, run_step, NativeCloseGateOptions, NativePlanGateOptions,
+    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use reporting::report;
 
@@ -176,6 +176,22 @@ pub(crate) enum NativeCliCommand {
         gate_options: NativePlanGateOptions,
         output: Option<PathBuf>,
     },
+    BindingRegister {
+        store: PathBuf,
+        input: PathBuf,
+        output: Option<PathBuf>,
+    },
+    RunStep {
+        store: PathBuf,
+        case_space_id: Id,
+        plan_id: Id,
+        base_revision_id: Id,
+        actor_id: Id,
+        enabled_worker_kinds: Vec<String>,
+        retry_step_id: Option<Id>,
+        gate_options: NativeRunGateOptions,
+        output: Option<PathBuf>,
+    },
     Review {
         action: ReviewAction,
         store: PathBuf,
@@ -243,6 +259,8 @@ impl NativeCliCommand {
             | Self::PlanPropose { output, .. }
             | Self::PlanCheck { output, .. }
             | Self::PlanReview { output, .. }
+            | Self::BindingRegister { output, .. }
+            | Self::RunStep { output, .. }
             | Self::Review { output, .. }
             | Self::EvidenceAttach { output, .. }
             | Self::CellTransition { output, .. } => output.as_ref(),
@@ -277,6 +295,8 @@ impl NativeCliCommand {
             | Self::PlanPropose { .. }
             | Self::PlanCheck { .. }
             | Self::PlanReview { .. }
+            | Self::BindingRegister { .. }
+            | Self::RunStep { .. }
             | Self::Review { .. }
             | Self::EvidenceAttach { .. }
             | Self::CellTransition { .. } => self.run_morphism_value(),
@@ -503,6 +523,29 @@ impl NativeCliCommand {
                     gate_options,
                 },
             )?,
+            Self::BindingRegister { store, input, .. } => binding_register(store, input)?,
+            Self::RunStep {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                retry_step_id,
+                gate_options,
+                ..
+            } => run_step(
+                store,
+                NativeRunStepOptions {
+                    case_space_id,
+                    plan_id,
+                    base_revision_id,
+                    actor_id,
+                    enabled_worker_kinds,
+                    retry_step_id: retry_step_id.as_ref(),
+                    gate_options,
+                },
+            )?,
             Self::Review {
                 action,
                 store,
@@ -683,6 +726,7 @@ pub enum NativeCliError {
     Store(NativeStoreError),
     Review(crate::native_review::NativeReviewError),
     Eval(crate::native_eval::NativeEvalError),
+    Worker(crate::exec::worker::WorkerError),
     Io {
         path: PathBuf,
         source: std::io::Error,
@@ -738,6 +782,7 @@ impl fmt::Display for NativeCliError {
             Self::Store(error) => write!(formatter, "{error}"),
             Self::Review(error) => write!(formatter, "{error}"),
             Self::Eval(error) => write!(formatter, "{error:?}"),
+            Self::Worker(error) => write!(formatter, "{error}"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Json(error) => write!(formatter, "{error}"),
         }
@@ -745,3 +790,9 @@ impl fmt::Display for NativeCliError {
 }
 
 impl std::error::Error for NativeCliError {}
+
+impl From<crate::exec::worker::WorkerError> for NativeCliError {
+    fn from(error: crate::exec::worker::WorkerError) -> Self {
+        Self::Worker(error)
+    }
+}

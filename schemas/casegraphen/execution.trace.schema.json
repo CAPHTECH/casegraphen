@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.workflow.execution_trace.v1",
+  "title": "CaseGraphen ExecutionTrace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "trace_id",
+    "plan_id",
+    "step_id",
+    "case_space_id",
+    "base_revision_id",
+    "result_revision_id",
+    "work_cell_id",
+    "binding_id",
+    "binding_content_hash",
+    "worker_report_id",
+    "appended_entry_ids",
+    "transition_applied",
+    "obstructions",
+    "information_loss",
+    "started_at",
+    "finished_at",
+    "metadata"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.workflow.execution_trace.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "trace_id": {
+      "$ref": "#/$defs/id"
+    },
+    "plan_id": {
+      "$ref": "#/$defs/id"
+    },
+    "step_id": {
+      "$ref": "#/$defs/id"
+    },
+    "case_space_id": {
+      "$ref": "#/$defs/id"
+    },
+    "base_revision_id": {
+      "$ref": "#/$defs/id"
+    },
+    "result_revision_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "work_cell_id": {
+      "$ref": "#/$defs/id"
+    },
+    "binding_id": {
+      "$ref": "#/$defs/id"
+    },
+    "binding_content_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "worker_report_id": {
+      "$ref": "#/$defs/id"
+    },
+    "appended_entry_ids": {
+      "$ref": "#/$defs/id_array"
+    },
+    "transition_applied": {
+      "type": "boolean"
+    },
+    "obstructions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/obstruction"
+      }
+    },
+    "information_loss": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/information_loss"
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "finished_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "obstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "obstruction_type",
+        "summary",
+        "witness_ids"
+      ],
+      "properties": {
+        "obstruction_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "witness_ids": {
+          "$ref": "#/$defs/id_array"
+        }
+      }
+    },
+    "information_loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "represented_ids",
+        "omitted_ids"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "represented_ids": {
+          "$ref": "#/$defs/id_array"
+        },
+        "omitted_ids": {
+          "$ref": "#/$defs/id_array"
+        }
+      }
+    }
+  }
+}

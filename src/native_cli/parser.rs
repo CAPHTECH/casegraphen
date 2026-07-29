@@ -1,5 +1,5 @@
 use super::{
-    ops::{NativeCloseGateOptions, NativePlanGateOptions},
+    ops::{NativeCloseGateOptions, NativePlanGateOptions, NativeRunGateOptions},
     options::{required_segment, NativeOptions},
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
@@ -35,6 +35,10 @@ impl NativeCliCommand {
                 Self::parse_morphism(required_segment(&mut args, "morphism operation")?, args)
             }
             "plan" => Self::parse_plan(required_segment(&mut args, "plan operation")?, args),
+            "binding" => {
+                Self::parse_binding(required_segment(&mut args, "binding operation")?, args)
+            }
+            "run" => Self::parse_run(args),
             "review" => Self::parse_review(required_segment(&mut args, "review operation")?, args),
             "evidence" => {
                 Self::parse_evidence(required_segment(&mut args, "evidence operation")?, args)
@@ -451,6 +455,56 @@ impl NativeCliCommand {
             }),
             _ => Err(NativeCliError::usage("unsupported native plan command")),
         }
+    }
+
+    fn parse_binding(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let options = NativeOptions::parse(args)?;
+        match operation.to_str() {
+            Some("register") => Ok(Self::BindingRegister {
+                store: options.require_store()?,
+                input: options.require_path("--input")?,
+                output: options.output,
+            }),
+            Some(_) | None => Err(NativeCliError::usage("unsupported native binding command")),
+        }
+    }
+
+    fn parse_run(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
+        let options = NativeOptions::parse(args)?;
+        if !options.run_step {
+            return Err(NativeCliError::usage("run requires --step"));
+        }
+        Ok(Self::RunStep {
+            store: options.require_store()?,
+            case_space_id: options.require_id("--case-space-id")?,
+            plan_id: options.require_id("--plan-id")?,
+            base_revision_id: options
+                .base_revision_id
+                .clone()
+                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            actor_id: options.require_id("--actor-id")?,
+            enabled_worker_kinds: options.enabled_worker_kinds,
+            retry_step_id: options.retry_step_id,
+            gate_options: NativeRunGateOptions {
+                actor_id: options.gate_actor_id.ok_or_else(|| {
+                    NativeCliError::usage("--gate-actor-id <id> is required for run --step")
+                })?,
+                capability_ids: options.capability_ids,
+                operation_scope_id: options.operation_scope_id.ok_or_else(|| {
+                    NativeCliError::usage("--operation-scope-id <id> is required for run --step")
+                })?,
+                audience: options.audience.ok_or_else(|| {
+                    NativeCliError::usage("--audience audit|system is required for run --step")
+                })?,
+                source_boundary_id: options.source_boundary_id.ok_or_else(|| {
+                    NativeCliError::usage("--source-boundary-id <id> is required for run --step")
+                })?,
+            },
+            output: options.output,
+        })
     }
 
     fn parse_review(

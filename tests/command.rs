@@ -1997,6 +1997,17 @@ fn native_execution_plan_propose_check_and_accept_with_gate() {
         json_file(stored_path.clone())["review_status"],
         json!("unreviewed")
     );
+    let stored_plan = json_file(stored_path.clone());
+    let binding_hash = stored_plan["metadata"]["worker_binding_hashes"]
+        ["worker_binding:native-integration"]
+        .as_str()
+        .expect("recorded worker binding hash");
+    assert_eq!(binding_hash.len(), 64);
+    assert_eq!(
+        propose_json["result"]["plan"]["metadata"]["worker_binding_hashes"]
+            ["worker_binding:native-integration"],
+        json!(binding_hash)
+    );
 
     let check = run_cli(&[
         "plan",
@@ -2186,6 +2197,43 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
 }
 
 #[test]
+fn native_execution_plan_propose_requires_registered_worker_bindings() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:plan-missing-binding");
+    let input = directory.join("missing-binding.execution.plan.json");
+    write_execution_plan_for_binding(
+        &input,
+        "plan:missing-binding",
+        "revision:plan-missing-binding",
+        "work:review-native-contract",
+        "worker_binding:not-registered",
+    );
+
+    let output = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("worker_binding:not-registered"));
+    assert!(stderr(&output).contains("not registered"));
+    assert!(!directory
+        .join("plans")
+        .join("plan~3amissing-binding.execution.plan.json")
+        .exists());
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_execution_plan_reject_records_review_and_rewrites_plan() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -2257,6 +2305,320 @@ fn native_execution_plan_reject_records_review_and_rewrites_plan() {
         json!("rejected")
     );
 
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn worker_binding_register_stores_pretty_json_and_content_hash() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let input = directory.join("register.worker.binding.json");
+    write_worker_binding(
+        &input,
+        "worker_binding:register-integration",
+        &directory,
+        "printf 'registered\\n'",
+    );
+
+    let register = run_cli(&[
+        "binding",
+        "register",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        input.to_str().expect("binding path"),
+        "--format",
+        "json",
+    ]);
+
+    assert!(register.status.success(), "stderr: {}", stderr(&register));
+    let result = stdout_json(&register);
+    assert_eq!(result["result"]["binding_status"], json!("registered"));
+    let hash = result["result"]["binding_content_hash"]
+        .as_str()
+        .expect("binding content hash");
+    assert_eq!(hash.len(), 64);
+    let stored_path = directory.join(
+        result["result"]["binding_path"]
+            .as_str()
+            .expect("binding path"),
+    );
+    let stored_text = fs::read_to_string(&stored_path).expect("read stored binding");
+    assert!(stored_text.contains("\n  \"schema\""));
+    assert!(stored_text.ends_with('\n'));
+
+    let duplicate = run_cli(&[
+        "binding",
+        "register",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        input.to_str().expect("binding path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!duplicate.status.success());
+    assert!(stderr(&duplicate).contains("already exists"));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "happy", "printf 'successful-worker-output\\n'");
+
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    assert_eq!(first_json["result"]["status"], json!("step_executed"));
+    assert_eq!(
+        first_json["result"]["trace"]["step_id"],
+        json!(fixture.step_id)
+    );
+    assert_eq!(
+        first_json["result"]["trace"]["transition_applied"],
+        json!(true)
+    );
+    assert_eq!(
+        first_json["result"]["appended_entry_ids"]
+            .as_array()
+            .expect("appended entries")
+            .len(),
+        2
+    );
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    let report_path = only_run_file(&directory, "worker.report.json");
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/execution.trace.schema.json"),
+        &trace_path,
+    );
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/worker.report.schema.json"),
+        &report_path,
+    );
+
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let cells = replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells");
+    let work = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("work cell");
+    assert_eq!(work["lifecycle"], json!("resolved"));
+    let worker_evidence = cells
+        .iter()
+        .find(|cell| {
+            cell["cell_type"] == json!("evidence")
+                && cell["metadata"]["worker_report_id"].is_string()
+        })
+        .expect("worker evidence cell");
+    assert_eq!(
+        worker_evidence["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+    assert_eq!(
+        worker_evidence["provenance"]["source"]["kind"],
+        json!("custom:tool_captured_artifact")
+    );
+
+    let result_revision = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("result revision");
+    let second = run_native_step_with_base(&directory, &fixture, result_revision, true, None);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    let second_json = stdout_json(&second);
+    assert_eq!(
+        second_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert!(second_json["result"]["trace"].is_null());
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_requires_shell_worker_opt_in() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "disabled", "printf 'must-not-run\\n'");
+
+    let output = run_native_step(&directory, &fixture, false, None);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("shell worker kind is disabled by default"));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_records_tampered_binding_as_domain_obstruction() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "tampered", "printf 'original\\n'");
+    let mut binding = json_file(fixture.binding_path.clone());
+    binding["args"] = json!(["-c", "printf 'tampered\\n'"]);
+    fs::write(
+        &fixture.binding_path,
+        serde_json::to_string_pretty(&binding).expect("serialize tampered binding"),
+    )
+    .expect("tamper binding");
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("binding_hash_mismatch")
+    );
+    assert_eq!(value["result"]["trace"]["transition_applied"], json!(false));
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/execution.trace.schema.json"),
+        &trace_path,
+    );
+    assert!(!trace_path
+        .parent()
+        .expect("run directory")
+        .join("stdout")
+        .exists());
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert_eq!(
+        replay["result"]["replay"]["current_revision_id"],
+        json!(fixture.accepted_revision_id)
+    );
+    assert_eq!(
+        replayed_work_lifecycle(&replay),
+        "active",
+        "tampered binding must not dispatch or transition work"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_records_failed_worker_evidence_without_transition() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        "failure",
+        "printf 'failed-output'; printf 'failed-error' >&2; exit 1",
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("step_failed"));
+    assert_eq!(value["result"]["trace"]["transition_applied"], json!(false));
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("worker_execution_failed")
+    );
+    assert_eq!(
+        value["result"]["appended_entry_ids"]
+            .as_array()
+            .expect("appended entries")
+            .len(),
+        1
+    );
+    let run_directory = only_run_file(&directory, "execution.trace.json")
+        .parent()
+        .expect("run directory")
+        .to_path_buf();
+    assert_eq!(
+        fs::read(run_directory.join("stdout")).expect("read stdout"),
+        b"failed-output"
+    );
+    assert_eq!(
+        fs::read(run_directory.join("stderr")).expect("read stderr"),
+        b"failed-error"
+    );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert_eq!(replayed_work_lifecycle(&replay), "active");
+    assert!(replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .iter()
+        .any(|cell| {
+            cell["cell_type"] == json!("evidence")
+                && cell["metadata"]["exit_status"] == json!(1)
+                && cell["metadata"]["worker_report_id"].is_string()
+        }));
+
+    let failed_revision = value["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("failed run result revision");
+    let without_retry =
+        run_native_step_with_base(&directory, &fixture, failed_revision, true, None);
+    assert!(
+        without_retry.status.success(),
+        "stderr: {}",
+        stderr(&without_retry)
+    );
+    let without_retry_json = stdout_json(&without_retry);
+    assert_eq!(
+        without_retry_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert_eq!(
+        without_retry_json["result"]["obstructions"][0]["obstruction_type"],
+        json!("retry_required")
+    );
+
+    let retried = run_native_step_with_base(
+        &directory,
+        &fixture,
+        failed_revision,
+        true,
+        Some(&fixture.step_id),
+    );
+    assert!(retried.status.success(), "stderr: {}", stderr(&retried));
+    assert_eq!(
+        stdout_json(&retried)["result"]["status"],
+        json!("step_failed")
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_preserves_unauthorized_transition_as_unreviewed_proposal() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run_with_allowed_lifecycle(
+        &directory,
+        "unauthorized",
+        "printf 'successful-but-not-authorized\\n'",
+        "accepted",
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(
+        value["result"]["status"],
+        json!("transition_not_authorized")
+    );
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("transition_not_authorized")
+    );
+    assert_eq!(value["result"]["trace"]["transition_applied"], json!(false));
+    let proposed = json_file(
+        only_run_file(&directory, "execution.trace.json")
+            .parent()
+            .expect("run directory")
+            .join("proposed.morphism.json"),
+    );
+    assert_eq!(proposed["review_status"], json!("unreviewed"));
+    assert_eq!(
+        proposed["metadata"]["authorization_source"],
+        json!("accepted_execution_plan")
+    );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert_eq!(replayed_work_lifecycle(&replay), "active");
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -3471,6 +3833,27 @@ fn write_native_metadata_morphism_with_metadata(
 }
 
 fn write_execution_plan(path: &Path, plan_id: &str, base_revision_id: &str, work_cell_id: &str) {
+    let store = path.parent().expect("execution plan store directory");
+    let binding_directory = store.join("bindings");
+    fs::create_dir_all(&binding_directory).expect("create binding directory");
+    let binding = json!({
+        "schema": "highergraphen.case.workflow.worker_binding.v1",
+        "schema_version": 1,
+        "binding_id": "worker_binding:native-integration",
+        "worker_kind": "shell",
+        "command": "/bin/sh",
+        "args": ["-c", "printf 'native integration worker\\n'"],
+        "working_directory": store,
+        "env_allowlist": [],
+        "timeout_ms": 5000,
+        "capability_ids": ["capability:native-integration-worker"],
+        "metadata": {}
+    });
+    fs::write(
+        binding_directory.join("worker_binding~3anative-integration.worker.binding.json"),
+        serde_json::to_string_pretty(&binding).expect("serialize worker binding"),
+    )
+    .expect("write worker binding");
     let plan = json!({
         "schema": "highergraphen.case.workflow.execution_plan.v1",
         "schema_version": 1,
@@ -3510,6 +3893,304 @@ fn write_execution_plan(path: &Path, plan_id: &str, base_revision_id: &str, work
         serde_json::to_string_pretty(&plan).expect("serialize execution plan"),
     )
     .expect("write execution plan");
+}
+
+struct NativeRunFixture {
+    plan_id: String,
+    step_id: String,
+    accepted_revision_id: String,
+    binding_path: PathBuf,
+}
+
+fn setup_native_run(directory: &Path, suffix: &str, script: &str) -> NativeRunFixture {
+    setup_native_run_with_allowed_lifecycle(directory, suffix, script, "resolved")
+}
+
+fn setup_native_run_with_allowed_lifecycle(
+    directory: &Path,
+    suffix: &str,
+    script: &str,
+    allowed_lifecycle: &str,
+) -> NativeRunFixture {
+    let import_revision = format!("revision:run-{suffix}-import");
+    import_native_case_space(directory, &import_revision);
+    let activate = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &import_revision,
+        "--cell-id",
+        "work:review-native-contract",
+        "--to",
+        "active",
+        "--actor-id",
+        "actor:run-setup",
+        "--format",
+        "json",
+    ]);
+    assert!(activate.status.success(), "stderr: {}", stderr(&activate));
+    let active_revision = stdout_json(&activate)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("active revision")
+        .to_owned();
+
+    let binding_id = format!("worker_binding:run-{suffix}");
+    let binding_input = directory.join(format!("{suffix}.worker.binding.input.json"));
+    write_worker_binding(&binding_input, &binding_id, directory, script);
+    let register = run_cli(&[
+        "binding",
+        "register",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        binding_input.to_str().expect("binding input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(register.status.success(), "stderr: {}", stderr(&register));
+    let register_json = stdout_json(&register);
+    let binding_path = directory.join(
+        register_json["result"]["binding_path"]
+            .as_str()
+            .expect("registered binding path"),
+    );
+
+    let plan_id = format!("plan:run-{suffix}");
+    let step_id = format!("step:{plan_id}");
+    let plan_input = directory.join(format!("{suffix}.execution.plan.input.json"));
+    write_execution_plan_for_binding_with_lifecycle(
+        &plan_input,
+        &plan_id,
+        &active_revision,
+        "work:review-native-contract",
+        &binding_id,
+        allowed_lifecycle,
+    );
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &plan_id,
+        "--reviewer-id",
+        "reviewer:run-plan",
+        "--reason",
+        "Accept one-step worker execution plan",
+        "--base-revision-id",
+        &active_revision,
+        "--actor-id",
+        "actor:run-plan-review",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accepted_revision_id = stdout_json(&accept)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted revision")
+        .to_owned();
+
+    NativeRunFixture {
+        plan_id,
+        step_id,
+        accepted_revision_id,
+        binding_path,
+    }
+}
+
+fn write_worker_binding(path: &Path, binding_id: &str, working_directory: &Path, script: &str) {
+    let binding = json!({
+        "schema": "highergraphen.case.workflow.worker_binding.v1",
+        "schema_version": 1,
+        "binding_id": binding_id,
+        "worker_kind": "shell",
+        "command": "/bin/sh",
+        "args": ["-c", script],
+        "working_directory": working_directory,
+        "env_allowlist": [],
+        "timeout_ms": 5000,
+        "capability_ids": ["capability:native-run-worker"],
+        "metadata": {}
+    });
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&binding).expect("serialize worker binding"),
+    )
+    .expect("write worker binding");
+}
+
+fn write_execution_plan_for_binding(
+    path: &Path,
+    plan_id: &str,
+    base_revision_id: &str,
+    work_cell_id: &str,
+    binding_id: &str,
+) {
+    write_execution_plan_for_binding_with_lifecycle(
+        path,
+        plan_id,
+        base_revision_id,
+        work_cell_id,
+        binding_id,
+        "resolved",
+    );
+}
+
+fn write_execution_plan_for_binding_with_lifecycle(
+    path: &Path,
+    plan_id: &str,
+    base_revision_id: &str,
+    work_cell_id: &str,
+    binding_id: &str,
+    allowed_lifecycle: &str,
+) {
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": base_revision_id,
+        "steps": [
+            {
+                "step_id": format!("step:{plan_id}"),
+                "work_cell_id": work_cell_id,
+                "worker_binding_id": binding_id,
+                "success_evidence_requirement_ids": [
+                    "evidence:native-schema-json-valid"
+                ],
+                "allowed_transition_classes": [
+                    {
+                        "morphism_type": "update",
+                        "target_cell_types": ["work"],
+                        "to_lifecycles": [allowed_lifecycle]
+                    }
+                ]
+            }
+        ],
+        "provenance": {
+            "source": {
+                "kind": "human",
+                "title": "Native run integration plan"
+            },
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&plan).expect("serialize execution plan"),
+    )
+    .expect("write execution plan");
+}
+
+fn run_native_step(
+    directory: &Path,
+    fixture: &NativeRunFixture,
+    enable_shell: bool,
+    retry_step_id: Option<&str>,
+) -> Output {
+    run_native_step_with_base(
+        directory,
+        fixture,
+        &fixture.accepted_revision_id,
+        enable_shell,
+        retry_step_id,
+    )
+}
+
+fn run_native_step_with_base(
+    directory: &Path,
+    fixture: &NativeRunFixture,
+    base_revision_id: &str,
+    enable_shell: bool,
+    retry_step_id: Option<&str>,
+) -> Output {
+    let mut args = vec![
+        "run".to_owned(),
+        "--step".to_owned(),
+        "--store".to_owned(),
+        directory.display().to_string(),
+        "--case-space-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--plan-id".to_owned(),
+        fixture.plan_id.clone(),
+        "--base-revision-id".to_owned(),
+        base_revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        "actor:native-run".to_owned(),
+        "--gate-actor-id".to_owned(),
+        "actor:native-run-gate".to_owned(),
+        "--capability-id".to_owned(),
+        "capability:dispatch".to_owned(),
+        "--operation-scope-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--audience".to_owned(),
+        "audit".to_owned(),
+        "--source-boundary-id".to_owned(),
+        "source_boundary:native-case-management-contract".to_owned(),
+        "--format".to_owned(),
+        "json".to_owned(),
+    ];
+    if enable_shell {
+        args.extend(["--enable-worker".to_owned(), "shell".to_owned()]);
+    }
+    if let Some(step_id) = retry_step_id {
+        args.extend(["--retry-step".to_owned(), step_id.to_owned()]);
+    }
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(args)
+        .output()
+        .expect("run casegraphen run --step")
+}
+
+fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {
+    let mut matches = fs::read_dir(directory.join("runs"))
+        .expect("read runs directory")
+        .map(|entry| entry.expect("run entry").path().join(file_name))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    matches.sort();
+    assert_eq!(matches.len(), 1, "expected one {file_name}");
+    matches.remove(0)
+}
+
+fn replayed_work_lifecycle(replay: &Value) -> &str {
+    replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .and_then(|cell| cell["lifecycle"].as_str())
+        .expect("work lifecycle")
 }
 
 fn invalid_core_extensions(target_id: &str) -> Value {
@@ -3617,6 +4298,9 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/native.case.space.example.json",
         "schemas/casegraphen/native.case.report.example.json",
         "schemas/casegraphen/execution.plan.example.json",
+        "schemas/casegraphen/worker.binding.example.json",
+        "schemas/casegraphen/worker.report.example.json",
+        "schemas/casegraphen/execution.trace.example.json",
         "schemas/casegraphen/report-schema-aliases.json",
         "schemas/casegraphen/case.graph.schema.json",
         "schemas/casegraphen/coverage.policy.schema.json",
@@ -3628,6 +4312,9 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/native.case.space.schema.json",
         "schemas/casegraphen/native.case.report.schema.json",
         "schemas/casegraphen/execution.plan.schema.json",
+        "schemas/casegraphen/worker.binding.schema.json",
+        "schemas/casegraphen/worker.report.schema.json",
+        "schemas/casegraphen/execution.trace.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
         "examples/casegraphen/reference/workflow.graph.json",
         "examples/casegraphen/reference/reports/workflow.reason.report.json",
@@ -3650,6 +4337,18 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/execution.plan.schema.json",
             "schemas/casegraphen/execution.plan.example.json",
+        ),
+        (
+            "schemas/casegraphen/worker.binding.schema.json",
+            "schemas/casegraphen/worker.binding.example.json",
+        ),
+        (
+            "schemas/casegraphen/worker.report.schema.json",
+            "schemas/casegraphen/worker.report.example.json",
+        ),
+        (
+            "schemas/casegraphen/execution.trace.schema.json",
+            "schemas/casegraphen/execution.trace.example.json",
         ),
     ]
     .iter()

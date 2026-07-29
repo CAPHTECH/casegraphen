@@ -1,0 +1,22 @@
+{
+  "schema": "highergraphen.case.workflow.worker_binding.v1",
+  "schema_version": 1,
+  "binding_id": "worker_binding:native-contract-review",
+  "worker_kind": "shell",
+  "command": "/bin/sh",
+  "args": [
+    "-c",
+    "printf 'casegraphen worker output\\n'"
+  ],
+  "working_directory": "/tmp",
+  "env_allowlist": [
+    "PATH"
+  ],
+  "timeout_ms": 5000,
+  "capability_ids": [
+    "capability:execute-native-contract-review"
+  ],
+  "metadata": {
+    "description": "Example local shell worker binding"
+  }
+}

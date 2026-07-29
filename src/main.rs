@@ -1,5 +1,5 @@
 //! Command-line entry point for casegraphen.
 
-fn main() -> std::process::ExitCode {
+fn main() -> casegraphen::exec::worker::CliExitCode {
     casegraphen::cli::main_entry()
 }

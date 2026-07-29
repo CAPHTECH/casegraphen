@@ -1,0 +1,36 @@
+{
+  "schema": "highergraphen.case.workflow.execution_trace.v1",
+  "schema_version": 1,
+  "trace_id": "execution_trace:example-run",
+  "plan_id": "plan:native-contract-review",
+  "step_id": "step:review-native-contract",
+  "case_space_id": "case_space:native-case-management-contract",
+  "base_revision_id": "revision:accepted-plan",
+  "result_revision_id": "revision:worker-transition",
+  "work_cell_id": "work:review-native-contract",
+  "binding_id": "worker_binding:native-contract-review",
+  "binding_content_hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "worker_report_id": "worker_report:example-run",
+  "appended_entry_ids": [
+    "morphism_log_entry:evidence-example-run",
+    "morphism_log_entry:transition-example-run"
+  ],
+  "transition_applied": true,
+  "obstructions": [],
+  "information_loss": [
+    {
+      "description": "The worker received a derived reason report rather than the raw case space.",
+      "represented_ids": [
+        "revision:accepted-plan"
+      ],
+      "omitted_ids": [
+        "case_space:native-case-management-contract"
+      ]
+    }
+  ],
+  "started_at": "unix:1770000000",
+  "finished_at": "unix:1770000001",
+  "metadata": {
+    "worker_invoked": true
+  }
+}
