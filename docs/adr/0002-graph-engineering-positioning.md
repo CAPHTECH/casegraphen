@@ -127,9 +127,14 @@ keeping the log is a separate decision.
 
 ## Non-goals
 
-- **No parallel dispatcher (`run --frontier`).** Fan-out conflicts with the
+- ~~**No parallel dispatcher (`run --frontier`).** Fan-out conflicts with the
   single append-only revision chain; resolving that (batch morphism per round,
-  or optimistic append with retry) is its own ADR if we ever take it.
+  or optimistic append with retry) is its own ADR if we ever take it.~~
+  **Superseded by [ADR 0004](0004-frontier-dispatch.md).** The stated conflict
+  was not real: the chain constrains appends, not execution, so workers run
+  concurrently while results append serially and the log keeps its sequential
+  shape. Recorded here rather than deleted because the mistake is the
+  instructive part.
 - **No message bus, daemon, or scheduler.** Reaffirms the design doc's
   explicit exclusion; the runtime owns liveness.
 - **No cost ledger.** Cost spiral is a real named problem, but enforcement

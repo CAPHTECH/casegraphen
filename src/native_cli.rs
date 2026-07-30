@@ -21,9 +21,9 @@ use ops::{
     binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
     case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
     morphism_check, morphism_propose, morphism_reject, plan_check, plan_propose, plan_review,
-    projection_apply, review_apply, run_step, NativeCloseGateOptions, NativeMutationGateOptions,
-    NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunGateOptions,
-    NativeRunStepOptions,
+    projection_apply, review_apply, run_frontier, run_step, NativeCloseGateOptions,
+    NativeMutationGateOptions, NativePlanGateOptions, NativePlanReviewOptions,
+    NativeReviewApplyOptions, NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use reporting::report;
 
@@ -200,6 +200,18 @@ pub(crate) enum NativeCliCommand {
         gate_options: NativeRunGateOptions,
         output: Option<PathBuf>,
     },
+    RunFrontier {
+        store: PathBuf,
+        case_space_id: Id,
+        plan_id: Id,
+        base_revision_id: Id,
+        actor_id: Id,
+        enabled_worker_kinds: Vec<String>,
+        retry_step_ids: Vec<Id>,
+        max_parallel: usize,
+        gate_options: NativeRunGateOptions,
+        output: Option<PathBuf>,
+    },
     Review {
         action: ReviewAction,
         store: PathBuf,
@@ -271,6 +283,7 @@ impl NativeCliCommand {
             | Self::PlanReview { output, .. }
             | Self::BindingRegister { output, .. }
             | Self::RunStep { output, .. }
+            | Self::RunFrontier { output, .. }
             | Self::Review { output, .. }
             | Self::EvidenceAttach { output, .. }
             | Self::CellTransition { output, .. } => output.as_ref(),
@@ -308,6 +321,7 @@ impl NativeCliCommand {
             | Self::PlanReview { .. }
             | Self::BindingRegister { .. }
             | Self::RunStep { .. }
+            | Self::RunFrontier { .. }
             | Self::Review { .. }
             | Self::EvidenceAttach { .. }
             | Self::CellTransition { .. } => self.run_morphism_value(),
@@ -564,6 +578,30 @@ impl NativeCliCommand {
                     actor_id,
                     enabled_worker_kinds,
                     retry_step_id: retry_step_id.as_ref(),
+                    gate_options,
+                },
+            )?,
+            Self::RunFrontier {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                retry_step_ids,
+                max_parallel,
+                gate_options,
+                ..
+            } => run_frontier(
+                store,
+                NativeRunFrontierOptions {
+                    case_space_id,
+                    plan_id,
+                    base_revision_id,
+                    actor_id,
+                    enabled_worker_kinds,
+                    retry_step_ids,
+                    max_parallel: *max_parallel,
                     gate_options,
                 },
             )?,

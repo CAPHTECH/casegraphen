@@ -43,7 +43,7 @@ use io::{
 pub(super) use lift::{case_import, case_new, lift_structured_source};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
 pub(super) use plan::{plan_check, plan_propose, plan_review};
-pub(super) use run::run_step;
+pub(super) use run::{run_frontier, run_step};
 
 pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) action: ReviewAction,
@@ -80,6 +80,17 @@ pub(super) struct NativeRunStepOptions<'a> {
     pub(super) actor_id: &'a Id,
     pub(super) enabled_worker_kinds: &'a [String],
     pub(super) retry_step_id: Option<&'a Id>,
+    pub(super) gate_options: &'a NativeRunGateOptions,
+}
+
+pub(super) struct NativeRunFrontierOptions<'a> {
+    pub(super) case_space_id: &'a Id,
+    pub(super) plan_id: &'a Id,
+    pub(super) base_revision_id: &'a Id,
+    pub(super) actor_id: &'a Id,
+    pub(super) enabled_worker_kinds: &'a [String],
+    pub(super) retry_step_ids: &'a [Id],
+    pub(super) max_parallel: usize,
     pub(super) gate_options: &'a NativeRunGateOptions,
 }
 

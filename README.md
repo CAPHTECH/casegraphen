@@ -38,31 +38,36 @@ An LLM or agent proposes; CaseGraphen decides. Concretely:
 
 ## Execution control
 
-`run --step` advances exactly one work item per invocation. There is no daemon,
-scheduler, retry engine, or event bus.
+`run --step` advances exactly one work item per invocation. `run --frontier`
+advances one whole eligible frontier round: workers run concurrently up to
+`--max-parallel` (default 4), then their results append serially in plan-step
+order. Neither form is a daemon, scheduler, retry engine, or event bus.
 
 1. Replay and pin the revision; a stale base revision is a failure, not a merge.
 2. Re-derive readiness.
 3. Verify the ExecutionPlan against the plan-review morphism that accepted it
    (content-hashed), and check the dispatch gate.
-4. Select the first plan step that is on the frontier and not yet executed.
+4. Select the first eligible plan step for `--step`, or every eligible plan
+   step for `--frontier` (at most one per work cell).
 5. Verify the worker binding's content hash, canonical paths, and executable
    hash against what the plan froze.
 6. Project the input for the worker and record what that projection loses.
 7. Execute the worker (environment cleared to an allowlist, absolute paths,
-   mandatory timeout, output capped and hashed).
+   mandatory timeout, output capped and hashed). Frontier workers execute
+   concurrently; each keeps a separately reserved run directory.
 8. Attach the output as untrusted evidence — always, including on failure.
 9. Apply the state transition only if the worker succeeded, the step's declared
    success requirements are satisfied by evidence from this run, the transition
    falls inside the plan's authorized transition classes, and the candidate
    post-transition state introduces no new hard obstruction.
 10. Commit as a new revision and write the execution trace, anchoring its hash
-    in the log.
+    in the log. Frontier results take this application path serially in
+    plan-step order, regardless of worker completion order.
 
 Anything that fails is a domain finding — an obstruction recorded in the trace —
 not a crash. Only stale revisions and integrity mismatches are tool failures.
 
-Effectful workers are **off by default**: `run --step` refuses a shell binding
+Effectful workers are **off by default**: both run modes refuse a shell binding
 unless `--enable-worker shell` is passed on that invocation. Read
 [the worker execution security and approval policy](docs/security/worker-execution-policy.md)
 before enabling it against a real project; it documents the threat model, the
@@ -95,7 +100,7 @@ casegraphen evidence attach                       # gated
 casegraphen cell transition                       # gated
 casegraphen binding register
 casegraphen plan propose|check|accept|reject      # accept/reject are gated
-casegraphen run --step                            # gated; worker off by default
+casegraphen run --step|--frontier                 # gated; worker off by default
 casegraphen obstruction list | completion candidates | projection apply
 casegraphen equivalence check | invariant check|close-check
 ```

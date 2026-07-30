@@ -388,8 +388,10 @@ impl NativeCliCommand {
 
     fn parse_run(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
         let options = NativeOptions::parse(args)?;
-        if !options.run_step {
-            return Err(NativeCliError::usage("run requires --step"));
+        if options.run_step == options.run_frontier {
+            return Err(NativeCliError::usage(
+                "run requires exactly one of --step or --frontier",
+            ));
         }
         let actor_id = options.require_id("--actor-id")?;
         if let Some(gate_actor_id) = &options.gate_actor_id {
@@ -399,32 +401,60 @@ impl NativeCliCommand {
                 ));
             }
         }
-        Ok(Self::RunStep {
-            store: options.require_store()?,
-            case_space_id: options.require_id("--case-space-id")?,
-            plan_id: options.require_id("--plan-id")?,
-            base_revision_id: options
-                .base_revision_id
-                .clone()
-                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+        let mode = if options.run_step {
+            "run --step"
+        } else {
+            "run --frontier"
+        };
+        let gate_options = NativeRunGateOptions {
             actor_id: actor_id.clone(),
-            enabled_worker_kinds: options.enabled_worker_kinds,
-            retry_step_id: options.retry_step_id,
-            gate_options: NativeRunGateOptions {
-                actor_id,
-                capability_ids: options.capability_ids,
-                operation_scope_id: options.operation_scope_id.ok_or_else(|| {
-                    NativeCliError::usage("--operation-scope-id <id> is required for run --step")
-                })?,
-                audience: options.audience.ok_or_else(|| {
-                    NativeCliError::usage("--audience audit|system is required for run --step")
-                })?,
-                source_boundary_id: options.source_boundary_id.ok_or_else(|| {
-                    NativeCliError::usage("--source-boundary-id <id> is required for run --step")
-                })?,
-            },
-            output: options.output,
-        })
+            capability_ids: options.capability_ids.clone(),
+            operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
+                NativeCliError::usage(format!("--operation-scope-id <id> is required for {mode}"))
+            })?,
+            audience: options.audience.ok_or_else(|| {
+                NativeCliError::usage(format!("--audience audit|system is required for {mode}"))
+            })?,
+            source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
+                NativeCliError::usage(format!("--source-boundary-id <id> is required for {mode}"))
+            })?,
+        };
+        if options.run_step {
+            Ok(Self::RunStep {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                plan_id: options.require_id("--plan-id")?,
+                base_revision_id: options
+                    .base_revision_id
+                    .clone()
+                    .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+                actor_id: actor_id.clone(),
+                enabled_worker_kinds: options.enabled_worker_kinds,
+                retry_step_id: options.retry_step_ids.last().cloned(),
+                gate_options,
+                output: options.output,
+            })
+        } else {
+            let max_parallel = options.max_parallel.unwrap_or(4);
+            if max_parallel == 0 {
+                return Err(NativeCliError::usage("--max-parallel must be at least 1"));
+            }
+            Ok(Self::RunFrontier {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                plan_id: options.require_id("--plan-id")?,
+                base_revision_id: options
+                    .base_revision_id
+                    .clone()
+                    .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+                actor_id: actor_id.clone(),
+                enabled_worker_kinds: options.enabled_worker_kinds,
+                retry_step_ids: options.retry_step_ids,
+                max_parallel,
+                gate_options,
+                output: options.output,
+            })
+        }
     }
 
     fn parse_review(

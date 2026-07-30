@@ -30,7 +30,7 @@ pub(super) struct NativeOptions {
     pub(super) close_policy_id: Option<Id>,
     pub(super) actor_id: Option<Id>,
     pub(super) gate_actor_id: Option<Id>,
-    pub(super) retry_step_id: Option<Id>,
+    pub(super) retry_step_ids: Vec<Id>,
     pub(super) evidence_ids: Vec<Id>,
     pub(super) satisfies_ids: Vec<Id>,
     pub(super) capability_ids: Vec<Id>,
@@ -43,6 +43,8 @@ pub(super) struct NativeOptions {
     pub(super) validation_evidence_ids: Vec<Id>,
     pub(super) enabled_worker_kinds: Vec<String>,
     pub(super) run_step: bool,
+    pub(super) run_frontier: bool,
+    pub(super) max_parallel: Option<usize>,
     pub(super) higher_order: bool,
     pub(super) max_dimension: Option<Dimension>,
     pub(super) min_persistence_stages: usize,
@@ -105,7 +107,7 @@ impl NativeOptions {
             Some("--gate-actor-id") => {
                 self.gate_actor_id = Some(require_id(args, "--gate-actor-id")?)
             }
-            Some("--retry-step") => self.retry_step_id = Some(require_id(args, "--retry-step")?),
+            Some("--retry-step") => self.retry_step_ids.push(require_id(args, "--retry-step")?),
             Some("--evidence-id") => self.evidence_ids.push(require_id(args, "--evidence-id")?),
             Some("--satisfies") => self.satisfies_ids.push(require_id(args, "--satisfies")?),
             Some("--capability-id") => self
@@ -133,6 +135,10 @@ impl NativeOptions {
                 .enabled_worker_kinds
                 .push(require_string(args, "--enable-worker")?),
             Some("--step") => self.run_step = true,
+            Some("--frontier") => self.run_frontier = true,
+            Some("--max-parallel") => {
+                self.max_parallel = Some(require_usize(args, "--max-parallel")?)
+            }
             Some("--higher-order") => self.higher_order = true,
             Some("--max-dimension") => {
                 self.max_dimension = Some(require_dimension(args, "--max-dimension")?)

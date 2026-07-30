@@ -4,7 +4,8 @@ use super::{
     case_reason,
     io::{provenance, timestamp, write_json},
     plan::{plan_path, read_stored_plan, verified_plan_review_status},
-    report, require_current_revision, NativeCliError, NativeReasonSection, NativeRunStepOptions,
+    report, require_current_revision, NativeCliError, NativeReasonSection,
+    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use crate::{
     exec::{
@@ -32,89 +33,110 @@ use crate::{
 use higher_graphen_core::{Id, ReviewStatus, Severity, SourceKind};
 use serde_json::{json, Map, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    thread,
 };
 
 use super::super::path_helpers::path_segment;
 
 const RUN_DIRECTORY: &str = "runs";
 
-pub(in crate::native_cli) fn run_step(
-    store: &Path,
-    options: NativeRunStepOptions<'_>,
-) -> Result<Value, NativeCliError> {
-    let store_api = NativeCaseStore::new(store.to_path_buf());
-    let replay = store_api.replay_current_case_space(options.case_space_id)?;
-    require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
+struct ExecutedWorker {
+    binding: WorkerBinding,
+    binding_content_hash: String,
+    worker_report: WorkerReport,
+}
 
-    let plan = read_stored_plan(&plan_path(store, options.plan_id), options.plan_id)?;
-    verify_accepted_plan(&plan, &replay.case_space)?;
+#[derive(Clone)]
+struct BindingRejection {
+    obstruction_type: &'static str,
+    binding_content_hash: String,
+    obstruction: ExecutionObstruction,
+}
 
-    let gate = NativeOperationGate {
-        actor_id: options.actor_id.clone(),
-        operation: "dispatch".to_owned(),
-        operation_scope_id: options.gate_options.operation_scope_id.clone(),
-        audience: options.gate_options.audience,
-        capability_ids: options.gate_options.capability_ids.clone(),
-        source_boundary_id: options.gate_options.source_boundary_id.clone(),
-    };
-    let evaluation = evaluate_native_case(&replay.case_space)?;
-    let traces = read_execution_traces(store, &replay.case_space)?;
-    let selection = select_step(
-        &plan,
-        &replay.case_space,
-        &evaluation.frontier_cell_ids,
-        &traces,
-        options.retry_step_id,
-    );
-    let Some(step_index) = selection.step_index else {
-        return Ok(no_dispatchable_report(
-            selection.obstructions,
-            selection.step_reasons,
-        ));
-    };
-    let step = &plan.steps[step_index];
-    let trace_identity = reserve_trace_identity(store, &plan, step, &traces)?;
-    let trace_started_at = timestamp();
-    let expected_binding_hash = expected_binding_hash(&plan, &step.worker_binding_id);
-    let mut trace_guard = TraceGuard::start(
-        store,
-        options.case_space_id,
-        options.actor_id,
-        &replay.case_space,
-        &plan,
-        step,
-        options.base_revision_id,
-        &trace_identity,
-        expected_binding_hash
-            .clone()
-            .unwrap_or_else(empty_content_hash),
-        &gate,
-        &trace_started_at,
-    )?;
+enum BindingInspection {
+    Verified(Box<VerifiedWorkerBinding>),
+    Rejected(BindingRejection),
+}
 
-    if let Err(error) = check_operation_gate(&replay.case_space, &gate, "dispatch") {
-        let trace = trace_guard.finish(
-            &replay.case_space,
-            ExecutionDispatchState::Failed,
-            "operation_gate_rejected",
-            vec![ExecutionObstruction {
-                obstruction_type: "operation_gate_rejected".to_owned(),
-                summary: error.to_string(),
-                witness_ids: vec![gate.actor_id.clone()],
-                blocking: true,
-            }],
-        )?;
-        return Ok(run_report(
-            "no_dispatchable_step",
-            Some(trace),
-            None,
-            selection.step_reasons,
-        ));
+enum WorkerDispatch {
+    Executed(Box<ExecutedWorker>),
+    Rejected(BindingRejection),
+}
+
+struct WorkerDispatchError {
+    error: NativeCliError,
+    worker_invoked: bool,
+    binding_content_hash: Option<String>,
+}
+
+impl WorkerDispatchError {
+    fn before_worker(error: NativeCliError, binding_content_hash: Option<String>) -> Self {
+        Self {
+            error,
+            worker_invoked: false,
+            binding_content_hash,
+        }
     }
 
+    fn after_worker(error: NativeCliError, binding_content_hash: String) -> Self {
+        Self {
+            error,
+            worker_invoked: true,
+            binding_content_hash: Some(binding_content_hash),
+        }
+    }
+}
+
+struct RunExecutionContext<'a> {
+    store: &'a Path,
+    case_space_id: &'a Id,
+    base_revision_id: &'a Id,
+    actor_id: &'a Id,
+    enabled_worker_kinds: &'a [String],
+    gate: &'a NativeOperationGate,
+    pinned_application_case_space: Option<&'a CaseSpace>,
+    continue_on_step_failure: bool,
+}
+
+struct ReservedStep {
+    step_index: usize,
+    identity: TraceIdentity,
+    trace_started_at: String,
+    trace_guard: Option<TraceGuard>,
+}
+
+struct AppliedStep {
+    step_index: usize,
+    status: String,
+    trace: ExecutionTrace,
+    worker_report: Option<WorkerReport>,
+}
+
+struct SelectedStepsExecution {
+    steps: Vec<AppliedStep>,
+}
+
+fn dispatch_gate(actor_id: &Id, options: &NativeRunGateOptions) -> NativeOperationGate {
+    NativeOperationGate {
+        actor_id: actor_id.clone(),
+        operation: "dispatch".to_owned(),
+        operation_scope_id: options.operation_scope_id.clone(),
+        audience: options.audience,
+        capability_ids: options.capability_ids.clone(),
+        source_boundary_id: options.source_boundary_id.clone(),
+    }
+}
+
+fn inspect_worker_binding(
+    store: &Path,
+    plan: &ExecutionPlan,
+    step: &ExecutionStep,
+    gate: &NativeOperationGate,
+) -> Result<BindingInspection, NativeCliError> {
+    let expected_binding_hash = expected_binding_hash(plan, &step.worker_binding_id);
     let binding_path = binding_path(store, &step.worker_binding_id);
     let verified_binding = match read_verified_worker_binding_snapshot(
         &binding_path,
@@ -130,15 +152,12 @@ pub(in crate::native_cli) fn run_step(
                 }
                 BindingSnapshot::Verified(_) => unreachable!("matched verified binding"),
             };
-            let trace_binding_hash = actual_binding_hash
-                .or_else(|| expected_binding_hash.clone())
-                .unwrap_or_else(empty_content_hash);
-            trace_guard.trace.binding_content_hash = trace_binding_hash;
-            let trace = trace_guard.finish(
-                &replay.case_space,
-                ExecutionDispatchState::Failed,
+            return Ok(BindingInspection::Rejected(BindingRejection {
                 obstruction_type,
-                vec![ExecutionObstruction {
+                binding_content_hash: actual_binding_hash
+                    .or(expected_binding_hash)
+                    .unwrap_or_else(empty_content_hash),
+                obstruction: ExecutionObstruction {
                     obstruction_type: obstruction_type.to_owned(),
                     summary: format!(
                         "worker binding {} content hash does not match the hash accepted with plan {}",
@@ -146,21 +165,14 @@ pub(in crate::native_cli) fn run_step(
                     ),
                     witness_ids: vec![step.worker_binding_id.clone()],
                     blocking: true,
-                }],
-            )?;
-            return Ok(run_report(
-                "no_dispatchable_step",
-                Some(trace),
-                None,
-                selection.step_reasons,
-            ));
+                },
+            }));
         }
     };
     let VerifiedWorkerBinding {
         mut binding,
-        content_hash: binding_content_hash,
+        content_hash,
     } = *verified_binding;
-    trace_guard.trace.binding_content_hash = binding_content_hash.clone();
     let missing_binding_capability_ids = binding
         .capability_ids
         .iter()
@@ -168,11 +180,10 @@ pub(in crate::native_cli) fn run_step(
         .cloned()
         .collect::<Vec<_>>();
     if !missing_binding_capability_ids.is_empty() {
-        let trace = trace_guard.finish(
-            &replay.case_space,
-            ExecutionDispatchState::Failed,
-            "operation_gate_rejected",
-            vec![ExecutionObstruction {
+        return Ok(BindingInspection::Rejected(BindingRejection {
+            obstruction_type: "operation_gate_rejected",
+            binding_content_hash: content_hash,
+            obstruction: ExecutionObstruction {
                 obstruction_type: "operation_gate_rejected".to_owned(),
                 summary: format!(
                     "dispatch operation gate does not cover worker binding {} capability_ids: {}",
@@ -185,14 +196,8 @@ pub(in crate::native_cli) fn run_step(
                 ),
                 witness_ids: missing_binding_capability_ids,
                 blocking: true,
-            }],
-        )?;
-        return Ok(run_report(
-            "no_dispatchable_step",
-            Some(trace),
-            None,
-            selection.step_reasons,
-        ));
+            },
+        }));
     }
     let resolved_identity = match resolve_worker_binding_identity(&binding) {
         Ok(identity)
@@ -203,11 +208,10 @@ pub(in crate::native_cli) fn run_step(
             identity
         }
         Ok(identity) => {
-            let trace = trace_guard.finish(
-                &replay.case_space,
-                ExecutionDispatchState::Failed,
-                "binding_identity_mismatch",
-                vec![ExecutionObstruction {
+            return Ok(BindingInspection::Rejected(BindingRejection {
+                obstruction_type: "binding_identity_mismatch",
+                binding_content_hash: content_hash,
+                obstruction: ExecutionObstruction {
                     obstruction_type: "binding_identity_mismatch".to_owned(),
                     summary: format!(
                         "worker binding {} resolved identity no longer matches registration \
@@ -219,21 +223,14 @@ pub(in crate::native_cli) fn run_step(
                     ),
                     witness_ids: vec![binding.binding_id.clone()],
                     blocking: true,
-                }],
-            )?;
-            return Ok(run_report(
-                "no_dispatchable_step",
-                Some(trace),
-                None,
-                selection.step_reasons,
-            ));
+                },
+            }));
         }
         Err(error) => {
-            let trace = trace_guard.finish(
-                &replay.case_space,
-                ExecutionDispatchState::Failed,
-                "binding_identity_mismatch",
-                vec![ExecutionObstruction {
+            return Ok(BindingInspection::Rejected(BindingRejection {
+                obstruction_type: "binding_identity_mismatch",
+                binding_content_hash: content_hash,
+                obstruction: ExecutionObstruction {
                     obstruction_type: "binding_identity_mismatch".to_owned(),
                     summary: format!(
                         "worker binding {} identity could not be re-verified: {error}",
@@ -241,90 +238,418 @@ pub(in crate::native_cli) fn run_step(
                     ),
                     witness_ids: vec![binding.binding_id.clone()],
                     blocking: true,
-                }],
-            )?;
-            return Ok(run_report(
-                "no_dispatchable_step",
-                Some(trace),
-                None,
-                selection.step_reasons,
-            ));
+                },
+            }));
         }
     };
     binding.command = resolved_identity.resolved_command_path;
     binding.working_directory = resolved_identity.resolved_working_directory;
+    Ok(BindingInspection::Verified(Box::new(
+        VerifiedWorkerBinding {
+            binding,
+            content_hash,
+        },
+    )))
+}
+
+fn dispatch_step_worker(
+    context: &RunExecutionContext<'_>,
+    dispatch_case_space: &CaseSpace,
+    plan: &ExecutionPlan,
+    step: &ExecutionStep,
+    trace_identity: &TraceIdentity,
+) -> Result<WorkerDispatch, WorkerDispatchError> {
+    if let Err(error) = check_operation_gate(dispatch_case_space, context.gate, "dispatch") {
+        return Ok(WorkerDispatch::Rejected(BindingRejection {
+            obstruction_type: "operation_gate_rejected",
+            binding_content_hash: expected_binding_hash(plan, &step.worker_binding_id)
+                .unwrap_or_else(empty_content_hash),
+            obstruction: ExecutionObstruction {
+                obstruction_type: "operation_gate_rejected".to_owned(),
+                summary: error.to_string(),
+                witness_ids: vec![context.gate.actor_id.clone()],
+                blocking: true,
+            },
+        }));
+    }
+
+    let inspection = inspect_worker_binding(context.store, plan, step, context.gate)
+        .map_err(|error| WorkerDispatchError::before_worker(error, None))?;
+    let VerifiedWorkerBinding {
+        binding,
+        content_hash: binding_content_hash,
+    } = match inspection {
+        BindingInspection::Verified(verified) => *verified,
+        BindingInspection::Rejected(rejection) => return Ok(WorkerDispatch::Rejected(rejection)),
+    };
     if binding.worker_kind == WorkerKind::Shell
-        && !options
+        && !context
             .enabled_worker_kinds
             .iter()
             .any(|kind| kind == "shell")
     {
-        return Err(NativeCliError::invalid(
-            "shell worker kind is disabled by default; pass --enable-worker shell",
+        return Err(WorkerDispatchError::before_worker(
+            NativeCliError::invalid(
+                "shell worker kind is disabled by default; pass --enable-worker shell",
+            ),
+            Some(binding_content_hash),
         ));
     }
 
     let input_report_path = trace_identity.run_directory.join("input.report.json");
-    let input_report = case_reason(store, options.case_space_id, NativeReasonSection::Reason)?;
-    write_json(&input_report_path, &input_report)?;
-
+    let input_report = case_reason(
+        context.store,
+        context.case_space_id,
+        NativeReasonSection::Reason,
+    )
+    .map_err(|error| {
+        WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
+    })?;
+    write_json(&input_report_path, &input_report).map_err(|error| {
+        WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
+    })?;
     let invocation = execute_worker(
         &binding,
         &WorkerContext {
             run_directory: trace_identity.run_directory.clone(),
             input_report_path: input_report_path.clone(),
-            case_space_id: options.case_space_id.clone(),
+            case_space_id: context.case_space_id.clone(),
             plan_id: plan.plan_id.clone(),
             step_id: step.step_id.clone(),
             work_cell_id: step.work_cell_id.clone(),
         },
-    )?;
-    trace_guard
-        .trace
-        .metadata
-        .insert("worker_invoked".to_owned(), Value::Bool(true));
+    )
+    .map_err(|error| {
+        WorkerDispatchError::before_worker(
+            NativeCliError::invalid(error.to_string()),
+            Some(binding_content_hash.clone()),
+        )
+    })?;
     write_bytes(
         &trace_identity.run_directory.join("stdout"),
         &invocation.stdout,
-    )?;
+    )
+    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
     write_bytes(
         &trace_identity.run_directory.join("stderr"),
         &invocation.stderr,
-    )?;
+    )
+    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
     let worker_report = worker_report(
-        &plan,
+        plan,
         step,
-        &trace_identity,
+        trace_identity,
         &binding_content_hash,
         &input_report_path,
         &invocation,
     );
+    let worker_report_json = serde_json::to_value(&worker_report).map_err(|error| {
+        WorkerDispatchError::after_worker(NativeCliError::from(error), binding_content_hash.clone())
+    })?;
     write_json(
         &trace_identity.run_directory.join("worker.report.json"),
-        &serde_json::to_value(&worker_report)?,
+        &worker_report_json,
+    )
+    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
+    Ok(WorkerDispatch::Executed(Box::new(ExecutedWorker {
+        binding,
+        binding_content_hash,
+        worker_report,
+    })))
+}
+
+pub(in crate::native_cli) fn run_step(
+    store: &Path,
+    options: NativeRunStepOptions<'_>,
+) -> Result<Value, NativeCliError> {
+    let store_api = NativeCaseStore::new(store.to_path_buf());
+    let replay = store_api.replay_current_case_space(options.case_space_id)?;
+    require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
+
+    let plan = read_stored_plan(&plan_path(store, options.plan_id), options.plan_id)?;
+    verify_accepted_plan(&plan, &replay.case_space)?;
+
+    let gate = dispatch_gate(options.actor_id, options.gate_options);
+    let evaluation = evaluate_native_case(&replay.case_space)?;
+    let traces = read_execution_traces(store, &replay.case_space)?;
+    let retry_step_ids = options.retry_step_id.into_iter().collect::<BTreeSet<_>>();
+    let selection = select_steps(
+        &plan,
+        &replay.case_space,
+        &evaluation.frontier_cell_ids,
+        &traces,
+        &retry_step_ids,
+    );
+    let Some(&step_index) = selection.step_indices.first() else {
+        return Ok(no_dispatchable_report(
+            selection.obstructions,
+            selection.step_reasons,
+        ));
+    };
+    let context = RunExecutionContext {
+        store,
+        case_space_id: options.case_space_id,
+        base_revision_id: options.base_revision_id,
+        actor_id: options.actor_id,
+        enabled_worker_kinds: options.enabled_worker_kinds,
+        gate: &gate,
+        pinned_application_case_space: Some(&replay.case_space),
+        continue_on_step_failure: false,
+    };
+    let binding_rejections = BTreeMap::new();
+    let mut executed = execute_selected_steps(
+        &context,
+        &replay.case_space,
+        &plan,
+        &traces,
+        &[step_index],
+        &binding_rejections,
+        1,
     )?;
+    let applied = executed
+        .steps
+        .pop()
+        .ok_or_else(|| NativeCliError::invalid("selected run step produced no result"))?;
+    Ok(run_report(
+        &applied.status,
+        Some(applied.trace),
+        applied.worker_report.as_ref(),
+        selection.step_reasons,
+    ))
+}
+
+pub(in crate::native_cli) fn run_frontier(
+    store: &Path,
+    options: NativeRunFrontierOptions<'_>,
+) -> Result<Value, NativeCliError> {
+    if options.max_parallel == 0 {
+        return Err(NativeCliError::usage("--max-parallel must be at least 1"));
+    }
+    let store_api = NativeCaseStore::new(store.to_path_buf());
+    let replay = store_api.replay_current_case_space(options.case_space_id)?;
+    require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
+
+    let plan = read_stored_plan(&plan_path(store, options.plan_id), options.plan_id)?;
+    verify_accepted_plan(&plan, &replay.case_space)?;
+
+    let gate = dispatch_gate(options.actor_id, options.gate_options);
+    let evaluation = evaluate_native_case(&replay.case_space)?;
+    let traces = read_execution_traces(store, &replay.case_space)?;
+    let retry_step_ids = options.retry_step_ids.iter().collect::<BTreeSet<_>>();
+    let mut selection = select_steps(
+        &plan,
+        &replay.case_space,
+        &evaluation.frontier_cell_ids,
+        &traces,
+        &retry_step_ids,
+    );
+    if check_operation_gate(&replay.case_space, &gate, "dispatch").is_err() {
+        for &step_index in &selection.step_indices {
+            selection.step_reasons[step_index]["eligible"] = Value::Bool(false);
+            selection.step_reasons[step_index]["reasons"]
+                .as_array_mut()
+                .expect("step reasons is always an array")
+                .push(Value::String("operation_gate_rejected".to_owned()));
+        }
+        selection.step_indices.clear();
+    }
+    let binding_rejections = frontier_binding_rejections(store, &plan, &gate, &selection);
+    limit_one_step_per_work_cell(&plan, &mut selection, &binding_rejections);
+    if selection.step_indices.is_empty() {
+        return Ok(frontier_report(
+            "no_dispatchable_step",
+            Vec::new(),
+            selection.step_reasons,
+            Vec::new(),
+            replay.current_revision_id,
+        ));
+    }
+
+    let context = RunExecutionContext {
+        store,
+        case_space_id: options.case_space_id,
+        base_revision_id: options.base_revision_id,
+        actor_id: options.actor_id,
+        enabled_worker_kinds: options.enabled_worker_kinds,
+        gate: &gate,
+        pinned_application_case_space: None,
+        continue_on_step_failure: true,
+    };
+    let execution = execute_selected_steps(
+        &context,
+        &replay.case_space,
+        &plan,
+        &traces,
+        &selection.step_indices,
+        &binding_rejections,
+        options.max_parallel,
+    )?;
+    let round_executed = execution
+        .steps
+        .iter()
+        .any(|step| step.worker_report.is_some());
+    for step in &execution.steps {
+        if step.worker_report.is_none() {
+            selection.step_reasons[step.step_index]["eligible"] = Value::Bool(false);
+            if let Some(reason) = step
+                .trace
+                .obstructions
+                .first()
+                .map(|obstruction| obstruction.obstruction_type.clone())
+            {
+                selection.step_reasons[step.step_index]["reasons"]
+                    .as_array_mut()
+                    .expect("step reasons is always an array")
+                    .push(Value::String(reason));
+            }
+        }
+    }
+    let traces = execution
+        .steps
+        .into_iter()
+        .map(|step| step.trace)
+        .collect::<Vec<_>>();
+    let appended_entry_ids = traces
+        .iter()
+        .flat_map(|trace| trace.appended_entry_ids.iter().cloned())
+        .collect::<Vec<_>>();
+    let final_replay = store_api.replay_current_case_space(options.case_space_id)?;
+    Ok(frontier_report(
+        if round_executed {
+            "round_executed"
+        } else {
+            "no_dispatchable_step"
+        },
+        traces,
+        selection.step_reasons,
+        appended_entry_ids,
+        final_replay.current_revision_id,
+    ))
+}
+
+fn frontier_binding_rejections(
+    store: &Path,
+    plan: &ExecutionPlan,
+    gate: &NativeOperationGate,
+    selection: &StepSelection,
+) -> BTreeMap<usize, BindingRejection> {
+    selection
+        .step_indices
+        .iter()
+        .filter_map(|&step_index| {
+            match inspect_worker_binding(store, plan, &plan.steps[step_index], gate) {
+                Ok(BindingInspection::Rejected(rejection)) => Some((step_index, rejection)),
+                Ok(BindingInspection::Verified(_)) | Err(_) => None,
+            }
+        })
+        .collect()
+}
+
+fn limit_one_step_per_work_cell(
+    plan: &ExecutionPlan,
+    selection: &mut StepSelection,
+    binding_rejections: &BTreeMap<usize, BindingRejection>,
+) {
+    let mut selected_work_cell_ids = BTreeSet::new();
+    let mut selected = Vec::with_capacity(selection.step_indices.len());
+    for step_index in std::mem::take(&mut selection.step_indices) {
+        let step = &plan.steps[step_index];
+        if binding_rejections.contains_key(&step_index)
+            || selected_work_cell_ids.insert(&step.work_cell_id)
+        {
+            selected.push(step_index);
+        } else {
+            selection.step_reasons[step_index]["eligible"] = Value::Bool(false);
+            selection.step_reasons[step_index]["reasons"]
+                .as_array_mut()
+                .expect("step reasons is always an array")
+                .push(Value::String(
+                    "work_cell_already_selected_this_round".to_owned(),
+                ));
+        }
+    }
+    selection.step_indices = selected;
+}
+
+fn apply_step_result(
+    context: &RunExecutionContext<'_>,
+    plan: &ExecutionPlan,
+    reserved: &mut ReservedStep,
+    outcome: WorkerDispatch,
+) -> Result<AppliedStep, NativeCliError> {
+    let step = &plan.steps[reserved.step_index];
+    let application_case_space = match context.pinned_application_case_space {
+        Some(case_space) => case_space.clone(),
+        None => {
+            NativeCaseStore::new(context.store.to_path_buf())
+                .replay_current_case_space(context.case_space_id)?
+                .case_space
+        }
+    };
+    if let Some(trace_guard) = reserved.trace_guard.as_mut() {
+        trace_guard.trace.base_revision_id = application_case_space.revision.revision_id.clone();
+    }
+    if let WorkerDispatch::Rejected(rejection) = outcome {
+        let mut trace_guard = reserved
+            .trace_guard
+            .take()
+            .expect("reserved step always has a trace guard");
+        trace_guard.trace.binding_content_hash = rejection.binding_content_hash;
+        let trace = trace_guard.finish(
+            &application_case_space,
+            ExecutionDispatchState::Failed,
+            rejection.obstruction_type,
+            vec![rejection.obstruction],
+        )?;
+        return Ok(AppliedStep {
+            step_index: reserved.step_index,
+            status: "no_dispatchable_step".to_owned(),
+            trace,
+            worker_report: None,
+        });
+    }
+    let WorkerDispatch::Executed(executed) = outcome else {
+        unreachable!("worker dispatch outcome was handled")
+    };
+    let ExecutedWorker {
+        binding,
+        binding_content_hash,
+        worker_report,
+    } = *executed;
+    let store_api = NativeCaseStore::new(context.store.to_path_buf());
+    let trace_identity = &reserved.identity;
+    let trace_started_at = reserved.trace_started_at.clone();
+    let trace_guard = reserved
+        .trace_guard
+        .as_mut()
+        .expect("reserved step always has a trace guard");
+    trace_guard.trace.binding_content_hash = binding_content_hash.clone();
+    trace_guard
+        .trace
+        .metadata
+        .insert("worker_invoked".to_owned(), Value::Bool(true));
 
     let mut obstructions = Vec::new();
-    let worker_succeeded = invocation.exit_status == Some(0) && !invocation.timed_out;
+    let worker_succeeded = worker_report.exit_status == Some(0) && !worker_report.timed_out;
     let relation_requirement_ids = if worker_succeeded {
-        existing_requirement_ids(&replay.case_space, step)
+        existing_requirement_ids(&application_case_space, step)
     } else {
         Vec::new()
     };
     let evidence_morphism = evidence_morphism(
-        &replay.case_space,
-        &plan,
+        &application_case_space,
+        plan,
         step,
-        &trace_identity,
+        trace_identity,
         &worker_report,
         &relation_requirement_ids,
-        &gate,
+        context.gate,
     )?;
     let evidence_report = append_validated_morphism(
         &store_api,
-        &replay.case_space,
+        &application_case_space,
         evidence_morphism,
-        Some(options.actor_id.clone()),
+        Some(context.actor_id.clone()),
         "casegraphen run --step evidence attach",
     )?;
     let evidence_entry = report_entry(&evidence_report)?;
@@ -336,10 +661,14 @@ pub(in crate::native_cli) fn run_step(
         .ok_or_else(|| NativeCliError::invalid("worker evidence morphism has no evidence id"))?;
     let mut appended_entry_ids = vec![evidence_entry.entry_id.clone()];
     let mut result_revision_id = Some(evidence_entry.target_revision_id.clone());
+    let trace_guard = reserved
+        .trace_guard
+        .as_mut()
+        .expect("reserved step always has a trace guard");
     trace_guard.trace.appended_entry_ids = appended_entry_ids.clone();
     trace_guard.trace.result_revision_id = result_revision_id.clone();
     let mut transition_applied = false;
-    let post_evidence = store_api.replay_current_case_space(options.case_space_id)?;
+    let post_evidence = store_api.replay_current_case_space(context.case_space_id)?;
     let post_evaluation = evaluate_native_case(&post_evidence.case_space)?;
     let unsatisfied_success_evidence_requirement_ids = run_scoped_unsatisfied_requirement_ids(
         &post_evidence.case_space,
@@ -348,15 +677,27 @@ pub(in crate::native_cli) fn run_step(
         &trace_identity.trace_id,
     );
     let status;
+    let application_eligibility_reasons = step_case_eligibility_reasons(
+        step,
+        &post_evidence.case_space,
+        &post_evaluation.frontier_cell_ids,
+    );
 
-    if worker_succeeded {
+    if worker_succeeded && !application_eligibility_reasons.is_empty() {
+        obstructions.extend(
+            application_eligibility_reasons
+                .into_iter()
+                .map(|reason| application_eligibility_obstruction(step, reason)),
+        );
+        status = "transition_not_authorized";
+    } else if worker_succeeded {
         let transition = transition_morphism(
             &post_evidence.case_space,
-            &plan,
+            plan,
             step,
-            &trace_identity,
+            trace_identity,
             &evidence_cell_id,
-            &gate,
+            context.gate,
         )?;
         let mut candidate = post_evidence.case_space.clone();
         apply_morphism(&mut candidate, &transition)
@@ -405,12 +746,16 @@ pub(in crate::native_cli) fn run_step(
                 &store_api,
                 &post_evidence.case_space,
                 transition,
-                Some(options.actor_id.clone()),
+                Some(context.actor_id.clone()),
                 "casegraphen run --step transition",
             )?;
             let transition_entry = report_entry(&transition_report)?;
             appended_entry_ids.push(transition_entry.entry_id);
             result_revision_id = Some(transition_entry.target_revision_id);
+            let trace_guard = reserved
+                .trace_guard
+                .as_mut()
+                .expect("reserved step always has a trace guard");
             trace_guard.trace.appended_entry_ids = appended_entry_ids.clone();
             trace_guard.trace.result_revision_id = result_revision_id.clone();
             trace_guard.trace.transition_applied = true;
@@ -437,7 +782,7 @@ pub(in crate::native_cli) fn run_step(
             obstruction_type: "worker_execution_failed".to_owned(),
             summary: format!(
                 "worker {} exited with {:?}; timed_out={}",
-                binding.binding_id, invocation.exit_status, invocation.timed_out
+                binding.binding_id, worker_report.exit_status, worker_report.timed_out
             ),
             witness_ids: vec![evidence_cell_id],
             blocking: true,
@@ -445,19 +790,23 @@ pub(in crate::native_cli) fn run_step(
         status = "step_failed";
     }
 
+    let mut trace_guard = reserved
+        .trace_guard
+        .take()
+        .expect("reserved step always has a trace guard");
     trace_guard.trace = ExecutionTrace {
         schema: EXECUTION_TRACE_SCHEMA.to_owned(),
         schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
         trace_id: trace_identity.trace_id.clone(),
         plan_id: plan.plan_id.clone(),
         step_id: step.step_id.clone(),
-        case_space_id: options.case_space_id.clone(),
-        base_revision_id: options.base_revision_id.clone(),
+        case_space_id: context.case_space_id.clone(),
+        base_revision_id: application_case_space.revision.revision_id.clone(),
         result_revision_id,
         work_cell_id: step.work_cell_id.clone(),
         binding_id: binding.binding_id.clone(),
         binding_content_hash,
-        operation_gate: gate.clone(),
+        operation_gate: context.gate.clone(),
         worker_report_id: worker_report.report_id.clone(),
         appended_entry_ids,
         dispatch_state: ExecutionDispatchState::Started,
@@ -468,26 +817,301 @@ pub(in crate::native_cli) fn run_step(
             description:
                 "The worker received a derived reason report rather than the raw case space."
                     .to_owned(),
-            represented_ids: vec![options.base_revision_id.clone()],
-            omitted_ids: vec![options.case_space_id.clone()],
+            represented_ids: vec![application_case_space.revision.revision_id.clone()],
+            omitted_ids: vec![context.case_space_id.clone()],
         }],
         started_at: trace_started_at,
         finished_at: timestamp(),
         metadata: Map::from_iter([("worker_invoked".to_owned(), Value::Bool(true))]),
     };
-    let final_replay = store_api.replay_current_case_space(options.case_space_id)?;
+    let final_replay = store_api.replay_current_case_space(context.case_space_id)?;
     let dispatch_state = if status == "step_executed" {
         ExecutionDispatchState::Completed
     } else {
         ExecutionDispatchState::Failed
     };
     let trace = trace_guard.finish(&final_replay.case_space, dispatch_state, status, Vec::new())?;
-    Ok(run_report(
-        status,
-        Some(trace),
-        Some(&worker_report),
-        selection.step_reasons,
-    ))
+    Ok(AppliedStep {
+        step_index: reserved.step_index,
+        status: status.to_owned(),
+        trace,
+        worker_report: Some(worker_report),
+    })
+}
+
+fn execute_selected_steps(
+    context: &RunExecutionContext<'_>,
+    dispatch_case_space: &CaseSpace,
+    plan: &ExecutionPlan,
+    traces: &[ExecutionTrace],
+    step_indices: &[usize],
+    binding_rejections: &BTreeMap<usize, BindingRejection>,
+    max_parallel: usize,
+) -> Result<SelectedStepsExecution, NativeCliError> {
+    let mut reserved_steps = Vec::with_capacity(step_indices.len());
+    let mut applied_steps = Vec::with_capacity(step_indices.len());
+    for &step_index in step_indices {
+        let step = &plan.steps[step_index];
+        let identity = match reserve_trace_identity(context.store, plan, step, traces) {
+            Ok(identity) => identity,
+            Err(error) if context.continue_on_step_failure => {
+                applied_steps.push(record_reservation_failure(
+                    context,
+                    dispatch_case_space,
+                    plan,
+                    step_index,
+                    traces,
+                    error,
+                )?);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let trace_started_at = timestamp();
+        let binding_content_hash =
+            expected_binding_hash(plan, &step.worker_binding_id).unwrap_or_else(empty_content_hash);
+        let trace_guard = match TraceGuard::start(
+            context.store,
+            context.case_space_id,
+            context.actor_id,
+            dispatch_case_space,
+            plan,
+            step,
+            context.base_revision_id,
+            &identity,
+            binding_content_hash,
+            context.gate,
+            &trace_started_at,
+        ) {
+            Ok(trace_guard) => trace_guard,
+            Err(error) if context.continue_on_step_failure => {
+                applied_steps.push(record_reservation_failure(
+                    context,
+                    dispatch_case_space,
+                    plan,
+                    step_index,
+                    traces,
+                    error,
+                )?);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        reserved_steps.push(ReservedStep {
+            step_index,
+            identity,
+            trace_started_at,
+            trace_guard: Some(trace_guard),
+        });
+    }
+
+    let mut dispatch_results = Vec::with_capacity(reserved_steps.len());
+    for chunk in reserved_steps.chunks(max_parallel) {
+        let joined = thread::scope(|scope| {
+            chunk
+                .iter()
+                .map(|reserved| {
+                    scope.spawn(move || {
+                        if let Some(rejection) = binding_rejections.get(&reserved.step_index) {
+                            Ok(WorkerDispatch::Rejected(rejection.clone()))
+                        } else {
+                            dispatch_step_worker(
+                                context,
+                                dispatch_case_space,
+                                plan,
+                                &plan.steps[reserved.step_index],
+                                &reserved.identity,
+                            )
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join())
+                .collect::<Vec<_>>()
+        });
+        let mut thread_panicked = false;
+        for result in joined {
+            match result {
+                Ok(dispatch) => dispatch_results.push(dispatch),
+                Err(_) => {
+                    thread_panicked = true;
+                    if context.continue_on_step_failure {
+                        dispatch_results.push(Err(WorkerDispatchError::before_worker(
+                            NativeCliError::invalid(
+                                "worker dispatch thread panicked before returning a result",
+                            ),
+                            None,
+                        )));
+                    }
+                }
+            }
+        }
+        if thread_panicked && !context.continue_on_step_failure {
+            return Err(NativeCliError::invalid(
+                "worker dispatch thread panicked before returning a result",
+            ));
+        }
+    }
+
+    for (mut reserved, dispatch_result) in reserved_steps.into_iter().zip(dispatch_results) {
+        match dispatch_result {
+            Ok(dispatch) => {
+                let worker_report = match &dispatch {
+                    WorkerDispatch::Executed(executed) => Some(executed.worker_report.clone()),
+                    WorkerDispatch::Rejected(_) => None,
+                };
+                let binding_content_hash = match &dispatch {
+                    WorkerDispatch::Executed(executed) => {
+                        Some(executed.binding_content_hash.clone())
+                    }
+                    WorkerDispatch::Rejected(rejection) => {
+                        Some(rejection.binding_content_hash.clone())
+                    }
+                };
+                match apply_step_result(context, plan, &mut reserved, dispatch) {
+                    Ok(applied) => applied_steps.push(applied),
+                    Err(error)
+                        if context.continue_on_step_failure && reserved.trace_guard.is_some() =>
+                    {
+                        applied_steps.push(finish_reserved_step_failure(
+                            context,
+                            plan,
+                            reserved,
+                            "application_failed",
+                            error.to_string(),
+                            worker_report.is_some(),
+                            binding_content_hash,
+                            worker_report,
+                        )?);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(failure) => {
+                if context.continue_on_step_failure {
+                    applied_steps.push(finish_reserved_step_failure(
+                        context,
+                        plan,
+                        reserved,
+                        "dispatch_failed",
+                        failure.error.to_string(),
+                        failure.worker_invoked,
+                        failure.binding_content_hash,
+                        None,
+                    )?);
+                } else {
+                    if let Some(trace_guard) = reserved.trace_guard.as_mut() {
+                        trace_guard.trace.metadata.insert(
+                            "worker_invoked".to_owned(),
+                            Value::Bool(failure.worker_invoked),
+                        );
+                        if let Some(binding_content_hash) = failure.binding_content_hash {
+                            trace_guard.trace.binding_content_hash = binding_content_hash;
+                        }
+                    }
+                    drop(reserved);
+                    return Err(failure.error);
+                }
+            }
+        }
+    }
+    applied_steps.sort_by_key(|step| step.step_index);
+    Ok(SelectedStepsExecution {
+        steps: applied_steps,
+    })
+}
+
+fn record_reservation_failure(
+    context: &RunExecutionContext<'_>,
+    dispatch_case_space: &CaseSpace,
+    plan: &ExecutionPlan,
+    step_index: usize,
+    traces: &[ExecutionTrace],
+    error: NativeCliError,
+) -> Result<AppliedStep, NativeCliError> {
+    let step = &plan.steps[step_index];
+    let identity = reserve_failure_trace_identity(context.store, plan, step, traces)?;
+    let trace_started_at = timestamp();
+    let binding_content_hash =
+        expected_binding_hash(plan, &step.worker_binding_id).unwrap_or_else(empty_content_hash);
+    let trace_guard = TraceGuard::start(
+        context.store,
+        context.case_space_id,
+        context.actor_id,
+        dispatch_case_space,
+        plan,
+        step,
+        context.base_revision_id,
+        &identity,
+        binding_content_hash,
+        context.gate,
+        &trace_started_at,
+    )?;
+    finish_reserved_step_failure(
+        context,
+        plan,
+        ReservedStep {
+            step_index,
+            identity,
+            trace_started_at,
+            trace_guard: Some(trace_guard),
+        },
+        "reservation_failed",
+        error.to_string(),
+        false,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_reserved_step_failure(
+    context: &RunExecutionContext<'_>,
+    plan: &ExecutionPlan,
+    mut reserved: ReservedStep,
+    obstruction_type: &str,
+    summary: String,
+    worker_invoked: bool,
+    binding_content_hash: Option<String>,
+    worker_report: Option<WorkerReport>,
+) -> Result<AppliedStep, NativeCliError> {
+    let step = &plan.steps[reserved.step_index];
+    let mut trace_guard = reserved
+        .trace_guard
+        .take()
+        .expect("reserved step always has a trace guard");
+    trace_guard
+        .trace
+        .metadata
+        .insert("worker_invoked".to_owned(), Value::Bool(worker_invoked));
+    if let Some(binding_content_hash) = binding_content_hash {
+        trace_guard.trace.binding_content_hash = binding_content_hash;
+    }
+    let current_case_space = NativeCaseStore::new(context.store.to_path_buf())
+        .replay_current_case_space(context.case_space_id)?
+        .case_space;
+    let trace = trace_guard.finish(
+        &current_case_space,
+        ExecutionDispatchState::Failed,
+        obstruction_type,
+        vec![ExecutionObstruction {
+            obstruction_type: obstruction_type.to_owned(),
+            summary,
+            witness_ids: vec![step.step_id.clone()],
+            blocking: true,
+        }],
+    )?;
+    Ok(AppliedStep {
+        step_index: reserved.step_index,
+        status: if worker_report.is_some() {
+            "step_failed".to_owned()
+        } else {
+            "no_dispatchable_step".to_owned()
+        },
+        trace,
+        worker_report,
+    })
 }
 
 fn verify_accepted_plan(
@@ -505,28 +1129,89 @@ fn verify_accepted_plan(
 }
 
 struct StepSelection {
-    step_index: Option<usize>,
+    step_indices: Vec<usize>,
     step_reasons: Vec<Value>,
     obstructions: Vec<ExecutionObstruction>,
 }
 
-fn select_step(
+fn step_case_eligibility_reasons(
+    step: &ExecutionStep,
+    case_space: &CaseSpace,
+    frontier_cell_ids: &[Id],
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if !frontier_cell_ids.contains(&step.work_cell_id) {
+        reasons.push("work_cell_not_on_frontier");
+    }
+    match case_space
+        .case_cells
+        .iter()
+        .find(|cell| cell.id == step.work_cell_id)
+    {
+        Some(cell) if cell.lifecycle != CaseCellLifecycle::Active => {
+            reasons.push("work_cell_lifecycle_not_active");
+        }
+        Some(_) => {}
+        None => reasons.push("work_cell_missing"),
+    }
+    reasons
+}
+
+fn application_eligibility_obstruction(
+    step: &ExecutionStep,
+    reason: &'static str,
+) -> ExecutionObstruction {
+    let summary = match reason {
+        "work_cell_not_on_frontier" => format!(
+            "work cell {} is no longer on the frontier at application time",
+            step.work_cell_id
+        ),
+        "work_cell_lifecycle_not_active" => format!(
+            "work cell {} is no longer active at application time",
+            step.work_cell_id
+        ),
+        "work_cell_missing" => format!(
+            "work cell {} is missing at application time",
+            step.work_cell_id
+        ),
+        _ => format!(
+            "step {} is no longer eligible at application time: {reason}",
+            step.step_id
+        ),
+    };
+    ExecutionObstruction {
+        obstruction_type: reason.to_owned(),
+        summary,
+        witness_ids: vec![step.work_cell_id.clone()],
+        blocking: true,
+    }
+}
+
+fn select_steps(
     plan: &ExecutionPlan,
     case_space: &CaseSpace,
     frontier_cell_ids: &[Id],
     traces: &[ExecutionTrace],
-    retry_step_id: Option<&Id>,
+    retry_step_ids: &BTreeSet<&Id>,
 ) -> StepSelection {
-    let frontier = frontier_cell_ids.iter().collect::<BTreeSet<_>>();
-    let mut selected = None;
+    let mut selected = Vec::new();
     let mut step_reasons = Vec::new();
     let mut obstructions = Vec::new();
     for (index, step) in plan.steps.iter().enumerate() {
         let mut reasons = Vec::new();
         let prior_started = traces.iter().any(|trace| {
-            trace.plan_id == plan.plan_id
+            let is_matching_started = trace.plan_id == plan.plan_id
                 && trace.step_id == step.step_id
-                && trace.dispatch_state == ExecutionDispatchState::Started
+                && trace.dispatch_state == ExecutionDispatchState::Started;
+            let stale_retry = retry_step_ids.contains(&step.step_id)
+                && trace
+                    .metadata
+                    .get("reserved_base_revision_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reserved_base_revision_id| {
+                        reserved_base_revision_id != case_space.revision.revision_id.as_str()
+                    });
+            is_matching_started && !stale_retry
         });
         let prior_applied = traces.iter().any(|trace| {
             trace.plan_id == plan.plan_id
@@ -550,7 +1235,7 @@ fn select_step(
         if prior_applied {
             reasons.push("already_executed");
         }
-        if prior_failed && retry_step_id != Some(&step.step_id) {
+        if prior_failed && !retry_step_ids.contains(&step.step_id) {
             reasons.push("prior_failed_trace_requires_retry");
             obstructions.push(ExecutionObstruction {
                 obstruction_type: "retry_required".to_owned(),
@@ -562,23 +1247,14 @@ fn select_step(
                 blocking: true,
             });
         }
-        if !frontier.contains(&step.work_cell_id) {
-            reasons.push("work_cell_not_on_frontier");
-        }
-        match case_space
-            .case_cells
-            .iter()
-            .find(|cell| cell.id == step.work_cell_id)
-        {
-            Some(cell) if cell.lifecycle != CaseCellLifecycle::Active => {
-                reasons.push("work_cell_lifecycle_not_active");
-            }
-            Some(_) => {}
-            None => reasons.push("work_cell_missing"),
-        }
+        reasons.extend(step_case_eligibility_reasons(
+            step,
+            case_space,
+            frontier_cell_ids,
+        ));
         let eligible = reasons.is_empty();
-        if selected.is_none() && eligible {
-            selected = Some(index);
+        if eligible {
+            selected.push(index);
         }
         step_reasons.push(json!({
             "step_id": step.step_id,
@@ -588,7 +1264,7 @@ fn select_step(
         }));
     }
     StepSelection {
-        step_index: selected,
+        step_indices: selected,
         step_reasons,
         obstructions,
     }
@@ -736,11 +1412,34 @@ fn reserve_trace_identity(
     step: &ExecutionStep,
     traces: &[ExecutionTrace],
 ) -> Result<TraceIdentity, NativeCliError> {
-    let mut attempt = traces
+    let attempt = traces
         .iter()
         .filter(|trace| trace.plan_id == plan.plan_id && trace.step_id == step.step_id)
         .count()
         + 1;
+    reserve_trace_identity_from_attempt(store, plan, step, attempt)
+}
+
+fn reserve_failure_trace_identity(
+    store: &Path,
+    plan: &ExecutionPlan,
+    step: &ExecutionStep,
+    traces: &[ExecutionTrace],
+) -> Result<TraceIdentity, NativeCliError> {
+    let attempt = traces
+        .iter()
+        .filter(|trace| trace.plan_id == plan.plan_id && trace.step_id == step.step_id)
+        .count()
+        + 2;
+    reserve_trace_identity_from_attempt(store, plan, step, attempt)
+}
+
+fn reserve_trace_identity_from_attempt(
+    store: &Path,
+    plan: &ExecutionPlan,
+    step: &ExecutionStep,
+    mut attempt: usize,
+) -> Result<TraceIdentity, NativeCliError> {
     let run_root = store.join(RUN_DIRECTORY);
     fs::create_dir_all(&run_root).map_err(|source| NativeCliError::Io {
         path: run_root.clone(),
@@ -1403,6 +2102,25 @@ fn no_dispatchable_report(
             "appended_entry_ids": [],
             "obstructions": obstructions,
             "step_reasons": step_reasons,
+        }),
+    )
+}
+
+fn frontier_report(
+    status: &str,
+    traces: Vec<ExecutionTrace>,
+    step_reasons: Vec<Value>,
+    appended_entry_ids: Vec<Id>,
+    result_revision_id: Id,
+) -> Value {
+    report(
+        "casegraphen run --frontier",
+        json!({
+            "status": status,
+            "traces": traces,
+            "step_reasons": step_reasons,
+            "appended_entry_ids": appended_entry_ids,
+            "result_revision_id": result_revision_id,
         }),
     )
 }

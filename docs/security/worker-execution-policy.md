@@ -31,9 +31,10 @@ Primary risks:
 
 ### 2.1 Execution is disabled by default
 
-`run --step` refuses shell bindings unless `--enable-worker shell` is passed
-explicitly on every invocation. There is no configuration file that enables
-workers persistently; enabling is a per-invocation, auditable decision.
+`run --step` and `run --frontier` refuse shell bindings unless
+`--enable-worker shell` is passed explicitly on every invocation. There is no
+configuration file that enables workers persistently; enabling is a
+per-invocation, auditable decision.
 
 ### 2.2 Capability and policy gates
 
@@ -45,7 +46,7 @@ strings are:
 | Command | Operation |
 |---|---|
 | `plan accept` / `plan reject` | `plan-review` |
-| `run --step` | `dispatch` |
+| `run --step` / `run --frontier` | `dispatch` |
 | `morphism apply` | `morphism-apply` |
 | `morphism reject` | `morphism-reject` |
 | `evidence attach` | `evidence-attach` |
@@ -73,8 +74,10 @@ canonical review morphism, not an evidence-cell rewrite.
 
 For `morphism apply`, `morphism reject`, `evidence attach`, `cell transition`,
 and all four `review` actions, the validated gate is stored as
-`morphism.metadata.operation_gate`. `run --step` uses the same actor for its
-dispatch gate and appended log entries.
+`morphism.metadata.operation_gate`. Both run modes use the same actor for their
+dispatch gate and appended log entries. `run --frontier` validates one dispatch
+gate for the invocation; its capability ids must cover every binding selected
+for the round.
 
 Capability ↔ OS permission mapping (operator duty, not enforced by the tool):
 
@@ -91,9 +94,9 @@ workers under a dedicated OS user or container is the operator's control.
 
 - A plan is executable only after an explicit accept with reviewer id and
   reason, recorded as a morphism in the hash-chained log.
-- The acceptance records `plan_content_hash`; `run --step` re-verifies the
-  stored plan (review_status normalized) against that hash. Editing a plan
-  after acceptance is detected and refused.
+- The acceptance records `plan_content_hash`; both `run --step` and
+  `run --frontier` re-verify the stored plan (review_status normalized) against
+  that hash. Editing a plan after acceptance is detected and refused.
 - Binding content hashes are recorded into the plan at propose time
   (`plan.metadata.worker_binding_hashes`); editing a binding after acceptance
   yields a `binding_hash_mismatch` obstruction and no dispatch.
@@ -142,13 +145,26 @@ satisfied + invariants pass) remain distinct judgments.
 
 ### 2.6 Audit
 
-Every step writes an `execution_trace` (plan/step/binding hashes, worker
-report id, appended entry ids, obstructions, information loss) under `runs/`,
-and appends that trace's content hash to the hash-chained morphism log. Run
-directories are atomically reserved and a `started` trace exists before worker
-spawn, so concurrent dispatch cannot reuse an in-progress attempt and failures
-after reservation retain a trace. Replay wins over any cache or snapshot. The
-audit path for an incident is:
+Every selected step in either run mode writes its own `execution_trace`
+(plan/step/binding hashes, worker report id, appended entry ids, obstructions,
+information loss) under `runs/`, and appends that trace's content hash to the
+hash-chained morphism log. Selection-time binding hash, identity, and
+per-binding capability refusals are failed traces too; they are not transient
+report-only findings. Run directories are atomically reserved and a `started`
+trace exists before worker spawn, so concurrent dispatch cannot reuse an
+in-progress attempt and failures after reservation retain a trace.
+
+`run --frontier` dispatches at most `--max-parallel` workers concurrently,
+then applies and anchors their results serially in plan-step order. One
+validated dispatch gate covers the round, but traces, attempts, obstructions,
+and anchors remain per-step. A per-step dispatch, reservation, or application
+failure is reported in the round result and does not suppress the report for
+other selected steps. A stale `started` trace can be superseded only by an
+explicit `--retry-step` after its recorded reserved base revision is no longer
+current; a `started` trace at the current revision remains protected as a
+concurrent dispatch.
+
+Replay wins over any cache or snapshot. The audit path for an incident is:
 trace → worker report + raw output hashes → log entries → revision replay.
 
 ## 3. Approval policy — what always needs a human
@@ -197,9 +213,12 @@ trace → worker report + raw output hashes → log entries → revision replay.
    migrating), which is deliberate: revocation is a source-boundary decision,
    not a runtime one.
 8. An operator who can write to the store can hold or repeatedly recreate a
-   case lock and deny writes, and can pre-create run directories to push the
-   attempt counter forward. Both are availability, not integrity, risks and are
-   bounded by store filesystem permissions.
+   case lock and deny writes. An empty pre-created run directory is not skipped:
+   it hard-errors that step's reservation. `run --frontier` records and reports
+   that per-step failure while continuing the round when it can reserve a
+   separate failure trace; `run --step` returns the reservation error. These are
+   availability, not integrity, risks and are bounded by store filesystem
+   permissions.
 
 ## 5. Review provenance
 

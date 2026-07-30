@@ -4,9 +4,10 @@ use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1684,6 +1685,81 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
 }
 
 #[test]
+fn native_run_step_does_not_rebase_after_an_intervening_append() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let worker_started = directory.join("worker-started");
+    let script = format!(
+        "printf 'started\\n' > '{}'; sleep 0.5; printf 'worker-output\\n'",
+        worker_started.display()
+    );
+    let fixture = setup_native_run(&directory, "pinned-application-base", &script);
+    let child = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_step_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            true,
+            None,
+            &["capability:dispatch", "capability:native-run-worker"],
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn casegraphen run --step");
+    let wait_started_at = Instant::now();
+    while !worker_started.is_file() && wait_started_at.elapsed() < Duration::from_secs(5) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        worker_started.is_file(),
+        "worker did not start before timeout"
+    );
+
+    let intervening = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &fixture.accepted_revision_id,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "resolved",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
+    assert!(
+        intervening.status.success(),
+        "stderr: {}",
+        stderr(&intervening)
+    );
+
+    let output = child.wait_with_output().expect("wait for run --step");
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("entry sequence must be"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert_eq!(
+        replayed_work_lifecycle(&replay),
+        "active",
+        "run --step must not apply its transition against a revision newer than its pinned base"
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_run_step_refuses_plan_whose_latest_review_is_reject() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -2272,6 +2348,871 @@ fn native_run_step_blocks_successful_worker_when_success_evidence_is_unsatisfied
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
     assert_eq!(replayed_work_lifecycle(&replay), "active");
     fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_executes_independent_steps_and_appends_in_plan_order() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let completion_order = directory.join("worker-completion-order");
+    let first_script = format!(
+        "sleep 1\nprintf 'first\\n' >> '{}'\nprintf 'first-output\\n'",
+        completion_order.display()
+    );
+    let second_script = format!(
+        "printf 'second\\n' >> '{}'\nprintf 'second-output\\n'",
+        completion_order.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "independent",
+        &[
+            ("work:frontier-first", first_script.as_str()),
+            ("work:frontier-second", second_script.as_str()),
+        ],
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 2);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("round_executed"));
+    let traces = value["result"]["traces"]
+        .as_array()
+        .expect("frontier traces");
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0]["step_id"], json!(fixture.step_ids[0]));
+    assert_eq!(traces[1]["step_id"], json!(fixture.step_ids[1]));
+    assert_eq!(traces[0]["transition_applied"], json!(true));
+    assert_eq!(traces[1]["transition_applied"], json!(true));
+    assert_eq!(
+        fs::read_to_string(&completion_order).expect("worker completion order"),
+        "second\nfirst\n",
+        "the second worker must finish first to exercise serial plan-order application"
+    );
+    let appended_entry_ids = value["result"]["appended_entry_ids"]
+        .as_array()
+        .expect("frontier appended entries");
+    assert_eq!(appended_entry_ids.len(), 6);
+    assert_eq!(
+        value["result"]["result_revision_id"],
+        traces[1]["result_revision_id"]
+    );
+
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let cells = replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells");
+    for work_cell_id in &fixture.work_cell_ids {
+        assert_eq!(
+            cells
+                .iter()
+                .find(|cell| cell["id"] == json!(work_cell_id))
+                .expect("frontier work cell")["lifecycle"],
+            json!("resolved")
+        );
+    }
+    let log = replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log");
+    let appended_from_log = log
+        .iter()
+        .filter(|entry| appended_entry_ids.contains(&entry["entry_id"]))
+        .map(|entry| entry["entry_id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(appended_from_log, appended_entry_ids.clone());
+    let applied_step_order = log
+        .iter()
+        .filter_map(|entry| {
+            entry["morphism"]["metadata"]["step_id"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .filter(|step_id| fixture.step_ids.contains(step_id))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        applied_step_order,
+        vec![
+            fixture.step_ids[0].clone(),
+            fixture.step_ids[0].clone(),
+            fixture.step_ids[1].clone(),
+            fixture.step_ids[1].clone(),
+        ]
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_continues_after_one_worker_fails() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "partial-failure",
+        &[
+            (
+                "work:frontier-failing",
+                "printf 'failed-output\\n'\nprintf 'failed-error\\n' >&2\nexit 1",
+            ),
+            ("work:frontier-succeeding", "printf 'successful-output\\n'"),
+        ],
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 2);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("round_executed"));
+    let traces = value["result"]["traces"]
+        .as_array()
+        .expect("frontier traces");
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0]["step_id"], json!(fixture.step_ids[0]));
+    assert_eq!(traces[0]["transition_applied"], json!(false));
+    assert_eq!(
+        traces[0]["obstructions"][0]["obstruction_type"],
+        json!("worker_execution_failed")
+    );
+    assert_eq!(traces[1]["step_id"], json!(fixture.step_ids[1]));
+    assert_eq!(traces[1]["transition_applied"], json!(true));
+    assert_eq!(
+        value["result"]["appended_entry_ids"]
+            .as_array()
+            .expect("frontier appended entries")
+            .len(),
+        5
+    );
+
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let cells = replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells");
+    assert_eq!(
+        cells
+            .iter()
+            .find(|cell| cell["id"] == json!(fixture.work_cell_ids[0]))
+            .expect("failing work cell")["lifecycle"],
+        json!("active")
+    );
+    assert_eq!(
+        cells
+            .iter()
+            .find(|cell| cell["id"] == json!(fixture.work_cell_ids[1]))
+            .expect("succeeding work cell")["lifecycle"],
+        json!("resolved")
+    );
+    assert!(cells.iter().any(|cell| {
+        cell["cell_type"] == json!("evidence")
+            && cell["metadata"]["exit_status"] == json!(1)
+            && cell["metadata"]["trace_id"] == traces[0]["trace_id"]
+    }));
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_selects_only_one_step_per_work_cell() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "shared-cell",
+        &[
+            ("work:frontier-shared", "printf 'first-output\\n'"),
+            ("work:frontier-shared", "printf 'must-not-run\\n'"),
+        ],
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 2);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("round_executed"));
+    assert_eq!(
+        value["result"]["traces"]
+            .as_array()
+            .expect("frontier traces")
+            .len(),
+        1
+    );
+    assert_eq!(
+        value["result"]["traces"][0]["step_id"],
+        json!(fixture.step_ids[0])
+    );
+    assert_eq!(value["result"]["step_reasons"][1]["eligible"], json!(false));
+    assert_eq!(
+        value["result"]["step_reasons"][1]["reasons"],
+        json!(["work_cell_already_selected_this_round"])
+    );
+    assert_eq!(
+        fs::read_dir(directory.join("runs"))
+            .expect("read frontier run directories")
+            .count(),
+        1
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_selects_a_later_same_cell_step_when_the_first_is_ineligible() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "shared-cell-first-ineligible",
+        &[
+            ("work:frontier-shared-fallback", "printf 'must-not-run\\n'"),
+            ("work:frontier-shared-fallback", "printf 'fallback-ran\\n'"),
+        ],
+    );
+    let first_binding = directory
+        .join("bindings")
+        .join("worker_binding~3afrontier-shared-cell-first-ineligible-1.worker.binding.json");
+    let mut tampered = json_file(first_binding.clone());
+    tampered["metadata"]["tampered_after_plan_acceptance"] = json!(true);
+    fs::write(
+        &first_binding,
+        serde_json::to_string_pretty(&tampered).expect("serialize tampered first binding"),
+    )
+    .expect("tamper first binding");
+
+    let output = run_native_frontier(&directory, &fixture, 2);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("round_executed"));
+    assert_eq!(
+        value["result"]["traces"]
+            .as_array()
+            .expect("frontier traces")
+            .len(),
+        2
+    );
+    assert_eq!(
+        value["result"]["traces"][0]["step_id"],
+        json!(fixture.step_ids[0])
+    );
+    assert_eq!(
+        value["result"]["traces"][0]["dispatch_state"],
+        json!("failed")
+    );
+    assert_eq!(
+        value["result"]["traces"][0]["obstructions"][0]["obstruction_type"],
+        json!("binding_hash_mismatch")
+    );
+    assert_eq!(
+        value["result"]["traces"][1]["step_id"],
+        json!(fixture.step_ids[1])
+    );
+    assert_eq!(
+        value["result"]["step_reasons"][0]["reasons"],
+        json!(["binding_hash_mismatch"])
+    );
+    assert_eq!(value["result"]["step_reasons"][1]["eligible"], json!(true));
+    assert_eq!(value["result"]["step_reasons"][1]["reasons"], json!([]));
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_treats_uncovered_binding_capabilities_as_ineligible() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "uncovered-capability",
+        &[("work:frontier-uncovered", "printf 'must-not-run\\n'")],
+    );
+
+    let output = run_native_frontier_with(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        4,
+        &["capability:dispatch"],
+        &[],
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    assert_eq!(
+        value["result"]["traces"][0]["dispatch_state"],
+        json!("failed")
+    );
+    assert_eq!(
+        value["result"]["traces"][0]["obstructions"][0]["obstruction_type"],
+        json!("operation_gate_rejected")
+    );
+    assert_eq!(
+        value["result"]["appended_entry_ids"]
+            .as_array()
+            .expect("trace anchor entry")
+            .len(),
+        1
+    );
+    assert_eq!(
+        value["result"]["step_reasons"][0]["reasons"],
+        json!(["operation_gate_rejected"])
+    );
+    assert!(only_run_file(&directory, "execution.trace.json").is_file());
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let trace_id = value["result"]["traces"][0]["trace_id"]
+        .as_str()
+        .expect("rejected trace id");
+    assert!(replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .any(|entry| {
+            entry["morphism"]["morphism_type"] == json!("custom:execution_trace_anchor")
+                && entry["morphism"]["metadata"]["trace_id"] == json!(trace_id)
+        }));
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_tampered_binding_writes_anchored_failed_trace_and_burns_attempt() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "tampered-binding-audit",
+        &[("work:frontier-tampered-binding", "printf 'must-not-run\n'")],
+    );
+    let binding_path = directory
+        .join("bindings")
+        .join("worker_binding~3afrontier-tampered-binding-audit-1.worker.binding.json");
+    let original_binding = fs::read(&binding_path).expect("read original binding");
+    let mut tampered = json_file(binding_path.clone());
+    tampered["metadata"]["tampered_after_plan_acceptance"] = json!(true);
+    fs::write(
+        &binding_path,
+        serde_json::to_string_pretty(&tampered).expect("serialize tampered binding"),
+    )
+    .expect("tamper binding");
+
+    let refused = run_native_frontier(&directory, &fixture, 1);
+
+    assert!(refused.status.success(), "stderr: {}", stderr(&refused));
+    let refused_json = stdout_json(&refused);
+    assert_eq!(
+        refused_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    let trace = &refused_json["result"]["traces"][0];
+    assert_eq!(trace["step_id"], json!(fixture.step_ids[0]));
+    assert_eq!(trace["dispatch_state"], json!("failed"));
+    assert_eq!(trace["transition_applied"], json!(false));
+    assert_eq!(
+        trace["obstructions"][0]["obstruction_type"],
+        json!("binding_hash_mismatch")
+    );
+    let trace_id = trace["trace_id"].as_str().expect("failed trace id");
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    assert_eq!(json_file(trace_path)["trace_id"], json!(trace_id));
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert!(replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .any(|entry| {
+            entry["morphism"]["morphism_type"] == json!("custom:execution_trace_anchor")
+                && entry["morphism"]["metadata"]["trace_id"] == json!(trace_id)
+        }));
+
+    fs::write(&binding_path, original_binding).expect("restore accepted binding");
+    let current_revision = refused_json["result"]["result_revision_id"]
+        .as_str()
+        .expect("trace anchor revision");
+    let without_retry = run_native_frontier_with(
+        &directory,
+        &fixture,
+        current_revision,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+    );
+    assert!(
+        without_retry.status.success(),
+        "stderr: {}",
+        stderr(&without_retry)
+    );
+    let without_retry_json = stdout_json(&without_retry);
+    assert_eq!(
+        without_retry_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert_eq!(without_retry_json["result"]["traces"], json!([]));
+    assert_eq!(
+        without_retry_json["result"]["step_reasons"][0]["reasons"],
+        json!(["prior_failed_trace_requires_retry"])
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_reports_each_disabled_worker_without_aborting_the_round() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "disabled-worker-round",
+        &[
+            ("work:frontier-disabled-1", "printf 'one\n'"),
+            ("work:frontier-disabled-2", "printf 'two\n'"),
+            ("work:frontier-disabled-3", "printf 'three\n'"),
+            ("work:frontier-disabled-4", "printf 'four\n'"),
+        ],
+    );
+
+    let output = run_native_frontier_without_worker_opt_in(&directory, &fixture, 4);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    let traces = value["result"]["traces"]
+        .as_array()
+        .expect("per-step failed traces");
+    assert_eq!(traces.len(), 4);
+    assert!(traces.iter().all(|trace| {
+        trace["dispatch_state"] == json!("failed")
+            && trace["transition_applied"] == json!(false)
+            && trace["obstructions"][0]["obstruction_type"] == json!("dispatch_failed")
+            && trace["obstructions"][0]["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("--enable-worker shell"))
+    }));
+    assert_eq!(
+        value["result"]["appended_entry_ids"]
+            .as_array()
+            .expect("one trace anchor per failed step")
+            .len(),
+        4
+    );
+    for (index, reason) in value["result"]["step_reasons"]
+        .as_array()
+        .expect("step reasons")
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(reason["step_id"], json!(fixture.step_ids[index]));
+        assert_eq!(reason["reasons"], json!(["dispatch_failed"]));
+    }
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_refuses_transition_when_cell_leaves_frontier_during_round() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let worker_started = directory.join("frontier-membership-worker-started");
+    let script = format!(
+        "printf 'started\\n' > '{}'\nsleep 0.5\nprintf 'worker-output\\n'",
+        worker_started.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "membership-recheck",
+        &[("work:frontier-membership-recheck", script.as_str())],
+    );
+    let morphism_path = directory.join("frontier-membership-intervening.case_morphism.json");
+    let morphism = json!({
+        "morphism_id": "morphism:frontier-membership-intervening",
+        "morphism_type": "create",
+        "source_revision_id": fixture.accepted_revision_id,
+        "target_revision_id": "revision:frontier-membership-intervening",
+        "added_ids": [
+            "evidence:frontier-membership-required",
+            "relation:frontier-membership-requires-evidence"
+        ],
+        "updated_ids": [],
+        "retired_ids": [],
+        "preserved_ids": ["work:frontier-membership-recheck"],
+        "violated_invariant_ids": [],
+        "review_status": "unreviewed",
+        "evidence_ids": [],
+        "source_ids": ["source:frontier-membership-test"],
+        "metadata": {
+            "payload": {
+                "added_cells": [{
+                    "id": "evidence:frontier-membership-required",
+                    "cell_type": "evidence",
+                    "space_id": "space:higher-graphen-casegraphen",
+                    "title": "Evidence required after dispatch selection",
+                    "lifecycle": "proposed",
+                    "source_ids": ["source:frontier-membership-test"],
+                    "structure_ids": [],
+                    "provenance": {
+                        "source": {
+                            "kind": "human",
+                            "title": "Frontier membership concurrency regression"
+                        },
+                        "confidence": 1.0,
+                        "review_status": "unreviewed"
+                    },
+                    "metadata": {"evidence_boundary": "inferred"}
+                }],
+                "added_relations": [{
+                    "id": "relation:frontier-membership-requires-evidence",
+                    "relation_type": "requires_evidence",
+                    "relation_strength": "hard",
+                    "from_id": "work:frontier-membership-recheck",
+                    "to_id": "evidence:frontier-membership-required",
+                    "evidence_ids": [],
+                    "source_ids": ["source:frontier-membership-test"],
+                    "provenance": {
+                        "source": {
+                            "kind": "human",
+                            "title": "Frontier membership concurrency regression"
+                        },
+                        "confidence": 1.0,
+                        "review_status": "unreviewed"
+                    },
+                    "metadata": {}
+                }]
+            }
+        }
+    });
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&morphism).expect("serialize intervening morphism"),
+    )
+    .expect("write intervening morphism");
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+
+    let child = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            1,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[],
+            true,
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn casegraphen run --frontier");
+    wait_for_file(
+        &worker_started,
+        "frontier worker did not start before timeout",
+    );
+
+    let apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            directory.to_str().expect("store path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:frontier-membership-intervening",
+            "--base-revision-id",
+            &fixture.accepted_revision_id,
+            "--reviewer-id",
+            "reviewer:frontier-membership",
+            "--reason",
+            "Add a blocking evidence requirement during frontier dispatch",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+
+    let output = child.wait_with_output().expect("wait for frontier round");
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("round_executed"));
+    assert_eq!(
+        value["result"]["traces"][0]["transition_applied"],
+        json!(false)
+    );
+    assert!(value["result"]["traces"][0]["obstructions"]
+        .as_array()
+        .expect("trace obstructions")
+        .iter()
+        .any(|obstruction| {
+            obstruction["obstruction_type"] == json!("work_cell_not_on_frontier")
+        }));
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let work_cell = replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:frontier-membership-recheck"))
+        .expect("frontier membership work cell");
+    assert_eq!(work_cell["lifecycle"], json!("active"));
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_traces_record_each_application_base_revision() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "trace-application-bases",
+        &[
+            ("work:frontier-base-1", "printf 'one\n'"),
+            ("work:frontier-base-2", "printf 'two\n'"),
+            ("work:frontier-base-3", "printf 'three\n'"),
+        ],
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 3);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    let traces = value["result"]["traces"]
+        .as_array()
+        .expect("frontier traces");
+    assert_eq!(traces.len(), 3);
+    assert_eq!(
+        traces[0]["base_revision_id"],
+        json!(fixture.accepted_revision_id)
+    );
+    for index in 1..traces.len() {
+        assert_eq!(
+            traces[index]["base_revision_id"],
+            traces[index - 1]["result_revision_id"],
+            "each trace must name the revision present when its evidence morphism was computed"
+        );
+    }
+    let mut base_revision_ids = traces
+        .iter()
+        .map(|trace| {
+            trace["base_revision_id"]
+                .as_str()
+                .expect("trace base revision")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    base_revision_ids.sort();
+    base_revision_ids.dedup();
+    assert_eq!(base_revision_ids.len(), traces.len());
+    for trace in traces {
+        assert_eq!(
+            trace["information_loss"][0]["represented_ids"],
+            json!([trace["base_revision_id"].clone()])
+        );
+    }
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_retry_recovers_stale_started_trace() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let worker_started = directory.join("stale-started-worker-started");
+    let script = format!(
+        "printf 'started\\n' > '{}'\nsleep 1\nprintf 'worker-output\\n'",
+        worker_started.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "stale-started-retry",
+        &[("work:frontier-stale-started", script.as_str())],
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            1,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[],
+            true,
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn casegraphen run --frontier");
+    wait_for_file(
+        &worker_started,
+        "frontier worker did not start before timeout",
+    );
+    child.kill().expect("kill frontier round");
+    let killed = child.wait_with_output().expect("wait for killed round");
+    assert!(!killed.status.success());
+    let started_trace_path = only_run_file(&directory, "execution.trace.json");
+    let started_trace = json_file(started_trace_path);
+    assert_eq!(started_trace["dispatch_state"], json!("started"));
+    assert_eq!(
+        started_trace["metadata"]["reserved_base_revision_id"],
+        json!(fixture.accepted_revision_id)
+    );
+
+    let intervening = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &fixture.accepted_revision_id,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "resolved",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
+    assert!(
+        intervening.status.success(),
+        "stderr: {}",
+        stderr(&intervening)
+    );
+    let intervening_revision = stdout_json(&intervening)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("intervening revision")
+        .to_owned();
+
+    let recovered = run_native_frontier_with(
+        &directory,
+        &fixture,
+        &intervening_revision,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[fixture.step_ids[0].as_str()],
+    );
+
+    assert!(recovered.status.success(), "stderr: {}", stderr(&recovered));
+    let recovered_json = stdout_json(&recovered);
+    assert_eq!(recovered_json["result"]["status"], json!("round_executed"));
+    assert_eq!(
+        recovered_json["result"]["traces"][0]["transition_applied"],
+        json!(true)
+    );
+    assert_eq!(
+        fs::read_dir(directory.join("runs"))
+            .expect("read retry run directories")
+            .count(),
+        2
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_max_parallel_one_has_the_same_serial_log_order() {
+    let serial_directory = unique_temp_dir();
+    let parallel_directory = unique_temp_dir();
+    fs::create_dir_all(&serial_directory).expect("create serial temp directory");
+    fs::create_dir_all(&parallel_directory).expect("create parallel temp directory");
+    let workers = [
+        (
+            "work:frontier-compare-first",
+            "sleep 0.1\nprintf 'first\\n'",
+        ),
+        (
+            "work:frontier-compare-second",
+            "sleep 0.1\nprintf 'second\\n'",
+        ),
+    ];
+    let serial_fixture = setup_native_frontier(&serial_directory, "parallel-limit", &workers);
+    let parallel_fixture = setup_native_frontier(&parallel_directory, "parallel-limit", &workers);
+
+    let serial = run_native_frontier(&serial_directory, &serial_fixture, 1);
+    let parallel = run_native_frontier(&parallel_directory, &parallel_fixture, 2);
+
+    assert!(serial.status.success(), "stderr: {}", stderr(&serial));
+    assert!(parallel.status.success(), "stderr: {}", stderr(&parallel));
+    let serial_value = stdout_json(&serial);
+    let parallel_value = stdout_json(&parallel);
+    assert_eq!(
+        serial_value["result"]["appended_entry_ids"],
+        parallel_value["result"]["appended_entry_ids"]
+    );
+    assert_eq!(
+        serial_value["result"]["result_revision_id"],
+        parallel_value["result"]["result_revision_id"]
+    );
+    assert_eq!(
+        serial_value["result"]["traces"][0]["step_id"],
+        parallel_value["result"]["traces"][0]["step_id"]
+    );
+    assert_eq!(
+        serial_value["result"]["traces"][1]["step_id"],
+        parallel_value["result"]["traces"][1]["step_id"]
+    );
+    assert_native_store_valid_and_rebuilds(&serial_directory);
+    assert_native_store_valid_and_rebuilds(&parallel_directory);
+    fs::remove_dir_all(serial_directory).expect("remove serial temp directory");
+    fs::remove_dir_all(parallel_directory).expect("remove parallel temp directory");
+}
+
+#[test]
+fn native_run_step_and_frontier_are_mutually_exclusive() {
+    let output = run_cli(&["run", "--step", "--frontier", "--format", "json"]);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("exactly one of --step or --frontier"));
+
+    let zero_parallel = run_cli(&[
+        "run",
+        "--frontier",
+        "--store",
+        "unused",
+        "--case-space-id",
+        "case_space:unused",
+        "--plan-id",
+        "plan:unused",
+        "--base-revision-id",
+        "revision:unused",
+        "--actor-id",
+        "actor:unused",
+        "--operation-scope-id",
+        "case_space:unused",
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:unused",
+        "--max-parallel",
+        "0",
+        "--format",
+        "json",
+    ]);
+    assert!(!zero_parallel.status.success());
+    assert!(stderr(&zero_parallel).contains("--max-parallel must be at least 1"));
 }
 
 #[test]
@@ -3994,6 +4935,209 @@ struct NativeRunFixture {
     binding_path: PathBuf,
 }
 
+struct NativeFrontierFixture {
+    plan_id: String,
+    step_ids: Vec<String>,
+    work_cell_ids: Vec<String>,
+    accepted_revision_id: String,
+}
+
+#[cfg(unix)]
+fn setup_native_frontier(
+    directory: &Path,
+    suffix: &str,
+    workers: &[(&str, &str)],
+) -> NativeFrontierFixture {
+    use std::os::unix::fs::PermissionsExt;
+
+    let input_path = directory.join(format!("{suffix}.frontier.native.input.json"));
+    let mut input = json_file(native_case_fixture());
+    let work_template = input["case_cells"]
+        .as_array()
+        .expect("native case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("native work template")
+        .clone();
+    let mut work_cell_ids = Vec::new();
+    for (work_cell_id, _) in workers {
+        if work_cell_ids.iter().any(|id| id == work_cell_id) {
+            continue;
+        }
+        let mut work_cell = work_template.clone();
+        work_cell["id"] = json!(work_cell_id);
+        work_cell["title"] = json!(format!("Frontier work {work_cell_id}"));
+        work_cell["lifecycle"] = json!("active");
+        work_cell["structure_ids"] = json!([]);
+        input["case_cells"]
+            .as_array_mut()
+            .expect("native case cells")
+            .push(work_cell);
+        work_cell_ids.push((*work_cell_id).to_owned());
+    }
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&input).expect("serialize frontier case space"),
+    )
+    .expect("write frontier case space");
+    let import_revision = format!("revision:frontier-{suffix}-import");
+    import_native_case_space_from_input(directory, &input_path, &import_revision);
+
+    let plan_id = format!("plan:frontier-{suffix}");
+    let mut step_ids = Vec::new();
+    let mut steps = Vec::new();
+    for (index, (work_cell_id, script_body)) in workers.iter().enumerate() {
+        let number = index + 1;
+        let script_path = directory.join(format!("{suffix}-worker-{number}.sh"));
+        fs::write(&script_path, format!("#!/bin/sh\nset -eu\n{script_body}\n"))
+            .expect("write pinned frontier worker");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("frontier worker metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make frontier worker executable");
+
+        let binding_id = format!("worker_binding:frontier-{suffix}-{number}");
+        let binding_input = directory.join(format!("{suffix}-worker-{number}.binding.input.json"));
+        write_pinned_worker_binding(&binding_input, &binding_id, directory, &script_path);
+        let register = run_cli(&[
+            "binding",
+            "register",
+            "--store",
+            directory.to_str().expect("store path"),
+            "--input",
+            binding_input.to_str().expect("binding input path"),
+            "--format",
+            "json",
+        ]);
+        assert!(register.status.success(), "stderr: {}", stderr(&register));
+
+        let step_id = format!("step:{plan_id}:{number}");
+        step_ids.push(step_id.clone());
+        steps.push(json!({
+            "step_id": step_id,
+            "work_cell_id": work_cell_id,
+            "worker_binding_id": binding_id,
+            "success_evidence_requirement_ids": [
+                "evidence:native-schema-json-valid"
+            ],
+            "allowed_transition_classes": [
+                {
+                    "morphism_type": "update",
+                    "target_cell_types": ["work"],
+                    "to_lifecycles": ["resolved"]
+                }
+            ]
+        }));
+    }
+    let plan_input = directory.join(format!("{suffix}.frontier.execution.plan.input.json"));
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": import_revision,
+        "steps": steps,
+        "provenance": {
+            "source": {
+                "kind": "human",
+                "title": "Native frontier integration plan"
+            },
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    fs::write(
+        &plan_input,
+        serde_json::to_string_pretty(&plan).expect("serialize frontier plan"),
+    )
+    .expect("write frontier plan");
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &plan_id,
+        "--reviewer-id",
+        "reviewer:frontier-plan",
+        "--reason",
+        "Accept frontier worker execution plan",
+        "--base-revision-id",
+        &import_revision,
+        "--actor-id",
+        "actor:run-plan-review",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accepted_revision_id = stdout_json(&accept)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted frontier revision")
+        .to_owned();
+    NativeFrontierFixture {
+        plan_id,
+        step_ids,
+        work_cell_ids,
+        accepted_revision_id,
+    }
+}
+
+#[cfg(unix)]
+fn write_pinned_worker_binding(
+    path: &Path,
+    binding_id: &str,
+    working_directory: &Path,
+    command: &Path,
+) {
+    let binding = json!({
+        "schema": "highergraphen.case.workflow.worker_binding.v1",
+        "schema_version": 1,
+        "binding_id": binding_id,
+        "worker_kind": "shell",
+        "command": command,
+        "args": [],
+        "working_directory": working_directory,
+        "resolved_command_path": "/caller/value/is/overwritten",
+        "resolved_working_directory": "/caller/value/is/overwritten",
+        "command_content_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "env_allowlist": [],
+        "timeout_ms": 5000,
+        "capability_ids": ["capability:native-run-worker"],
+        "metadata": {}
+    });
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&binding).expect("serialize pinned worker binding"),
+    )
+    .expect("write pinned worker binding");
+}
+
 fn setup_native_run(directory: &Path, suffix: &str, script: &str) -> NativeRunFixture {
     setup_native_run_with_allowed_lifecycle(directory, suffix, script, "resolved")
 }
@@ -4280,6 +5424,27 @@ fn run_native_step_with_gate_capabilities(
     retry_step_id: Option<&str>,
     capability_ids: &[&str],
 ) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_step_args(
+            directory,
+            fixture,
+            base_revision_id,
+            enable_shell,
+            retry_step_id,
+            capability_ids,
+        ))
+        .output()
+        .expect("run casegraphen run --step")
+}
+
+fn native_step_args(
+    directory: &Path,
+    fixture: &NativeRunFixture,
+    base_revision_id: &str,
+    enable_shell: bool,
+    retry_step_id: Option<&str>,
+    capability_ids: &[&str],
+) -> Vec<String> {
     let mut args = vec![
         "run".to_owned(),
         "--step".to_owned(),
@@ -4313,10 +5478,135 @@ fn run_native_step_with_gate_capabilities(
     if let Some(step_id) = retry_step_id {
         args.extend(["--retry-step".to_owned(), step_id.to_owned()]);
     }
+    args
+}
+
+#[cfg(unix)]
+fn run_native_frontier(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    max_parallel: usize,
+) -> Output {
+    run_native_frontier_with(
+        directory,
+        fixture,
+        &fixture.accepted_revision_id,
+        max_parallel,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+    )
+}
+
+#[cfg(unix)]
+fn run_native_frontier_with(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    base_revision_id: &str,
+    max_parallel: usize,
+    capability_ids: &[&str],
+    retry_step_ids: &[&str],
+) -> Output {
     Command::new(env!("CARGO_BIN_EXE_casegraphen"))
-        .args(args)
+        .args(native_frontier_args(
+            directory,
+            fixture,
+            base_revision_id,
+            max_parallel,
+            capability_ids,
+            retry_step_ids,
+            true,
+        ))
         .output()
-        .expect("run casegraphen run --step")
+        .expect("run casegraphen run --frontier")
+}
+
+#[cfg(unix)]
+fn run_native_frontier_without_worker_opt_in(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    max_parallel: usize,
+) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_args(
+            directory,
+            fixture,
+            &fixture.accepted_revision_id,
+            max_parallel,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[],
+            false,
+        ))
+        .output()
+        .expect("run casegraphen run --frontier without worker opt-in")
+}
+
+#[cfg(unix)]
+fn native_frontier_args(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    base_revision_id: &str,
+    max_parallel: usize,
+    capability_ids: &[&str],
+    retry_step_ids: &[&str],
+    enable_shell: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "run".to_owned(),
+        "--frontier".to_owned(),
+        "--store".to_owned(),
+        directory.display().to_string(),
+        "--case-space-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--plan-id".to_owned(),
+        fixture.plan_id.clone(),
+        "--base-revision-id".to_owned(),
+        base_revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        "actor:native-run".to_owned(),
+        "--operation-scope-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--audience".to_owned(),
+        "audit".to_owned(),
+        "--source-boundary-id".to_owned(),
+        "source_boundary:native-case-management-contract".to_owned(),
+        "--max-parallel".to_owned(),
+        max_parallel.to_string(),
+        "--format".to_owned(),
+        "json".to_owned(),
+    ];
+    for capability_id in capability_ids {
+        args.extend(["--capability-id".to_owned(), (*capability_id).to_owned()]);
+    }
+    if enable_shell {
+        args.extend(["--enable-worker".to_owned(), "shell".to_owned()]);
+    }
+    for step_id in retry_step_ids {
+        args.extend(["--retry-step".to_owned(), (*step_id).to_owned()]);
+    }
+    args
+}
+
+fn wait_for_file(path: &Path, timeout_message: &str) {
+    let wait_started_at = Instant::now();
+    while !path.is_file() && wait_started_at.elapsed() < Duration::from_secs(5) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(path.is_file(), "{timeout_message}");
+}
+
+fn assert_native_store_valid_and_rebuilds(directory: &Path) {
+    let validate = run_native_case_store_command(directory, "validate");
+    assert_eq!(
+        stdout_json(&validate)["result"]["validation"]["valid"],
+        json!(true)
+    );
+    let rebuild = run_native_case_store_command(directory, "rebuild");
+    let rebuild_json = stdout_json(&rebuild);
+    assert!(rebuild_json["result"]["rebuild"]["revisions"]
+        .as_array()
+        .expect("rebuilt revisions")
+        .iter()
+        .all(|revision| revision["snapshot_status"] == json!("agrees")));
 }
 
 fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {
