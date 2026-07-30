@@ -51,8 +51,9 @@ preferences.
   `adversarial-execution-reviewer` agent and **reproduce its findings yourself**
   before accepting them. Three rounds of that review each found real defects.
 - Driving an actual case space with the CLI (rather than changing this crate) —
-  read `skills/casegraphen-operate/SKILL.md` first. It ships for consumers, so it
-  is not auto-loaded here.
+  use the `casegraphen-operate` skill. It lives in `skills/` because it ships to
+  consumers; `.claude/skills/casegraphen-operate` is a symlink to it so that it is
+  discoverable here without a second copy. Do not replace that symlink with a copy.
 - Integration tests spawn the real binary via `CARGO_BIN_EXE_casegraphen`. A new
   command needs a test that exercises it through the binary, not only a unit test.
 - Fixtures are updated to match stricter behaviour. Never relax a check to keep an

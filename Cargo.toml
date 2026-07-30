@@ -9,6 +9,10 @@ license = "Apache-2.0"
 repository = "https://github.com/CAPHTECH/casegraphen"
 keywords = ["ai", "graph", "workflow", "reasoning", "cli"]
 categories = ["development-tools", "data-structures", "command-line-utilities"]
+# This repository's own agent tooling is not part of the product. It also
+# contains a symlink into skills/, which cargo would otherwise materialize as a
+# second copy of the shipped skill inside the published crate.
+exclude = [".claude", ".github"]
 
 [[bin]]
 name = "casegraphen"
