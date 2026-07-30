@@ -1,5 +1,6 @@
 use super::{
-    append_validated_morphism, io::timestamp, require_current_revision, NativeReviewApplyOptions,
+    append_validated_morphism, io::timestamp, require_current_revision, validated_mutation_gate,
+    NativeMutationGateOptions, NativeReviewApplyOptions,
 };
 use crate::{
     native_model::{
@@ -38,7 +39,7 @@ pub(in crate::native_cli) fn review_apply(
         source_ids: vec![options.target_id.clone()],
         target_revision_id: generated_revision_id(&replay.case_space, "review", options.target_id)?,
     };
-    let morphism = match options.action {
+    let mut morphism = match options.action {
         ReviewAction::Accept => accept_review_morphism(&replay.case_space, request)?,
         ReviewAction::Reject => reject_review_morphism(&replay.case_space, request)?,
         ReviewAction::Reopen => reopen_review_morphism(&replay.case_space, request)?,
@@ -54,11 +55,17 @@ pub(in crate::native_cli) fn review_apply(
         ReviewAction::Defer => "casegraphen review waive",
         ReviewAction::Waive | ReviewAction::Supersede => unreachable!("action checked above"),
     };
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, options.gate_options, "review", "review")?;
+    morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
     append_validated_morphism(
         &store_api,
         &replay.case_space,
         morphism,
-        Some(options.reviewer_id.clone()),
+        Some(operation_gate.actor_id),
         command,
     )
 }
@@ -69,7 +76,7 @@ pub(in crate::native_cli) fn evidence_attach(
     base_revision_id: &Id,
     input: &Path,
     satisfies_ids: &[Id],
-    actor_id: &Id,
+    gate_options: &NativeMutationGateOptions,
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
@@ -120,7 +127,7 @@ pub(in crate::native_cli) fn evidence_attach(
             ..MorphismPayload::default()
         })?,
     );
-    let morphism = CaseMorphism {
+    let mut morphism = CaseMorphism {
         morphism_id: generated_operation_id("morphism:evidence-attach", &cell.id, sequence)?,
         morphism_type: CaseMorphismType::EvidenceAttach,
         source_revision_id: Some(replay.current_revision_id.clone()),
@@ -135,11 +142,21 @@ pub(in crate::native_cli) fn evidence_attach(
         source_ids: cell.source_ids.clone(),
         metadata,
     };
+    let operation_gate = validated_mutation_gate(
+        &replay.case_space,
+        gate_options,
+        "evidence-attach",
+        "evidence attach",
+    )?;
+    morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
     append_validated_morphism(
         &store_api,
         &replay.case_space,
         morphism,
-        Some(actor_id.clone()),
+        Some(operation_gate.actor_id),
         "casegraphen evidence attach",
     )
 }
@@ -150,8 +167,8 @@ pub(in crate::native_cli) fn cell_transition(
     base_revision_id: &Id,
     cell_id: &Id,
     lifecycle: &str,
-    actor_id: &Id,
     reason: Option<&str>,
+    gate_options: &NativeMutationGateOptions,
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
@@ -184,7 +201,7 @@ pub(in crate::native_cli) fn cell_transition(
             "reason": reason,
         }),
     );
-    let morphism = CaseMorphism {
+    let mut morphism = CaseMorphism {
         morphism_id: generated_operation_id("morphism:cell-transition", cell_id, sequence)?,
         morphism_type: CaseMorphismType::Update,
         source_revision_id: Some(replay.current_revision_id.clone()),
@@ -199,11 +216,21 @@ pub(in crate::native_cli) fn cell_transition(
         source_ids: updated_cell.source_ids.clone(),
         metadata,
     };
+    let operation_gate = validated_mutation_gate(
+        &replay.case_space,
+        gate_options,
+        "cell-transition",
+        "cell transition",
+    )?;
+    morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
     append_validated_morphism(
         &store_api,
         &replay.case_space,
         morphism,
-        Some(actor_id.clone()),
+        Some(operation_gate.actor_id),
         "casegraphen cell transition",
     )
 }

@@ -17,8 +17,8 @@ use crate::{
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
     native_review::{
-        check_native_close, declared_source_boundary_id, NativeCloseCheckRequest,
-        NativeOperationGate,
+        check_native_close, check_operation_gate, declared_source_boundary_id,
+        NativeCloseCheckRequest, NativeOperationGate,
     },
     native_store::NativeCaseStore,
     topology::TopologyReportOptions,
@@ -50,6 +50,7 @@ pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) reason: &'a str,
     pub(super) base_revision_id: &'a Id,
     pub(super) evidence_ids: &'a [Id],
+    pub(super) gate_options: &'a NativeMutationGateOptions,
 }
 
 pub(super) struct NativePlanReviewOptions<'a> {
@@ -226,6 +227,15 @@ pub(crate) struct NativePlanGateOptions {
     pub(super) source_boundary_id: Option<Id>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct NativeMutationGateOptions {
+    pub(super) actor_id: Option<Id>,
+    pub(super) capability_ids: Vec<Id>,
+    pub(super) operation_scope_id: Option<Id>,
+    pub(super) audience: Option<ProjectionAudience>,
+    pub(super) source_boundary_id: Option<Id>,
+}
+
 struct ResolvedCloseGate {
     close_policy_id: Option<Id>,
     gate: NativeOperationGate,
@@ -329,6 +339,7 @@ pub(super) fn morphism_apply(
     base_revision_id: &Id,
     reviewer_id: Option<&Id>,
     reason: Option<&str>,
+    gate_options: &NativeMutationGateOptions,
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
@@ -336,6 +347,12 @@ pub(super) fn morphism_apply(
     let mut morphism = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
+    let operation_gate = validated_mutation_gate(
+        &replay.case_space,
+        gate_options,
+        "morphism-apply",
+        "morphism apply",
+    )?;
     morphism.review_status = ReviewStatus::Accepted;
     if let Some(reviewer_id) = reviewer_id {
         morphism
@@ -350,11 +367,15 @@ pub(super) fn morphism_apply(
             .metadata
             .insert("review_reason".to_owned(), json!(reason.trim()));
     }
+    morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
     append_validated_morphism(
         &store_api,
         &replay.case_space,
         morphism,
-        None,
+        Some(operation_gate.actor_id),
         "casegraphen morphism apply",
     )
 }
@@ -366,20 +387,31 @@ pub(super) fn morphism_reject(
     reviewer_id: &Id,
     reason: &str,
     revision_id: &Id,
+    gate_options: &NativeMutationGateOptions,
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
     let proposal = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&proposal)?;
     validate_candidate_morphism(&replay.case_space, &proposal)?;
-    let review = review_morphism(
+    let mut review = review_morphism(
         &replay.case_space.revision.revision_id,
         revision_id,
         morphism_id,
         reviewer_id,
         reason,
     )?;
-    let mut entry = entry_for_morphism(&replay.case_space, review, Some(reviewer_id.clone()))?;
+    let operation_gate = validated_mutation_gate(
+        &replay.case_space,
+        gate_options,
+        "morphism-reject",
+        "morphism reject",
+    )?;
+    review.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
+    let mut entry = entry_for_morphism(&replay.case_space, review, Some(operation_gate.actor_id))?;
     entry.replay_checksum = checksum_after_append(&replay.case_space, &entry)?;
     let record = store_api.append_morphism(case_space_id, entry.clone())?;
     Ok(report(
@@ -655,6 +687,37 @@ fn validate_candidate_morphism(
         }
     }
     Ok(())
+}
+
+fn validated_mutation_gate(
+    case_space: &CaseSpace,
+    options: &NativeMutationGateOptions,
+    operation: &str,
+    command: &str,
+) -> Result<NativeOperationGate, NativeCliError> {
+    let gate = NativeOperationGate {
+        actor_id: options.actor_id.clone().ok_or_else(|| {
+            NativeCliError::usage(format!("--actor-id <id> is required for {command}"))
+        })?,
+        operation: operation.to_owned(),
+        operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
+            NativeCliError::usage(format!(
+                "--operation-scope-id <id> is required for {command}"
+            ))
+        })?,
+        audience: options.audience.ok_or_else(|| {
+            NativeCliError::usage(format!("--audience audit|system is required for {command}"))
+        })?,
+        capability_ids: options.capability_ids.clone(),
+        source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
+            NativeCliError::usage(format!(
+                "--source-boundary-id <id> is required for {command}"
+            ))
+        })?,
+    };
+    check_operation_gate(case_space, &gate, operation)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    Ok(gate)
 }
 
 fn validate_generic_morphism_metadata(morphism: &CaseMorphism) -> Result<(), NativeCliError> {

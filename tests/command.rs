@@ -1876,7 +1876,7 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
                 .contains(&json!("morphism:native-cli-apply")))
     );
 
-    let apply = run_cli(&[
+    let apply_args = [
         "morphism",
         "apply",
         "--store",
@@ -1893,11 +1893,25 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
         "Accept metadata-only CLI morphism",
         "--format",
         "json",
-    ]);
+    ];
+    let ungated_apply = run_cli(&apply_args);
+    assert!(!ungated_apply.status.success());
+    assert!(stderr(&ungated_apply).contains("--actor-id <id> is required for morphism apply"));
+
+    let apply = run_cli_with_mutation_gate(&apply_args, "actor:native-mutation-cli");
     assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let apply_json = stdout_json(&apply);
     assert_eq!(
-        stdout_json(&apply)["result"]["record"]["current_revision_id"],
+        apply_json["result"]["record"]["current_revision_id"],
         json!("revision:native-cli-applied")
+    );
+    assert_eq!(
+        apply_json["result"]["entry"]["morphism"]["metadata"]["operation_gate"]["operation"],
+        json!("morphism-apply")
+    );
+    assert_eq!(
+        apply_json["result"]["entry"]["actor_id"],
+        json!("actor:native-mutation-cli")
     );
 
     let reject_morphism_path = directory.join("reject.case_morphism.json");
@@ -1925,7 +1939,7 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
         stderr(&propose_reject)
     );
 
-    let reject = run_cli(&[
+    let reject_args = [
         "morphism",
         "reject",
         "--store",
@@ -1942,7 +1956,12 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
         "revision:native-cli-rejected",
         "--format",
         "json",
-    ]);
+    ];
+    let ungated_reject = run_cli(&reject_args);
+    assert!(!ungated_reject.status.success());
+    assert!(stderr(&ungated_reject).contains("--actor-id <id> is required for morphism reject"));
+
+    let reject = run_cli_with_mutation_gate(&reject_args, "actor:native-mutation-cli");
     assert!(reject.status.success(), "stderr: {}", stderr(&reject));
     let reject_json = stdout_json(&reject);
     assert_eq!(
@@ -1953,6 +1972,84 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
         reject_json["result"]["record"]["current_revision_id"],
         json!("revision:native-cli-rejected")
     );
+    assert_eq!(
+        reject_json["result"]["entry"]["morphism"]["metadata"]["operation_gate"]["operation"],
+        json!("morphism-reject")
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn generic_morphism_refuses_capability_self_grant() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let native_path = directory.join("native.owner-capability.json");
+    let mut native_case = json_file(native_case_fixture());
+    let capability = native_case["case_cells"]
+        .as_array_mut()
+        .expect("native cells")
+        .iter_mut()
+        .find(|cell| cell["id"] == json!("capability:durable-mutation"))
+        .expect("durable mutation capability");
+    capability["metadata"]["actor_ids"] = json!(["actor:owner"]);
+    let mut self_granted_capability = capability.clone();
+    self_granted_capability["metadata"]["actor_ids"] = json!(["actor:owner", "actor:attacker"]);
+    fs::write(
+        &native_path,
+        serde_json::to_string_pretty(&native_case).expect("serialize native case"),
+    )
+    .expect("write native case");
+    import_native_case_space_from_input(
+        &directory,
+        &native_path,
+        "revision:capability-self-grant-base",
+    );
+
+    let morphism_path = directory.join("capability-self-grant.case_morphism.json");
+    let morphism = json!({
+        "morphism_id": "morphism:capability-self-grant",
+        "morphism_type": "update",
+        "source_revision_id": "revision:capability-self-grant-base",
+        "target_revision_id": "revision:capability-self-granted",
+        "added_ids": [],
+        "updated_ids": ["capability:durable-mutation"],
+        "retired_ids": [],
+        "preserved_ids": [],
+        "violated_invariant_ids": [],
+        "review_status": "unreviewed",
+        "evidence_ids": [],
+        "source_ids": ["source:attacker"],
+        "metadata": {
+            "payload": {
+                "updated_cells": [self_granted_capability]
+            }
+        }
+    });
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&morphism).expect("serialize self-grant morphism"),
+    )
+    .expect("write self-grant morphism");
+
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+
+    assert!(!propose.status.success());
+    assert!(stderr(&propose).contains(
+        "cannot update capability cell capability:durable-mutation: custom:capability cells are \
+         administered only at lift/import time inside the declared source boundary"
+    ));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -3454,24 +3551,27 @@ fn native_typed_morphism_materializes_payload_end_to_end() {
     assert_eq!(stdout_json(&check)["result"]["valid"], json!(true));
     assert_eq!(stdout_json(&check)["result"]["applicable"], json!(true));
 
-    let apply = run_cli(&[
-        "morphism",
-        "apply",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--morphism-id",
-        "morphism:native-typed-add",
-        "--base-revision-id",
-        "revision:native-typed-base",
-        "--reviewer-id",
-        "reviewer:native-typed-integration",
-        "--reason",
-        "Accept typed reducer integration morphism",
-        "--format",
-        "json",
-    ]);
+    let apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:native-typed-add",
+            "--base-revision-id",
+            "revision:native-typed-base",
+            "--reviewer-id",
+            "reviewer:native-typed-integration",
+            "--reason",
+            "Accept typed reducer integration morphism",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(apply.status.success(), "stderr: {}", stderr(&apply));
     let apply_json = stdout_json(&apply);
     let previous_hash = apply_json["result"]["entry"]["previous_entry_hash"]
@@ -3563,7 +3663,7 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
     .expect("write native case");
     import_native_case_space_from_input(&directory, &native_path, "revision:native-review-base");
 
-    let accept = run_cli(&[
+    let accept_args = [
         "review",
         "accept",
         "--store",
@@ -3582,7 +3682,12 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
         "evidence:native-schema-json-valid",
         "--format",
         "json",
-    ]);
+    ];
+    let ungated_accept = run_cli(&accept_args);
+    assert!(!ungated_accept.status.success());
+    assert!(stderr(&ungated_accept).contains("--actor-id <id> is required for review"));
+
+    let accept = run_cli_with_mutation_gate(&accept_args, "actor:native-mutation-cli");
     assert!(accept.status.success(), "stderr: {}", stderr(&accept));
     let accept_json = stdout_json(&accept);
     let entry = &accept_json["result"]["entry"];
@@ -3590,7 +3695,7 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
         accept_json["metadata"]["command"],
         json!("casegraphen review accept")
     );
-    assert_eq!(entry["actor_id"], json!("reviewer:native-review-cli"));
+    assert_eq!(entry["actor_id"], json!("actor:native-mutation-cli"));
     assert_eq!(
         entry["morphism"]["metadata"],
         json!({
@@ -3602,7 +3707,15 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
             "outcome_review_status": "accepted",
             "reviewer_id": "reviewer:native-review-cli",
             "reviewed_at": entry["morphism"]["metadata"]["reviewed_at"],
-            "reason": "Accept the imported morphism after explicit review"
+            "reason": "Accept the imported morphism after explicit review",
+            "operation_gate": {
+                "actor_id": "actor:native-mutation-cli",
+                "operation": "review",
+                "operation_scope_id": native_case_space_id(),
+                "audience": "audit",
+                "capability_ids": ["capability:durable-mutation"],
+                "source_boundary_id": "source_boundary:native-case-management-contract"
+            }
         })
     );
     assert_eq!(
@@ -3733,7 +3846,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
     )
     .expect("write evidence cell");
 
-    let attach = run_cli(&[
+    let attach_args = [
         "evidence",
         "attach",
         "--store",
@@ -3746,13 +3859,16 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
         input_path.to_str().expect("evidence path"),
         "--satisfies",
         "goal:native-case-contract",
-        "--actor-id",
-        "actor:native-evidence-cli",
         "--format",
         "json",
         "--output",
         output_path.to_str().expect("output path"),
-    ]);
+    ];
+    let ungated_attach = run_cli(&attach_args);
+    assert!(!ungated_attach.status.success());
+    assert!(stderr(&ungated_attach).contains("--actor-id <id> is required for evidence attach"));
+
+    let attach = run_cli_with_mutation_gate(&attach_args, "actor:native-evidence-cli");
     assert!(attach.status.success(), "stderr: {}", stderr(&attach));
     assert!(stdout(&attach).is_empty());
     let attach_json = json_file(output_path);
@@ -3765,6 +3881,10 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
     );
     assert_eq!(entry["actor_id"], json!("actor:native-evidence-cli"));
     assert_eq!(entry["morphism"]["morphism_type"], json!("evidence_attach"));
+    assert_eq!(
+        entry["morphism"]["metadata"]["operation_gate"]["operation"],
+        json!("evidence-attach")
+    );
     assert_eq!(
         entry["morphism"]["added_ids"],
         json!([
@@ -3844,7 +3964,7 @@ fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
     import_native_case_space(&directory, "revision:native-transition-base");
     let original_goal = json_file(native_case_fixture())["case_cells"][0].clone();
 
-    let resolve = run_cli(&[
+    let resolve_args = [
         "cell",
         "transition",
         "--store",
@@ -3857,13 +3977,16 @@ fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
         "goal:native-case-contract",
         "--to",
         "resolved",
-        "--actor-id",
-        "actor:native-transition-cli",
         "--reason",
         "The goal is complete",
         "--format",
         "json",
-    ]);
+    ];
+    let ungated_resolve = run_cli(&resolve_args);
+    assert!(!ungated_resolve.status.success());
+    assert!(stderr(&ungated_resolve).contains("--actor-id <id> is required for cell transition"));
+
+    let resolve = run_cli_with_mutation_gate(&resolve_args, "actor:native-transition-cli");
     assert!(resolve.status.success(), "stderr: {}", stderr(&resolve));
     let resolve_json = stdout_json(&resolve);
     assert_eq!(
@@ -3873,6 +3996,10 @@ fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
     assert_eq!(
         resolve_json["result"]["entry"]["actor_id"],
         json!("actor:native-transition-cli")
+    );
+    assert_eq!(
+        resolve_json["result"]["entry"]["morphism"]["metadata"]["operation_gate"]["operation"],
+        json!("cell-transition")
     );
     assert_eq!(
         resolve_json["result"]["entry"]["morphism"]["metadata"]["transition"],
@@ -3893,24 +4020,25 @@ fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
         .expect("resolved revision")
         .to_owned();
 
-    let retire = run_cli(&[
-        "cell",
-        "transition",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--base-revision-id",
-        &resolved_revision,
-        "--cell-id",
-        "goal:native-case-contract",
-        "--to",
-        "retired",
-        "--actor-id",
+    let retire = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &resolved_revision,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "retired",
+            "--format",
+            "json",
+        ],
         "actor:native-transition-cli",
-        "--format",
-        "json",
-    ]);
+    );
     assert!(retire.status.success(), "stderr: {}", stderr(&retire));
     let retire_json = stdout_json(&retire);
     let retired_revision = retire_json["result"]["record"]["current_revision_id"]
@@ -3922,24 +4050,50 @@ fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
         Value::Null
     );
 
-    let illegal = run_cli(&[
-        "cell",
-        "transition",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--base-revision-id",
-        &retired_revision,
-        "--cell-id",
-        "goal:native-case-contract",
-        "--to",
-        "active",
-        "--actor-id",
+    let capability_transition = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &retired_revision,
+            "--cell-id",
+            "capability:durable-mutation",
+            "--to",
+            "retired",
+            "--format",
+            "json",
+        ],
         "actor:native-transition-cli",
-        "--format",
-        "json",
-    ]);
+    );
+    assert!(!capability_transition.status.success());
+    assert!(stderr(&capability_transition).contains(
+        "cannot update capability cell capability:durable-mutation: custom:capability cells are \
+         administered only at lift/import time inside the declared source boundary"
+    ));
+
+    let illegal = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &retired_revision,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "active",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
     assert!(!illegal.status.success());
     assert!(stderr(&illegal).contains(
         "cannot transition cell goal:native-case-contract lifecycle from Retired to Active"
@@ -4436,6 +4590,23 @@ fn run_cli(args: &[&str]) -> Output {
         .expect("run casegraphen CLI")
 }
 
+fn run_cli_with_mutation_gate(args: &[&str], actor_id: &str) -> Output {
+    let mut gated_args = args.to_vec();
+    gated_args.extend([
+        "--actor-id",
+        actor_id,
+        "--capability-id",
+        "capability:durable-mutation",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+    ]);
+    run_cli(&gated_args)
+}
+
 fn successful_workflow_command(command: &str) -> Output {
     let output = run_cli(&[
         "workflow",
@@ -4667,24 +4838,25 @@ fn setup_native_run_with_allowed_lifecycle_and_command(
 ) -> NativeRunFixture {
     let import_revision = format!("revision:run-{suffix}-import");
     import_native_case_space(directory, &import_revision);
-    let activate = run_cli(&[
-        "cell",
-        "transition",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--base-revision-id",
-        &import_revision,
-        "--cell-id",
-        "work:review-native-contract",
-        "--to",
-        "active",
-        "--actor-id",
-        "actor:run-setup",
-        "--format",
-        "json",
-    ]);
+    let activate = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &import_revision,
+            "--cell-id",
+            "work:review-native-contract",
+            "--to",
+            "active",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
     assert!(activate.status.success(), "stderr: {}", stderr(&activate));
     let active_revision = stdout_json(&activate)["result"]["record"]["current_revision_id"]
         .as_str()

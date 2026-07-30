@@ -182,6 +182,32 @@
       }
     },
     {
+      "id": "capability:durable-mutation",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Authorize native durable mutations",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native durable mutation authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": [
+          "actor:native-mutation-cli",
+          "actor:native-evidence-cli",
+          "actor:native-transition-cli"
+        ]
+      }
+    },
+    {
       "id": "capability:native-run-worker",
       "cell_type": "custom:capability",
       "space_id": "space:higher-graphen-casegraphen",
@@ -353,6 +379,7 @@
           "review:native-contract-acceptance",
           "capability:plan-review",
           "capability:dispatch",
+          "capability:durable-mutation",
           "capability:native-run-worker",
           "capability:native-integration-worker",
           "capability:casegraphen-cli:close-check"
@@ -429,6 +456,7 @@
         "evidence:native-schema-json-valid",
         "capability:plan-review",
         "capability:dispatch",
+        "capability:durable-mutation",
         "capability:native-run-worker",
         "capability:native-integration-worker",
         "capability:casegraphen-cli:close-check"
@@ -474,6 +502,7 @@
         "review:native-contract-acceptance",
         "capability:plan-review",
         "capability:dispatch",
+        "capability:durable-mutation",
         "capability:native-run-worker",
         "capability:native-integration-worker",
         "capability:casegraphen-cli:close-check"

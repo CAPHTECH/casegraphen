@@ -21,8 +21,9 @@ use ops::{
     binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
     case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
     morphism_check, morphism_propose, morphism_reject, plan_check, plan_propose, plan_review,
-    projection_apply, review_apply, run_step, NativeCloseGateOptions, NativePlanGateOptions,
-    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunGateOptions, NativeRunStepOptions,
+    projection_apply, review_apply, run_step, NativeCloseGateOptions, NativeMutationGateOptions,
+    NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunGateOptions,
+    NativeRunStepOptions,
 };
 use reporting::report;
 
@@ -142,6 +143,7 @@ pub(crate) enum NativeCliCommand {
         base_revision_id: Id,
         reviewer_id: Option<Id>,
         reason: Option<String>,
+        gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
     MorphismReject {
@@ -151,6 +153,7 @@ pub(crate) enum NativeCliCommand {
         reviewer_id: Id,
         reason: String,
         revision_id: Id,
+        gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
     PlanPropose {
@@ -201,6 +204,7 @@ pub(crate) enum NativeCliCommand {
         reason: String,
         base_revision_id: Id,
         evidence_ids: Vec<Id>,
+        gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
     EvidenceAttach {
@@ -209,7 +213,7 @@ pub(crate) enum NativeCliCommand {
         base_revision_id: Id,
         input: PathBuf,
         satisfies_ids: Vec<Id>,
-        actor_id: Id,
+        gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
     CellTransition {
@@ -218,8 +222,8 @@ pub(crate) enum NativeCliCommand {
         base_revision_id: Id,
         cell_id: Id,
         lifecycle: String,
-        actor_id: Id,
         reason: Option<String>,
+        gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
 }
@@ -464,6 +468,7 @@ impl NativeCliCommand {
                 base_revision_id,
                 reviewer_id,
                 reason,
+                gate_options,
                 ..
             } => morphism_apply(
                 store,
@@ -472,6 +477,7 @@ impl NativeCliCommand {
                 base_revision_id,
                 reviewer_id.as_ref(),
                 reason.as_deref(),
+                gate_options,
             )?,
             Self::MorphismReject {
                 store,
@@ -480,6 +486,7 @@ impl NativeCliCommand {
                 reviewer_id,
                 reason,
                 revision_id,
+                gate_options,
                 ..
             } => morphism_reject(
                 store,
@@ -488,6 +495,7 @@ impl NativeCliCommand {
                 reviewer_id,
                 reason,
                 revision_id,
+                gate_options,
             )?,
             Self::PlanPropose {
                 store,
@@ -555,6 +563,7 @@ impl NativeCliCommand {
                 reason,
                 base_revision_id,
                 evidence_ids,
+                gate_options,
                 ..
             } => review_apply(
                 store,
@@ -566,6 +575,7 @@ impl NativeCliCommand {
                     reason,
                     base_revision_id,
                     evidence_ids,
+                    gate_options,
                 },
             )?,
             Self::EvidenceAttach {
@@ -574,7 +584,7 @@ impl NativeCliCommand {
                 base_revision_id,
                 input,
                 satisfies_ids,
-                actor_id,
+                gate_options,
                 ..
             } => evidence_attach(
                 store,
@@ -582,7 +592,7 @@ impl NativeCliCommand {
                 base_revision_id,
                 input,
                 satisfies_ids,
-                actor_id,
+                gate_options,
             )?,
             Self::CellTransition {
                 store,
@@ -590,8 +600,8 @@ impl NativeCliCommand {
                 base_revision_id,
                 cell_id,
                 lifecycle,
-                actor_id,
                 reason,
+                gate_options,
                 ..
             } => cell_transition(
                 store,
@@ -599,8 +609,8 @@ impl NativeCliCommand {
                 base_revision_id,
                 cell_id,
                 lifecycle,
-                actor_id,
                 reason.as_deref(),
+                gate_options,
             )?,
             _ => unreachable!("run_morphism_value called for case command"),
         })

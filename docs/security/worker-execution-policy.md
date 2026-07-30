@@ -37,13 +37,44 @@ workers persistently; enabling is a per-invocation, auditable decision.
 
 ### 2.2 Capability and policy gates
 
-Every dispatch requires an operation gate (`check_operation_gate`, operation
-`dispatch`): named actor, non-empty capability ids, scope bound to the case
-space, audit/system audience, and a source-boundary match. Plan acceptance
-requires the same gate with operation `plan-review`. Every capability id must
-resolve to an active/accepted `custom:capability` cell with accepted
-provenance, and that cell's `metadata.actor_ids` must name the acting actor.
-`run --step` uses the same actor for the gate and appended log entries.
+Every durable native case-state mutation covered by the CLI requires an operation gate:
+named actor, non-empty capability ids, scope bound to the case space,
+audit/system audience, and a source-boundary match. The enforced operation
+strings are:
+
+| Command | Operation |
+|---|---|
+| `plan accept` / `plan reject` | `plan-review` |
+| `run --step` | `dispatch` |
+| `morphism apply` | `morphism-apply` |
+| `morphism reject` | `morphism-reject` |
+| `evidence attach` | `evidence-attach` |
+| `cell transition` | `cell-transition` |
+| `review accept\|reject\|reopen\|waive` | `review` |
+
+`morphism propose` is intentionally ungated because it writes only a proposal
+file and does not mutate durable case state. Applying or rejecting that
+proposal is gated.
+
+Every capability id must resolve to an active/accepted
+`custom:capability` cell with accepted provenance, and that cell's
+`metadata.actor_ids` must name the acting actor. Capability cells are a
+source-boundary trust root: they may enter a case space only in the
+materialized genesis supplied at lift/import time. The shared morphism reducer
+rejects generic addition, update, or retirement of capability cells, and
+`cell transition` cannot change them. There is no post-genesis CLI capability
+administration path.
+
+The same shared reducer also prevents generic updates from changing any
+cell's `cell_type`. For evidence cells it additionally makes the entire
+`provenance` object and metadata keys `evidence_boundary`, `content_hash`,
+`trace_id`, and `worker_report_id` immutable. Evidence promotion remains a
+canonical review morphism, not an evidence-cell rewrite.
+
+For `morphism apply`, `morphism reject`, `evidence attach`, `cell transition`,
+and all four `review` actions, the validated gate is stored as
+`morphism.metadata.operation_gate`. `run --step` uses the same actor for its
+dispatch gate and appended log entries.
 
 Capability ↔ OS permission mapping (operator duty, not enforced by the tool):
 
@@ -122,10 +153,16 @@ trace → worker report + raw output hashes → log entries → revision replay.
 | Action | Human review required? |
 |---|---|
 | Plan acceptance | Always (reviewer id + reason + gate) |
+| Plan rejection | Always (reviewer id + reason + gate) |
 | Binding registration | No, but its hash is frozen into any plan that uses it, and plan review is the checkpoint |
-| Transition inside accepted plan classes, deterministic gates pass | No (this is exactly what plan acceptance authorized) |
+| Generic morphism proposal | No; it is an ungated, non-durable proposal-file write |
+| Generic morphism apply or reject | Always (reviewer id + reason + operation gate) |
+| Evidence attachment | No promotion; the attachment requires an operation gate and enters as unreviewed evidence |
+| Direct cell transition | Capability-gated; human interaction is not required when a delegated actor holds the imported capability |
+| Transition inside accepted plan classes, deterministic gates pass | No additional review (the accepted plan plus dispatch gate authorizes it) |
 | Transition outside plan classes | Always — remains an unreviewed proposal |
-| Promoting worker evidence to satisfy a hard requirement beyond `source_backed` origin rules | Always (`review accept`) |
+| Review accept/reject/reopen/waive | Always (reviewer id + reason + operation gate) |
+| Promoting worker evidence to satisfy a hard requirement beyond `source_backed` origin rules | Always (`review accept`, with operation gate) |
 | Case-space close | Always (close-check invariants incl. gate) |
 | Enabling a new worker kind (beyond `shell`) | New design review; extend this document first |
 

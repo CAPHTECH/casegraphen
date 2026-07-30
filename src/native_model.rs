@@ -331,6 +331,7 @@ pub fn apply_morphism(
     let mut known_ids = materialized_ids(&next);
 
     for cell in payload.added_cells {
+        require_not_capability_administration(morphism, &cell, "add")?;
         if !known_ids.insert(cell.id.clone()) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -360,6 +361,9 @@ pub fn apply_morphism(
                     morphism.morphism_id, cell.id
                 ))
             })?;
+        require_not_capability_administration(morphism, existing, "update")?;
+        require_not_capability_administration(morphism, &cell, "update")?;
+        require_immutable_cell_update_fields(morphism, existing, &cell)?;
         require_lifecycle_transition(morphism, &cell.id, existing.lifecycle, cell.lifecycle)?;
         *existing = cell;
     }
@@ -383,6 +387,7 @@ pub fn apply_morphism(
             .iter_mut()
             .find(|candidate| candidate.id == *id)
         {
+            require_not_capability_administration(morphism, cell, "retire")?;
             require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
             cell.lifecycle = CaseCellLifecycle::Retired;
         } else if let Some(index) = next
@@ -568,6 +573,57 @@ fn materialized_ids(case_space: &CaseSpace) -> BTreeSet<Id> {
                 .map(|relation| relation.id.clone()),
         )
         .collect()
+}
+
+fn require_not_capability_administration(
+    morphism: &CaseMorphism,
+    cell: &CaseCell,
+    operation: &str,
+) -> Result<(), MorphismApplyError> {
+    if cell.cell_type != CaseCellType::Custom("capability".to_owned()) {
+        return Ok(());
+    }
+    Err(MorphismApplyError::new(format!(
+        "morphism {} cannot {operation} capability cell {}: custom:capability cells are \
+         administered only at lift/import time inside the declared source boundary",
+        morphism.morphism_id, cell.id
+    )))
+}
+
+fn require_immutable_cell_update_fields(
+    morphism: &CaseMorphism,
+    existing: &CaseCell,
+    updated: &CaseCell,
+) -> Result<(), MorphismApplyError> {
+    if existing.cell_type != updated.cell_type {
+        return Err(MorphismApplyError::new(format!(
+            "morphism {} cannot update cell {}: cell_type is immutable ({} cannot become {})",
+            morphism.morphism_id, existing.id, existing.cell_type, updated.cell_type
+        )));
+    }
+    if existing.cell_type != CaseCellType::Evidence {
+        return Ok(());
+    }
+    if existing.provenance != updated.provenance {
+        return Err(MorphismApplyError::new(format!(
+            "morphism {} cannot update evidence cell {}: provenance is immutable",
+            morphism.morphism_id, existing.id
+        )));
+    }
+    for key in [
+        "evidence_boundary",
+        "content_hash",
+        "trace_id",
+        "worker_report_id",
+    ] {
+        if existing.metadata.get(key) != updated.metadata.get(key) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot update evidence cell {}: metadata.{key} is immutable",
+                morphism.morphism_id, existing.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn require_lifecycle_transition(
@@ -817,7 +873,7 @@ mod tests {
 
         assert_eq!(space.schema, NATIVE_CASE_SPACE_SCHEMA);
         assert_eq!(space.schema_version, NATIVE_CASE_SPACE_SCHEMA_VERSION);
-        assert_eq!(space.case_cells.len(), 10);
+        assert_eq!(space.case_cells.len(), 11);
         assert_eq!(space.case_relations.len(), 4);
         assert_eq!(space.morphism_log.len(), 1);
         assert_eq!(space.projections.len(), 2);
@@ -953,6 +1009,106 @@ mod tests {
                 .expect("updated cell"),
             &updated
         );
+    }
+
+    #[test]
+    fn reducer_refuses_self_grant_updates_to_capability_cells() {
+        let space = fixture_space();
+        let mut capability = space
+            .case_cells
+            .iter()
+            .find(|cell| cell.cell_type == CaseCellType::Custom("capability".to_owned()))
+            .expect("fixture capability")
+            .clone();
+        capability.metadata.insert(
+            "actor_ids".to_owned(),
+            serde_json::json!(["actor:owner", "actor:attacker"]),
+        );
+
+        let error = rejected_cell_update(&space, capability);
+
+        assert!(error.contains("capability cell capability:plan-review"));
+        assert!(error
+            .contains("administered only at lift/import time inside the declared source boundary"));
+    }
+
+    #[test]
+    fn reducer_refuses_adding_or_retiring_capability_cells() {
+        let space = fixture_space();
+        let mut added_capability = space
+            .case_cells
+            .iter()
+            .find(|cell| cell.cell_type == CaseCellType::Custom("capability".to_owned()))
+            .expect("fixture capability")
+            .clone();
+        added_capability.id = id("capability:self-created");
+        let mut add_morphism = fixture_morphism(&space);
+        add_morphism.added_ids = vec![added_capability.id.clone()];
+        set_payload(
+            &mut add_morphism,
+            MorphismPayload {
+                added_cells: vec![added_capability],
+                ..MorphismPayload::default()
+            },
+        );
+
+        let add_error =
+            apply_morphism(&mut space.clone(), &add_morphism).expect_err("capability add");
+        assert!(add_error
+            .to_string()
+            .contains("cannot add capability cell capability:self-created"));
+
+        let mut retire_morphism = fixture_morphism(&space);
+        retire_morphism.retired_ids = vec![id("capability:plan-review")];
+        let retire_error =
+            apply_morphism(&mut space.clone(), &retire_morphism).expect_err("capability retire");
+        assert!(retire_error
+            .to_string()
+            .contains("cannot retire capability cell capability:plan-review"));
+    }
+
+    #[test]
+    fn reducer_refuses_cell_type_changes_on_update() {
+        let space = fixture_space();
+        let mut updated = space.case_cells[0].clone();
+        updated.cell_type = CaseCellType::Work;
+
+        let error = rejected_cell_update(&space, updated);
+
+        assert!(error.contains("cell_type is immutable"));
+        assert!(error.contains("goal cannot become work"));
+    }
+
+    #[test]
+    fn reducer_refuses_security_relevant_evidence_rewrites() {
+        let space = fixture_space();
+        let evidence = space
+            .case_cells
+            .iter()
+            .find(|cell| cell.cell_type == CaseCellType::Evidence)
+            .expect("fixture evidence")
+            .clone();
+
+        let mut provenance = evidence.clone();
+        provenance.provenance.review_status = ReviewStatus::Reviewed;
+        assert!(rejected_cell_update(&space, provenance).contains("provenance is immutable"));
+
+        for key in [
+            "evidence_boundary",
+            "content_hash",
+            "trace_id",
+            "worker_report_id",
+        ] {
+            let mut updated = evidence.clone();
+            updated
+                .metadata
+                .insert(key.to_owned(), serde_json::json!("rewritten"));
+            assert!(
+                rejected_cell_update(&space, updated)
+                    .contains(&format!("metadata.{key} is immutable")),
+                "{key} should be immutable"
+            );
+        }
     }
 
     #[test]
@@ -1151,6 +1307,21 @@ mod tests {
             "payload".to_owned(),
             serde_json::to_value(payload).expect("serialize morphism payload"),
         );
+    }
+
+    fn rejected_cell_update(space: &CaseSpace, updated: CaseCell) -> String {
+        let mut morphism = fixture_morphism(space);
+        morphism.updated_ids = vec![updated.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                updated_cells: vec![updated],
+                ..MorphismPayload::default()
+            },
+        );
+        apply_morphism(&mut space.clone(), &morphism)
+            .expect_err("cell update should be rejected")
+            .to_string()
     }
 
     fn provenance(kind: SourceKind, review_status: ReviewStatus) -> Provenance {

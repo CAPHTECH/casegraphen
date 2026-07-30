@@ -1,5 +1,8 @@
 use super::{
-    ops::{NativeCloseGateOptions, NativePlanGateOptions, NativeRunGateOptions},
+    ops::{
+        NativeCloseGateOptions, NativeMutationGateOptions, NativePlanGateOptions,
+        NativeRunGateOptions,
+    },
     options::{required_segment, NativeOptions},
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
@@ -393,6 +396,7 @@ impl NativeCliCommand {
                     .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
                 reviewer_id: Some(options.require_id("--reviewer-id")?),
                 reason: Some(options.require_string("--reason")?),
+                gate_options: mutation_gate_options(&options),
                 output: options.output,
             }),
             "reject" => Ok(Self::MorphismReject {
@@ -402,6 +406,7 @@ impl NativeCliCommand {
                 reviewer_id: options.require_id("--reviewer-id")?,
                 reason: options.require_string("--reason")?,
                 revision_id: options.require_id("--revision-id")?,
+                gate_options: mutation_gate_options(&options),
                 output: options.output,
             }),
             _ => Err(NativeCliError::usage("unsupported native morphism command")),
@@ -538,6 +543,7 @@ impl NativeCliCommand {
                 .base_revision_id
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            gate_options: mutation_gate_options(&options),
             evidence_ids: options.evidence_ids,
             output: options.output,
         })
@@ -559,7 +565,7 @@ impl NativeCliCommand {
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
             input: options.require_path("--input")?,
-            actor_id: options.require_id("--actor-id")?,
+            gate_options: mutation_gate_options(&options),
             satisfies_ids: options.satisfies_ids,
             output: options.output,
         })
@@ -582,10 +588,20 @@ impl NativeCliCommand {
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
             cell_id: options.require_id("--cell-id")?,
             lifecycle: options.require_string("--to")?,
-            actor_id: options.require_id("--actor-id")?,
+            gate_options: mutation_gate_options(&options),
             reason: options.reason,
             output: options.output,
         })
+    }
+}
+
+fn mutation_gate_options(options: &NativeOptions) -> NativeMutationGateOptions {
+    NativeMutationGateOptions {
+        actor_id: options.actor_id.clone(),
+        capability_ids: options.capability_ids.clone(),
+        operation_scope_id: options.operation_scope_id.clone(),
+        audience: options.audience,
+        source_boundary_id: options.source_boundary_id.clone(),
     }
 }
 
