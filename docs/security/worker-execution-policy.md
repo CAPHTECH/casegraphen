@@ -164,8 +164,11 @@ explicit `--retry-step` after its recorded reserved base revision is no longer
 current; a `started` trace at the current revision remains protected as a
 concurrent dispatch.
 
-Replay wins over any cache or snapshot. The audit path for an incident is:
-trace → worker report + raw output hashes → log entries → revision replay.
+Replay wins over any cache or snapshot. The log's constant-size head file is an
+independent witness for the current tail entry; a missing or stale head refuses
+the audit path rather than silently trusting the log. The audit path for an
+incident is: trace → worker report + raw output hashes → anchored log entries →
+revision replay.
 
 ## 3. Approval policy — what always needs a human
 
@@ -183,6 +186,7 @@ trace → worker report + raw output hashes → log entries → revision replay.
 | Review accept/reject/reopen/waive | Always (reviewer id + reason + operation gate) |
 | Promoting worker evidence to satisfy a hard requirement beyond `source_backed` origin rules | Always (`review accept`, with operation gate) |
 | Case-space close | Always (close-check invariants incl. gate) |
+| Adopting an existing morphism log (`space rebuild --adopt-existing-log`) | Always — the operator asserts that the pre-existing unanchored log is trusted; rebuild verifies its full fold and snapshots before creating a missing head |
 | Enabling a new worker kind (beyond `shell`) | New design review; extend this document first |
 
 ## 4. Residual risks (accepted)

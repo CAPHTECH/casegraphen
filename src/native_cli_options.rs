@@ -48,6 +48,7 @@ pub(super) struct NativeOptions {
     pub(super) higher_order: bool,
     pub(super) max_dimension: Option<Dimension>,
     pub(super) min_persistence_stages: usize,
+    pub(super) adopt_existing_log: bool,
 }
 
 impl NativeOptions {
@@ -146,6 +147,7 @@ impl NativeOptions {
             Some("--min-persistence") | Some("--min-persistence-stages") => {
                 self.min_persistence_stages = require_usize(args, "--min-persistence")?;
             }
+            Some("--adopt-existing-log") => self.adopt_existing_log = true,
             Some(_) | None => {
                 return Err(NativeCliError::usage(format!(
                     "unsupported native argument {arg:?}"

@@ -104,16 +104,16 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
 }
 
 #[test]
-fn space_rebuild_recovers_a_deleted_current_snapshot() {
+fn space_rebuild_recovers_a_deleted_nearest_snapshot() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let imported = import_native_case_space(&directory, "revision:native-cli-rebuild");
     let imported_json = stdout_json(&imported);
-    let relative_snapshot = imported_json["result"]["record"]["current_snapshot_path"]
+    let relative_snapshot = imported_json["result"]["record"]["nearest_snapshot_path"]
         .as_str()
-        .expect("current snapshot path");
+        .expect("nearest snapshot path");
     let snapshot_path = directory.join(relative_snapshot);
-    fs::remove_file(&snapshot_path).expect("delete current snapshot");
+    fs::remove_file(&snapshot_path).expect("delete nearest snapshot");
 
     let rebuild = run_cli(&[
         "space",
@@ -141,6 +141,204 @@ fn space_rebuild_recovers_a_deleted_current_snapshot() {
     assert_eq!(
         stdout_json(&validation)["result"]["validation"]["valid"],
         json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn space_rebuild_adopts_a_missing_head_only_after_full_verification() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:native-cli-adopt-head");
+    let imported_json = stdout_json(&imported);
+    let log_path = imported_native_log_path(&directory, &imported_json);
+    let head_path = log_path.with_file_name("morphism_log.head.json");
+    fs::remove_file(&head_path).expect("remove morphism log head");
+
+    for operation in ["replay", "validate", "rebuild"] {
+        let refused = run_cli(&[
+            "space",
+            operation,
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            !refused.status.success(),
+            "{operation} must refuse a missing head"
+        );
+        assert!(stderr(&refused).contains("morphism log head is required"));
+    }
+
+    let adopted = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+
+    assert!(adopted.status.success(), "stderr: {}", stderr(&adopted));
+    assert_eq!(
+        stdout_json(&adopted)["result"]["rebuild"]["head_adopted"],
+        json!(true)
+    );
+    assert!(head_path.is_file());
+    for operation in ["replay", "validate", "reason"] {
+        let restored = run_native_case_store_command(&directory, operation);
+        assert!(
+            restored.status.success(),
+            "{operation} must work after adoption"
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn space_rebuild_refuses_to_adopt_a_tampered_log_and_leaves_head_missing() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:native-cli-adopt-tampered");
+    let imported_json = stdout_json(&imported);
+    let log_path = imported_native_log_path(&directory, &imported_json);
+    let head_path = log_path.with_file_name("morphism_log.head.json");
+    let snapshot_path = directory.join(
+        imported_json["result"]["record"]["nearest_snapshot_path"]
+            .as_str()
+            .expect("nearest snapshot path"),
+    );
+    fs::remove_file(&head_path).expect("remove morphism log head");
+    fs::remove_file(&snapshot_path).expect("remove snapshot so adoption must verify the fold");
+
+    let mut entry: Value = serde_json::from_str(
+        fs::read_to_string(&log_path)
+            .expect("read morphism log")
+            .trim_end(),
+    )
+    .expect("parse morphism log entry");
+    entry["morphism"]["metadata"]["payload"]["added_cells"][0]["title"] =
+        json!("Tampered before adoption");
+    fs::write(
+        &log_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&entry).expect("serialize tampered log entry")
+        ),
+    )
+    .expect("write tampered morphism log");
+
+    let refused = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+
+    assert!(!refused.status.success());
+    assert!(stderr(&refused).contains("disagrees with folded log"));
+    assert!(
+        !head_path.exists(),
+        "refused adoption must not write a head"
+    );
+    assert!(
+        !snapshot_path.exists(),
+        "refused adoption must not rebuild snapshots before the fold verifies"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn space_rebuild_adoption_refuses_a_disagreeing_existing_head_without_overwriting_it() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:native-cli-adopt-stale-head");
+    let imported_json = stdout_json(&imported);
+    let log_path = imported_native_log_path(&directory, &imported_json);
+    let head_path = log_path.with_file_name("morphism_log.head.json");
+    let original_head = fs::read(&head_path).expect("read original morphism log head");
+    let mut entry: Value = serde_json::from_str(
+        fs::read_to_string(&log_path)
+            .expect("read morphism log")
+            .trim_end(),
+    )
+    .expect("parse morphism log entry");
+    entry["actor_id"] = json!("actor:tampered-before-adoption");
+    fs::write(
+        &log_path,
+        format!(
+            "{}\n",
+            serde_json::to_string(&entry).expect("serialize tampered log entry")
+        ),
+    )
+    .expect("write tampered morphism log");
+
+    let refused = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+
+    assert!(!refused.status.success());
+    assert!(stderr(&refused).contains("morphism log head is stale or disagrees"));
+    assert_eq!(
+        fs::read(&head_path).expect("read refused morphism log head"),
+        original_head
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn space_rebuild_adoption_is_a_no_op_for_a_healthy_modern_head() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:native-cli-adopt-no-op");
+    let imported_json = stdout_json(&imported);
+    let log_path = imported_native_log_path(&directory, &imported_json);
+    let head_path = log_path.with_file_name("morphism_log.head.json");
+    let original_head = fs::read(&head_path).expect("read original morphism log head");
+
+    let rebuild = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+
+    assert!(rebuild.status.success(), "stderr: {}", stderr(&rebuild));
+    assert_eq!(
+        stdout_json(&rebuild)["result"]["rebuild"]["head_adopted"],
+        json!(false)
+    );
+    assert_eq!(
+        fs::read(&head_path).expect("read unchanged morphism log head"),
+        original_head
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -4401,10 +4599,10 @@ fn lift_github_issues_materializes_the_snapshot_into_a_rebuildable_case_space() 
 
     // Delete the disposable snapshot so rebuild must fold the real genesis
     // payload from an empty case space and recreate it.
-    let relative_snapshot = lifted["result"]["record"]["current_snapshot_path"]
+    let relative_snapshot = lifted["result"]["record"]["nearest_snapshot_path"]
         .as_str()
-        .expect("snapshot path");
-    fs::remove_file(directory.join(relative_snapshot)).expect("delete current snapshot");
+        .expect("nearest snapshot path");
+    fs::remove_file(directory.join(relative_snapshot)).expect("delete nearest snapshot");
     let rebuild = run_cli(&[
         "space",
         "rebuild",
@@ -4797,6 +4995,14 @@ fn import_native_case_space_from_input(
     ]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     output
+}
+
+fn imported_native_log_path(directory: &Path, imported: &Value) -> PathBuf {
+    directory.join(
+        imported["result"]["record"]["log_path"]
+            .as_str()
+            .expect("native morphism log path"),
+    )
 }
 
 fn run_native_case_store_command(directory: &Path, command: &str) -> Output {
@@ -5606,7 +5812,10 @@ fn assert_native_store_valid_and_rebuilds(directory: &Path) {
         .as_array()
         .expect("rebuilt revisions")
         .iter()
-        .all(|revision| revision["snapshot_status"] == json!("agrees")));
+        .all(|revision| matches!(
+            revision["snapshot_status"].as_str(),
+            Some("agrees" | "not_scheduled")
+        )));
 }
 
 fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {

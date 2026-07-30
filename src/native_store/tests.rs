@@ -3,7 +3,7 @@ use crate::native_model::{CaseMorphismType, CaseSpace, ProjectionAudience};
 use higher_graphen_core::{Id, ReviewStatus};
 use std::{
     fs::{self, FileTimes, OpenOptions},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -84,8 +84,8 @@ fn genesis_payload_round_trips_after_its_snapshot_is_rebuilt() {
 }
 
 #[test]
-fn rebuild_recovers_a_deleted_current_snapshot() {
-    let root = temp_root("current-rebuild");
+fn replay_and_validation_fold_from_empty_when_all_snapshots_are_deleted() {
+    let root = temp_root("no-snapshot-replay");
     let store = NativeCaseStore::new(root.clone());
     let case_space = fixture_space();
     store
@@ -96,33 +96,69 @@ fn rebuild_recovers_a_deleted_current_snapshot() {
         .expect("append second revision");
     let expected = store
         .replay_current_case_space(&case_space.case_space_id)
-        .expect("replay before snapshot deletion")
+        .expect("replay before deleting all snapshots")
         .case_space;
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("genesis snapshot path");
+    fs::remove_file(&snapshot_path).expect("delete only snapshot");
+
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay without any snapshot");
+    let validation = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect("validate fold without any snapshot");
+
+    assert_eq!(replay.case_space, expected);
+    assert!(validation.valid);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn rebuild_recovers_only_a_deleted_periodic_snapshot() {
+    let root = temp_root("periodic-rebuild");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let expected = append_through_sequence(&store, &case_space.case_space_id, SNAPSHOT_INTERVAL);
     let snapshot_path = store
         .resolve_snapshot_path(
             &store
                 .relative_snapshot_path(&case_space.case_space_id, &expected.revision.revision_id),
             &store.log_path(&case_space.case_space_id),
         )
-        .expect("current snapshot path");
-    fs::remove_file(&snapshot_path).expect("delete current snapshot");
+        .expect("periodic snapshot path");
+    fs::remove_file(&snapshot_path).expect("delete periodic snapshot");
 
     let rebuild = store
         .rebuild_case_space(&case_space.case_space_id)
-        .expect("recover current snapshot");
+        .expect("recover periodic snapshot");
     let replay = store
         .replay_current_case_space(&case_space.case_space_id)
-        .expect("replay recovered current snapshot");
+        .expect("replay recovered periodic snapshot");
 
-    assert_eq!(rebuild.revisions.len(), 2);
+    assert_eq!(rebuild.revisions.len(), SNAPSHOT_INTERVAL as usize);
     assert_eq!(
         rebuild.revisions[0].snapshot_status,
         NativeSnapshotStatus::Agrees
     );
+    assert!(rebuild.revisions[1..SNAPSHOT_INTERVAL as usize - 1]
+        .iter()
+        .all(|revision| revision.snapshot_status == NativeSnapshotStatus::NotScheduled));
     assert_eq!(
-        rebuild.revisions[1].snapshot_status,
+        rebuild.revisions[SNAPSHOT_INTERVAL as usize - 1].snapshot_status,
         NativeSnapshotStatus::Rebuilt
     );
+    assert!(snapshot_path.exists());
     assert_eq!(replay.case_space, expected);
     let _ = fs::remove_dir_all(root);
 }
@@ -253,7 +289,169 @@ fn append_metadata_only_morphism_advances_history_and_replay() {
         replay.history[1].previous_entry_hash.as_deref(),
         Some(genesis_hash.as_str())
     );
+    let second_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &replay.current_revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("second revision snapshot path");
+    assert!(!second_snapshot_path.exists());
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn periodic_snapshots_replay_more_than_one_interval_to_the_full_fold() {
+    let root = temp_root("periodic-fold");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let target_sequence = SNAPSHOT_INTERVAL + 2;
+    let expected = append_through_sequence(&store, &case_space.case_space_id, target_sequence);
+    let entries = store
+        .history_entries(&case_space.case_space_id)
+        .expect("periodic history");
+
+    for entry in &entries {
+        let snapshot_path = store
+            .resolve_snapshot_path(
+                &store.relative_snapshot_path(&case_space.case_space_id, &entry.target_revision_id),
+                &store.log_path(&case_space.case_space_id),
+            )
+            .expect("revision snapshot path");
+        assert_eq!(
+            snapshot_path.exists(),
+            snapshot_required(entry.sequence),
+            "snapshot policy for sequence {}",
+            entry.sequence
+        );
+    }
+
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("fold from nearest periodic snapshot");
+    let folded = fold_morphism_log(
+        &store.log_path(&case_space.case_space_id),
+        &entries,
+        |_, _, _, _| Ok(()),
+    )
+    .expect("fold entire log from empty");
+
+    assert_eq!(replay.case_space, expected);
+    assert_eq!(replay.case_space, folded);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn fold_reuses_one_known_id_index_across_unsnapshotted_entries() {
+    let case_space = fixture_space();
+    let mut expected = case_space.clone();
+    let mut entries = case_space.morphism_log.clone();
+    for _ in 2..=8 {
+        let entry = next_metadata_entry(&expected);
+        apply_bounded_morphism(Path::new("fold-index-test"), &mut expected, &entry)
+            .expect("prepare expected revision");
+        expected.morphism_log.push(entry.clone());
+        expected.revision = revision_from_entry(&expected.case_space_id, &entry);
+        entries.push(entry);
+    }
+
+    KNOWN_IDS_CALL_COUNT.with(|count| count.set(0));
+    let folded = fold_morphism_log(Path::new("fold-index-test"), &entries, |_, _, _, _| Ok(()))
+        .expect("fold with one incremental id index");
+    let known_id_builds = KNOWN_IDS_CALL_COUNT.with(std::cell::Cell::get);
+
+    assert_eq!(known_id_builds, 1);
+    assert_eq!(folded, expected);
+}
+
+#[test]
+fn fold_streams_revisions_without_retaining_materialized_history() {
+    let case_space = fixture_space();
+    let mut expected = case_space.clone();
+    let mut entries = case_space.morphism_log.clone();
+    for _ in 2..=8 {
+        let entry = next_metadata_entry(&expected);
+        apply_bounded_morphism(Path::new("streaming-fold-test"), &mut expected, &entry)
+            .expect("prepare expected revision");
+        expected.morphism_log.push(entry.clone());
+        expected.revision = revision_from_entry(&expected.case_space_id, &entry);
+        entries.push(entry);
+    }
+    let mut visited_revision_ids = Vec::new();
+
+    let folded = fold_morphism_log(
+        Path::new("streaming-fold-test"),
+        &entries,
+        |_, entry, _, case_space| {
+            assert_eq!(case_space.revision.revision_id, entry.target_revision_id);
+            visited_revision_ids.push(entry.target_revision_id.clone());
+            Ok(())
+        },
+    )
+    .expect("stream revisions through callback");
+
+    assert_eq!(visited_revision_ids.len(), entries.len());
+    assert_eq!(folded, expected);
+}
+
+#[test]
+fn native_record_names_only_snapshots_that_exist() {
+    let root = temp_root("record-snapshot-shape");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let record = store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append unscheduled revision");
+    let value = serde_json::to_value(&record).expect("serialize native record");
+
+    assert_eq!(
+        value["schema"],
+        serde_json::json!("highergraphen.case.native_store.record.v2")
+    );
+    assert_eq!(
+        value["nearest_snapshot_path"],
+        value["revisions"][0]["snapshot_path"]
+    );
+    assert!(value["revisions"][1].get("snapshot_path").is_none());
+    assert!(record.nearest_snapshot_path.is_some());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_snapshot_at_every_revision_remains_an_exact_replay_source() {
+    let root = temp_root("legacy-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second revision");
+    let expected = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay folded second revision")
+        .case_space;
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store
+                .relative_snapshot_path(&case_space.case_space_id, &expected.revision.revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("legacy extra snapshot path");
+    write_json_create_new(&snapshot_path, &expected).expect("write legacy extra snapshot");
+
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay exact legacy snapshot");
+
+    assert_eq!(replay.case_space, expected);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -328,7 +526,8 @@ fn append_rejects_an_existing_target_snapshot_without_replacing_it() {
     store
         .import_case_space(&case_space)
         .expect("import native case space");
-    let entry = metadata_entry(&case_space);
+    let current = append_through_sequence(&store, &case_space.case_space_id, SNAPSHOT_INTERVAL - 1);
+    let entry = next_metadata_entry(&current);
     let snapshot_path = store
         .resolve_snapshot_path(
             &store.relative_snapshot_path(&case_space.case_space_id, &entry.target_revision_id),
@@ -367,6 +566,189 @@ fn append_rejects_an_existing_target_snapshot_without_replacing_it() {
 }
 
 #[test]
+fn append_refuses_a_forged_unscheduled_snapshot_before_writing_the_log() {
+    let root = temp_root("forged-unscheduled-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let entry = metadata_entry(&case_space);
+    assert!(!snapshot_required(entry.sequence));
+    let genesis_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("genesis snapshot path");
+    let forged_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &entry.target_revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("unscheduled target snapshot path");
+    fs::copy(&genesis_snapshot_path, &forged_snapshot_path)
+        .expect("forge target snapshot from genesis");
+    let forged_snapshot_before =
+        fs::read(&forged_snapshot_path).expect("read forged snapshot before append");
+    let log_path = store.log_path(&case_space.case_space_id);
+    let log_before = fs::read(&log_path).expect("read log before refused append");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("forged unscheduled snapshot must refuse append before mutation");
+
+    assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+    assert!(error.to_string().contains("embedded morphism_log mismatch"));
+    assert_eq!(
+        fs::read(&log_path).expect("read log after refused append"),
+        log_before
+    );
+    assert_eq!(
+        fs::read(&forged_snapshot_path).expect("read forged snapshot after refused append"),
+        forged_snapshot_before
+    );
+    assert_eq!(
+        store
+            .history_entries(&case_space.case_space_id)
+            .expect("history after refused append")
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("store remains valid after refused append")
+            .valid
+    );
+    assert_eq!(
+        store
+            .rebuild_case_space(&case_space.case_space_id)
+            .expect("store remains rebuildable after refused append")
+            .revisions[0]
+            .snapshot_status,
+        NativeSnapshotStatus::Agrees
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn log_head_rejects_a_forged_unsnapshotted_tail() {
+    let root = temp_root("forged-log-tail");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append unscheduled tail");
+    let mut forged = store
+        .history_entries(&case_space.case_space_id)
+        .expect("history before forgery");
+    forged[1].actor_id = id("actor:forged");
+    forged[1].morphism.metadata["operation_gate"]["actor_id"] = serde_json::json!("actor:forged");
+    rewrite_history_without_head(&store, &case_space.case_space_id, &forged);
+
+    let history_error = store
+        .history_entries(&case_space.case_space_id)
+        .expect_err("history must reject forged tail");
+    let replay_error = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect_err("replay must reject forged tail");
+    let inspect_error = store
+        .inspect_case_space(&case_space.case_space_id)
+        .expect_err("inspect must reject forged tail");
+    let validation_error = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect_err("validate must reject forged tail");
+    let rebuild_error = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect_err("rebuild must reject forged tail");
+
+    for error in [
+        history_error,
+        replay_error,
+        inspect_error,
+        validation_error,
+        rebuild_error,
+    ] {
+        assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+        assert!(error.to_string().contains("morphism log head"));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn missing_log_head_refuses_replay_validation_and_rebuild() {
+    let root = temp_root("missing-log-head");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    fs::remove_file(store.head_path(&case_space.case_space_id)).expect("remove log head");
+
+    let replay_error = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect_err("replay must require log head");
+    let validation_error = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect_err("validation must require log head");
+    let rebuild_error = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect_err("rebuild must require log head");
+
+    for error in [replay_error, validation_error, rebuild_error] {
+        assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+        assert!(error.to_string().contains("morphism log head is required"));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn unscheduled_append_refuses_a_log_without_final_newline() {
+    let root = temp_root("missing-final-newline");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let log_path = store.log_path(&case_space.case_space_id);
+    let mut without_newline = fs::read(&log_path).expect("read morphism log");
+    assert_eq!(without_newline.pop(), Some(b'\n'));
+    fs::write(&log_path, &without_newline).expect("strip final newline");
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("missing final newline remains readable before append")
+            .valid
+    );
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect_err("append must refuse missing line delimiter");
+
+    assert!(error
+        .to_string()
+        .contains("morphism log did not end with a newline before append"));
+    assert_eq!(
+        fs::read(&log_path).expect("read log after refused append"),
+        without_newline
+    );
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("refused append leaves prior store readable")
+            .valid
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn tampered_snapshot_checksum_fails_replay_and_validation() {
     let root = temp_root("tampered-snapshot");
     let store = NativeCaseStore::new(root.clone());
@@ -393,13 +775,77 @@ fn tampered_snapshot_checksum_fails_replay_and_validation() {
     let validation_error = store
         .validate_case_space(&case_space.case_space_id)
         .expect_err("tampered snapshot must fail validation");
+    let rebuild_error = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect_err("tampered snapshot must fail rebuild");
 
-    for error in [replay_error, validation_error] {
+    for error in [replay_error, validation_error, rebuild_error] {
         assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
         assert!(error.to_string().contains("snapshot checksum mismatch"));
         assert!(error
             .to_string()
             .contains(snapshot_path.to_str().expect("utf-8 snapshot path")));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn validation_checks_a_tampered_snapshot_older_than_the_replay_source() {
+    let root = temp_root("tampered-older-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let second = store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second revision");
+    let second_state = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay second revision")
+        .case_space;
+    let second_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &second.current_revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("legacy second snapshot path");
+    write_json_create_new(&second_snapshot_path, &second_state)
+        .expect("write legacy extra snapshot");
+    store
+        .append_morphism(
+            &case_space.case_space_id,
+            next_metadata_entry(&second_state),
+        )
+        .expect("append revision after replay source");
+    let genesis_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("genesis snapshot path");
+    let mut genesis_snapshot = read_json(&genesis_snapshot_path);
+    genesis_snapshot["case_cells"][0]["title"] = serde_json::json!("tampered older snapshot");
+    write_json_value(&genesis_snapshot_path, &genesis_snapshot);
+
+    store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("newer snapshot remains a valid replay source");
+    let validation_error = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect_err("validation must inspect older snapshot");
+    let rebuild_error = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect_err("rebuild must inspect older snapshot");
+
+    for error in [validation_error, rebuild_error] {
+        assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+        assert!(error
+            .to_string()
+            .contains(genesis_snapshot_path.to_str().expect("utf-8 path")));
     }
     let _ = fs::remove_dir_all(root);
 }
@@ -785,12 +1231,26 @@ fn fixture_space() -> CaseSpace {
 }
 
 fn metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
+    assert_eq!(case_space.morphism_log.len(), 1);
+    next_metadata_entry(case_space)
+}
+
+fn next_metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
+    let sequence = case_space.morphism_log.len() as u64 + 1;
     let mut entry = case_space.morphism_log[0].clone();
-    entry.sequence = 2;
-    entry.entry_id = id("morphism_log_entry:metadata-only");
-    entry.morphism_id = id("morphism:metadata-only");
+    entry.sequence = sequence;
+    entry.entry_id = if sequence == 2 {
+        id("morphism_log_entry:metadata-only")
+    } else {
+        id(&format!("morphism_log_entry:metadata-only-{sequence}"))
+    };
+    entry.morphism_id = if sequence == 2 {
+        id("morphism:metadata-only")
+    } else {
+        id(&format!("morphism:metadata-only-{sequence}"))
+    };
     entry.source_revision_id = Some(case_space.revision.revision_id.clone());
-    entry.target_revision_id = id("revision:native-contract-v2");
+    entry.target_revision_id = id(&format!("revision:native-contract-v{sequence}"));
     entry.morphism.morphism_id = entry.morphism_id.clone();
     entry.morphism.morphism_type = CaseMorphismType::Review;
     entry.morphism.source_revision_id = entry.source_revision_id.clone();
@@ -831,7 +1291,43 @@ fn metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
     entry
 }
 
+fn append_through_sequence(
+    store: &NativeCaseStore,
+    case_space_id: &Id,
+    target_sequence: u64,
+) -> CaseSpace {
+    loop {
+        let current = store
+            .replay_current_case_space(case_space_id)
+            .expect("replay before append");
+        if current.history.len() as u64 == target_sequence {
+            return current.case_space;
+        }
+        assert!(
+            current.history.len() as u64 <= target_sequence,
+            "target sequence must not precede current history"
+        );
+        let entry = next_metadata_entry(&current.case_space);
+        store
+            .append_morphism(case_space_id, entry)
+            .expect("append through target sequence");
+    }
+}
+
 fn rewrite_history(store: &NativeCaseStore, case_space_id: &Id, history: &[MorphismLogEntry]) {
+    rewrite_history_without_head(store, case_space_id, history);
+    write_log_head(
+        &store.head_path(case_space_id),
+        history.last().expect("history head"),
+    )
+    .expect("rewrite history head");
+}
+
+fn rewrite_history_without_head(
+    store: &NativeCaseStore,
+    case_space_id: &Id,
+    history: &[MorphismLogEntry],
+) {
     let mut text = history
         .iter()
         .map(|entry| serde_json::to_string(entry).expect("serialize history entry"))

@@ -3,7 +3,7 @@ use higher_graphen_core::Id;
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     thread,
@@ -226,6 +226,116 @@ pub(super) fn append_json_line(path: &Path, value: &impl Serialize) -> NativeSto
         });
     }
     Ok(())
+}
+
+pub(super) fn append_verified_log_entry(
+    path: &Path,
+    entry: &MorphismLogEntry,
+) -> NativeStoreResult<u64> {
+    let previous_len = fs::metadata(path)
+        .map_err(|source| NativeStoreError::Io {
+            path: path.to_owned(),
+            source,
+        })?
+        .len();
+    append_json_line(path, entry)?;
+
+    let verification = (|| {
+        let mut file =
+            OpenOptions::new()
+                .read(true)
+                .open(path)
+                .map_err(|source| NativeStoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?;
+        if previous_len > 0 {
+            file.seek(SeekFrom::Start(previous_len - 1))
+                .and_then(|_| {
+                    let mut delimiter = [0_u8; 1];
+                    file.read_exact(&mut delimiter)?;
+                    if delimiter[0] != b'\n' {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "morphism log did not end with a newline before append",
+                        ));
+                    }
+                    Ok(())
+                })
+                .map_err(|source| NativeStoreError::Io {
+                    path: path.to_owned(),
+                    source,
+                })?;
+        }
+        file.seek(SeekFrom::Start(previous_len))
+            .map_err(|source| NativeStoreError::Io {
+                path: path.to_owned(),
+                source,
+            })?;
+        let mut appended = String::new();
+        file.read_to_string(&mut appended)
+            .map_err(|source| NativeStoreError::Io {
+                path: path.to_owned(),
+                source,
+            })?;
+        if !appended.ends_with('\n') || appended[..appended.len() - 1].contains('\n') {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: "appended morphism log entry is not exactly one JSON line".to_owned(),
+            });
+        }
+        let actual: MorphismLogEntry = serde_json::from_str(appended.trim_end_matches('\n'))
+            .map_err(|source| NativeStoreError::Json {
+                path: path.to_owned(),
+                source,
+            })?;
+        let actual_hash =
+            crate::native_hash::morphism_log_entry_hash(&actual).map_err(|source| {
+                NativeStoreError::Json {
+                    path: path.to_owned(),
+                    source,
+                }
+            })?;
+        let expected_hash =
+            crate::native_hash::morphism_log_entry_hash(entry).map_err(|source| {
+                NativeStoreError::Json {
+                    path: path.to_owned(),
+                    source,
+                }
+            })?;
+        if actual_hash != expected_hash {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: format!(
+                    "appended morphism log entry hash {actual_hash} does not match expected {expected_hash}"
+                ),
+            });
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = verification {
+        truncate_after_failed_append(path, previous_len, &error)?;
+        return Err(error);
+    }
+    Ok(previous_len)
+}
+
+pub(super) fn truncate_after_failed_append(
+    path: &Path,
+    previous_len: u64,
+    append_error: &NativeStoreError,
+) -> NativeStoreResult<()> {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.set_len(previous_len))
+        .map_err(|source| NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "failed to roll back morphism log after {append_error}; truncation failed: {source}"
+            ),
+        })
 }
 
 pub(super) fn write_json_create_new(path: &Path, value: &impl Serialize) -> NativeStoreResult<()> {

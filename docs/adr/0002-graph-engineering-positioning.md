@@ -74,10 +74,11 @@ derivation linear. The same measurement now reads 0.02 s at 1,000 cells, 0.07 s
 at 4,000, 0.20 s at 10,000, and 1.92 s at 100,000 — a 162× improvement at
 10,000 cells, with byte-identical output on four real stores.
 
-What remains is a storage cost, not a time cost: every revision writes a full
-snapshot, so a 100,000-cell space occupies about 287 MB and each edit adds
-another snapshot. That is the real ceiling now, and pruning old snapshots while
-keeping the log is a separate decision.
+What remained at the time of this decision was a storage cost: every revision
+wrote a full snapshot, so a 100,000-cell space occupied about 287 MB and each
+edit added another snapshot. ADR 0005 amends that implementation: snapshots are
+periodic, intervening revisions replay from the nearest snapshot, and a
+constant-size log-head file independently anchors the unsnapshotted tail.
 
 ## Decision
 
@@ -103,8 +104,9 @@ keeping the log is a separate decision.
    that someone must be able to check this, so a cell per model call is noise
    that dilutes the ledger rather than a load problem. Derivation is now
    comfortable into the tens of thousands of cells, so a domain that genuinely
-   has that many *decisions* is in range; the constraint to respect is the
-   per-revision snapshot cost, not evaluation time.
+   has that many *decisions* is in range. The constraint recorded here was the
+   per-revision snapshot cost, not evaluation time; ADR 0005 supersedes that
+   storage-policy detail.
 
 3. **Integration contract: runtime reports enter as evidence input JSON.**
    This extends the rule ADR 0001 already sets for `higher-graphen-runtime` to

@@ -20,10 +20,18 @@ An LLM or agent proposes; CaseGraphen decides. Concretely:
   genesis carries the complete initial cell/relation payload and the immutable
   case-space shell, and later entries carry reducer payloads. `space rebuild`
   folds that log from an empty case space, verifies every revision checksum,
-  recreates missing snapshots, and refuses to overwrite a snapshot that
-  disagrees. `space replay` itself reads the current snapshot after verifying
-  its checksum and embedded log prefix; `space validate` additionally proves
-  that a full log fold reproduces the current snapshot.
+  recreates missing periodic snapshots, and refuses to overwrite a snapshot
+  that disagrees. `space replay` reads the newest snapshot at or before the
+  current revision after verifying its checksum and embedded log prefix, folds
+  the remaining entries, and verifies the final replay checksum. A separate
+  constant-size head file pins the log tail's revision, entry hash, and replay
+  checksum; a missing or stale head refuses every read. `space validate`
+  additionally proves that a full streaming log fold reproduces the current
+  state and checks every snapshot belonging to a logged revision. The only
+  provisioning path for a missing head is the explicit operator assertion
+  `space rebuild --adopt-existing-log`: it verifies the complete fold and every
+  existing snapshot before creating the head, and never replaces an existing
+  head.
 - Readiness, the frontier, and blockers are **derived** from the loaded case
   space. They are never stored as mutable state.
 - Generated structure — obstructions, completions, inferred evidence, proposed
@@ -93,7 +101,8 @@ All commands take `--format json` and optionally `--output <path>`.
 ```text
 casegraphen lift native|workflow|case-graph      # native and graph lifts
 casegraphen lift github-issues                   # bounded GitHub issue snapshot lift
-casegraphen space new|list|inspect|history|replay|rebuild|validate|reason|frontier|evidence|project|topology
+casegraphen space new|list|inspect|history|replay|validate|reason|frontier|evidence|project|topology
+casegraphen space rebuild [--adopt-existing-log]  # adoption is a human trust assertion
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
 casegraphen review accept|reject|reopen|waive     # gated
 casegraphen evidence attach                       # gated

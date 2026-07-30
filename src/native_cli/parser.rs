@@ -105,6 +105,7 @@ impl NativeCliCommand {
             "rebuild" => Ok(Self::CaseRebuild {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
+                adopt_existing_log: options.adopt_existing_log,
                 output: options.output,
             }),
             "validate" => Ok(Self::CaseValidate {

@@ -2,7 +2,11 @@ use crate::evidence_trust::{EvidenceTrustBoundary, EvidenceTrustInput};
 use higher_graphen_core::{Id, Provenance, ReviewStatus, Severity};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    str::FromStr,
+};
 
 pub const NATIVE_CASE_SPACE_SCHEMA: &str = "highergraphen.case.space.v1";
 pub const NATIVE_CASE_SPACE_SCHEMA_VERSION: u32 = 1;
@@ -518,6 +522,176 @@ pub fn apply_morphism(
     }
 
     *case_space = next;
+    Ok(())
+}
+
+pub(crate) struct MorphismApplicationIndex {
+    cell_positions: BTreeMap<Id, usize>,
+    relation_positions: BTreeMap<Id, usize>,
+}
+
+impl MorphismApplicationIndex {
+    pub(crate) fn new(case_space: &CaseSpace) -> Self {
+        Self {
+            cell_positions: case_space
+                .case_cells
+                .iter()
+                .enumerate()
+                .map(|(index, cell)| (cell.id.clone(), index))
+                .collect(),
+            relation_positions: case_space
+                .case_relations
+                .iter()
+                .enumerate()
+                .map(|(index, relation)| (relation.id.clone(), index))
+                .collect(),
+        }
+    }
+
+    fn contains(&self, id: &Id) -> bool {
+        self.cell_positions.contains_key(id) || self.relation_positions.contains_key(id)
+    }
+}
+
+pub(crate) fn apply_morphism_indexed(
+    case_space: &mut CaseSpace,
+    morphism: &CaseMorphism,
+    index: &mut MorphismApplicationIndex,
+) -> Result<(), MorphismApplyError> {
+    let is_genesis = morphism.source_revision_id.is_none()
+        && case_space.case_cells.is_empty()
+        && case_space.case_relations.is_empty()
+        && case_space.morphism_log.is_empty();
+    let payload = morphism_payload(morphism)?;
+    let (declared_added, declared_updated) = validate_declared_morphism_ids(morphism)?;
+    let (payload_added, payload_updated) = validate_payload_ids(morphism, &payload)?;
+    require_matching_ids(
+        morphism,
+        "added_ids",
+        &declared_added,
+        "payload added_cells and added_relations",
+        &payload_added,
+    )?;
+    require_matching_ids(
+        morphism,
+        "updated_ids",
+        &declared_updated,
+        "payload updated_cells and updated_relations",
+        &payload_updated,
+    )?;
+
+    for cell in &payload.added_cells {
+        require_not_capability_administration(morphism, cell, "add", is_genesis)?;
+        if index.contains(&cell.id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot add cell {}: id already exists",
+                morphism.morphism_id, cell.id
+            )));
+        }
+    }
+    for relation in &payload.added_relations {
+        if index.contains(&relation.id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot add relation {}: id already exists",
+                morphism.morphism_id, relation.id
+            )));
+        }
+    }
+    for cell in &payload.updated_cells {
+        let position = index.cell_positions.get(&cell.id).ok_or_else(|| {
+            MorphismApplyError::new(format!(
+                "morphism {} cannot update cell {}: cell does not exist",
+                morphism.morphism_id, cell.id
+            ))
+        })?;
+        let existing = &case_space.case_cells[*position];
+        require_not_capability_administration(morphism, existing, "update", is_genesis)?;
+        require_not_capability_administration(morphism, cell, "update", is_genesis)?;
+        require_immutable_cell_update_fields(morphism, existing, cell)?;
+        require_lifecycle_transition(morphism, &cell.id, existing.lifecycle, cell.lifecycle)?;
+    }
+    for relation in &payload.updated_relations {
+        if !index.relation_positions.contains_key(&relation.id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot update relation {}: relation does not exist",
+                morphism.morphism_id, relation.id
+            )));
+        }
+    }
+    for id in &morphism.retired_ids {
+        if let Some(position) = index.cell_positions.get(id) {
+            let cell = &case_space.case_cells[*position];
+            require_not_capability_administration(morphism, cell, "retire", is_genesis)?;
+            require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
+        } else if !index.relation_positions.contains_key(id) {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot retire {}: id does not exist",
+                morphism.morphism_id, id
+            )));
+        }
+    }
+
+    let added_cell_ids = payload
+        .added_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .collect::<BTreeSet<_>>();
+    for relation in payload
+        .added_relations
+        .iter()
+        .chain(&payload.updated_relations)
+    {
+        for (field, endpoint) in [("from_id", &relation.from_id), ("to_id", &relation.to_id)] {
+            if !index.cell_positions.contains_key(endpoint) && !added_cell_ids.contains(endpoint) {
+                return Err(MorphismApplyError::new(format!(
+                    "morphism {} leaves relation {} with missing {field} cell {}",
+                    morphism.morphism_id, relation.id, endpoint
+                )));
+            }
+        }
+    }
+
+    for cell in payload.added_cells {
+        index
+            .cell_positions
+            .insert(cell.id.clone(), case_space.case_cells.len());
+        case_space.case_cells.push(cell);
+    }
+    for relation in payload.added_relations {
+        index
+            .relation_positions
+            .insert(relation.id.clone(), case_space.case_relations.len());
+        case_space.case_relations.push(relation);
+    }
+    for cell in payload.updated_cells {
+        let position = index.cell_positions[&cell.id];
+        case_space.case_cells[position] = cell;
+    }
+    for relation in payload.updated_relations {
+        let position = index.relation_positions[&relation.id];
+        case_space.case_relations[position] = relation;
+    }
+
+    let mut retired_relation_positions = Vec::new();
+    for id in &morphism.retired_ids {
+        if let Some(position) = index.cell_positions.get(id) {
+            case_space.case_cells[*position].lifecycle = CaseCellLifecycle::Retired;
+        } else {
+            retired_relation_positions.push(index.relation_positions[id]);
+        }
+    }
+    if !retired_relation_positions.is_empty() {
+        retired_relation_positions.sort_unstable();
+        for position in retired_relation_positions.into_iter().rev() {
+            case_space.case_relations.remove(position);
+        }
+        index.relation_positions = case_space
+            .case_relations
+            .iter()
+            .enumerate()
+            .map(|(position, relation)| (relation.id.clone(), position))
+            .collect();
+    }
     Ok(())
 }
 

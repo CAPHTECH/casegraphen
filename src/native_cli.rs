@@ -75,6 +75,7 @@ pub(crate) enum NativeCliCommand {
     CaseRebuild {
         store: PathBuf,
         case_space_id: Id,
+        adopt_existing_log: bool,
         output: Option<PathBuf>,
     },
     CaseValidate {
@@ -392,8 +393,9 @@ impl NativeCliCommand {
             Self::CaseRebuild {
                 store,
                 case_space_id,
+                adopt_existing_log,
                 ..
-            } => case_rebuild(store, case_space_id)?,
+            } => case_rebuild(store, case_space_id, *adopt_existing_log)?,
             Self::CaseValidate {
                 store,
                 case_space_id,
@@ -714,8 +716,17 @@ fn case_replay(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliError
     ))
 }
 
-fn case_rebuild(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliError> {
-    let rebuild = NativeCaseStore::new(store.to_path_buf()).rebuild_case_space(case_space_id)?;
+fn case_rebuild(
+    store: &Path,
+    case_space_id: &Id,
+    adopt_existing_log: bool,
+) -> Result<Value, NativeCliError> {
+    let store = NativeCaseStore::new(store.to_path_buf());
+    let rebuild = if adopt_existing_log {
+        store.rebuild_case_space_adopting_existing_log(case_space_id)?
+    } else {
+        store.rebuild_case_space(case_space_id)?
+    };
     Ok(report(
         "casegraphen space rebuild",
         json!({ "rebuild": rebuild }),

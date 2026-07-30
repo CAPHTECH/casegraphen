@@ -1,11 +1,11 @@
 use crate::native_model::{CaseSpace, MorphismLogEntry};
 use higher_graphen_core::Id;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub type NativeStoreResult<T> = Result<T, NativeStoreError>;
 
-pub const NATIVE_CASE_SPACE_RECORD_SCHEMA: &str = "highergraphen.case.native_store.record.v1";
+pub const NATIVE_CASE_SPACE_RECORD_SCHEMA: &str = "highergraphen.case.native_store.record.v2";
 pub const NATIVE_CASE_SPACE_REPLAY_SCHEMA: &str = "highergraphen.case.native_store.replay.v1";
 pub const NATIVE_CASE_SPACE_REBUILD_SCHEMA: &str = "highergraphen.case.native_store.rebuild.v1";
 pub const NATIVE_CASE_SPACE_VALIDATION_SCHEMA: &str =
@@ -67,7 +67,8 @@ pub struct NativeCaseSpaceRecord {
     pub current_revision_id: Id,
     pub case_space_directory: String,
     pub log_path: String,
-    pub current_snapshot_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nearest_snapshot_path: Option<String>,
     pub revision_count: u32,
     pub history_entry_count: u32,
     pub revisions: Vec<NativeRevisionRecord>,
@@ -82,7 +83,8 @@ pub struct NativeRevisionRecord {
     pub sequence: u64,
     pub entry_id: Id,
     pub morphism_id: Id,
-    pub snapshot_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_path: Option<String>,
     pub source_ids: Vec<Id>,
     pub replay_checksum: String,
 }
@@ -107,6 +109,7 @@ pub struct NativeCaseSpaceRebuild {
     pub case_space_id: Id,
     pub current_revision_id: Id,
     pub revision_count: u32,
+    pub head_adopted: bool,
     pub revisions: Vec<NativeRebuildRevision>,
 }
 
@@ -126,6 +129,7 @@ pub struct NativeRebuildRevision {
 pub enum NativeSnapshotStatus {
     Agrees,
     Rebuilt,
+    NotScheduled,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -137,6 +141,14 @@ pub struct NativeCaseSpaceValidation {
     pub current_revision_id: Id,
     pub history_entry_count: u32,
     pub valid: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MorphismLogHead {
+    pub target_revision_id: Id,
+    pub entry_hash: String,
+    pub replay_checksum: String,
 }
 
 impl std::fmt::Display for NativeStoreError {

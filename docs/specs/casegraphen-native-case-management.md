@@ -359,14 +359,32 @@ Each entry includes:
 - replay checksum for the produced revision.
 
 The shared reducer folds the log from an empty `CaseSpace` and recomputes the
-checksum at each revision. Revision snapshots are disposable caches:
-`space rebuild` reports agreement per revision and recreates a snapshot only
-when its file is missing. An existing snapshot that disagrees with the fold is a
-tool failure naming the revision and is never overwritten. `space replay` is a
-snapshot read with checksum and embedded-log-prefix verification; it does not
+checksum at each revision. Revision snapshots are disposable caches. Genesis
+and every 32nd log sequence receive a snapshot. `space rebuild` reports
+agreement per revision and recreates a missing snapshot only at that interval;
+legacy extra snapshots remain valid caches and are still checked. An existing
+snapshot that disagrees with the fold is a tool failure naming the revision and
+is never overwritten. `space replay` reads the newest snapshot at or before the
+target revision with checksum and embedded-log-prefix verification, folds the
+remaining log entries, and verifies only the final replay checksum. It does not
 repair or replace a disagreeing snapshot. `space validate` performs those
-snapshot checks and additionally requires the full log fold to reproduce the
-current revision and checksum.
+snapshot checks for every logged revision and additionally requires the full
+log fold to reproduce the current revision and checksum.
+
+`morphism_log.head.json` independently anchors the unsnapshotted log tail. It
+contains the last entry's `target_revision_id`, full entry hash, and
+`replay_checksum`; every store read requires all three to match the log tail.
+Imports and appends replace the head after writing and reading back the exact
+log line. A missing, malformed, or stale head refuses replay, inspection,
+history, validation, and rebuild rather than deriving trust from the log it is
+supposed to witness.
+
+Native store record reports use
+`highergraphen.case.native_store.record.v2`. `nearest_snapshot_path` names the
+newest snapshot actually used or available at or before the current revision
+and is omitted when no snapshot exists. Each `revisions[].snapshot_path` is
+likewise present only when that revision currently has a snapshot; unscheduled
+revisions do not advertise nonexistent files.
 
 ### Revision
 
@@ -678,7 +696,10 @@ the first file-backed native store under `native_case_spaces/`. It records
 `morphism_log.jsonl`, deterministic revision snapshots, list/inspect/history,
 replay, reconstruction, validation, and gated typed cell/relation morphism
 append. `space rebuild` folds the entire log, reports per-revision snapshot
-agreement, recreates missing snapshots, and refuses disagreeing snapshots.
+status, recreates missing periodic snapshots, and refuses disagreeing
+snapshots. The fold streams each materialized revision to validation or rebuild
+logic and drops it before advancing, so it does not retain one full case-space
+clone per log entry.
 
 ## CLI And Package API Target Surface
 
