@@ -262,3 +262,27 @@ regenerates.
 
 Items 1, 2, and 4 are the ones that should block publication, because each is
 either a false claim in shipped documentation or a security-relevant divergence.
+
+---
+
+## 11. Disposition (recorded 2026-07-30, after remediation)
+
+All six candidates were addressed. Verified independently by reproducing the
+attack or failure before the fix and re-running it after.
+
+| Candidate | Action taken | Verification |
+|---|---|---|
+| 1 — divergent evidence rule | Unified into one predicate (`src/evidence_trust.rs`); both families convert into a normalized input. The workflow family's caller-declared `AcceptedEvidence` maps to `ReviewPromoted`, so it now requires an accepted review; it gained a `WorkerOutput` boundary. Duplication was removed rather than copied, per the repository's no-copy-paste standard. | `grep` confirms exactly one implementation; a 16-case truth table plus one test per family asserting they agree |
+| 1b — `cg workflow patch apply` reporting a hard-coded `applied: false` | Now fails with a domain error naming the native `morphism apply` path, before writing state. No second reducer was built. | Integration test |
+| 2 — replay could not reconstruct | Genesis embeds its materialization; `space rebuild` folds the log, recreates a missing snapshot, and refuses to overwrite a disagreeing one; `space validate` proves the fold reproduces the snapshot. Spec and README reworded to distinguish verification from reconstruction. | Deleted the only snapshot and recovered it from the log; forged a snapshot and confirmed both rebuild and validate refuse it |
+| 3 — gates enumerated per command | `append_morphism` refuses any entry lacking a valid `operation_gate`, re-validates it against the case space, and requires its actor to match the entry actor. The genesis exemption is structural: `import_case_space` never reaches append. | Unit tests for both the refusal and the genesis path; the pre-existing gate suite still passes |
+| 4 — hand-rolled SHA-256 with one vector | Single-sourced and covered by NIST empty, 64-byte, 65-byte, 896-bit, and 200-byte vectors. The dependency ban was kept. | Test vectors |
+| 5 — schema id drift | A test asserts every input/record schema constant appears as an `$id` under `schemas/casegraphen/`; report ids remain envelope-validated with a comment naming why. | Test |
+| 6 — false report provenance | `tool_package` is now `casegraphen`. HigherGraphen's orphaned `examples/casegraphen/reference/` and `native/` directories were deleted, since nothing there regenerated or validated them and the golden report was about to diverge from the one this repo maintains. | Suite green in both repositories; `tools/casegraphen` remains only in fixture `source_ids`, which record the data's historical origin |
+
+Convergence of the two model families (audit option C for candidate 1 — making
+the workflow graph a lift input and deriving its reports as projections) was
+**not** performed. The divergence defect is closed by unification, so the
+remaining duplication is structural rather than behavioural. That decision should
+be revisited before the workflow contract acquires external consumers, since the
+cost of converging only rises after publication.
