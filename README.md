@@ -123,6 +123,9 @@ this tool live in [`docs/specs/`](docs/specs/).
 
 ## Documents
 
+- [Walkthrough: deciding a release with CaseGraphen](docs/guides/release-decision-walkthrough.md) —
+  one case space driven from lift to a refused close, with the executed commands
+  and their output
 - [Independence and execution control design](docs/design/independence-and-execution-control.md)
 - [ADR 0001: extraction and execution-control mandate](docs/adr/0001-extraction-from-higher-graphen.md)
 - [Worker execution security and approval policy](docs/security/worker-execution-policy.md)

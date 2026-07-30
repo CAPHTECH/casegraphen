@@ -71,3 +71,4 @@ preferences.
 | Workflow reasoning wire format (non-executing) | `src/workflow_*` |
 | Contracts | `schemas/casegraphen/` |
 | Decisions, specs, security policy, audit | `docs/` |
+| End-to-end example of the whole control model | `docs/guides/release-decision-walkthrough.md` |

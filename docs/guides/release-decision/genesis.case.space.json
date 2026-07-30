@@ -1,0 +1,747 @@
+{
+  "schema": "highergraphen.case.space.v1",
+  "schema_version": 1,
+  "case_space_id": "case_space:casegraphen-release-0-9-0",
+  "space_id": "space:casegraphen",
+  "case_cells": [
+    {
+      "id": "goal:release-0-9-0",
+      "cell_type": "goal",
+      "space_id": "space:casegraphen",
+      "title": "Release CaseGraphen 0.9.0 safely",
+      "summary": "0.9.0 ships only when the contract gate passed and the tag is cut from a clean tree.",
+      "lifecycle": "active",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "work:schema-id-gate",
+      "cell_type": "work",
+      "space_id": "space:casegraphen",
+      "title": "Run the schema $id gate",
+      "summary": "Every shipped schema file must carry an $id; this is executed by a worker.",
+      "lifecycle": "active",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "human",
+          "title": "Release manager"
+        },
+        "confidence": 0.9,
+        "review_status": "reviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "work:tag-release",
+      "cell_type": "work",
+      "space_id": "space:casegraphen",
+      "title": "Cut the v0.9.0 tag",
+      "summary": "Tagging is the irreversible step and must wait for the gate and the changelog.",
+      "lifecycle": "active",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "human",
+          "title": "Release manager"
+        },
+        "confidence": 0.9,
+        "review_status": "reviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "evidence:schema-id-gate-clean",
+      "cell_type": "evidence",
+      "space_id": "space:casegraphen",
+      "title": "Required: the schema $id gate reports clean",
+      "summary": "Placeholder for the evidence the worker must produce.",
+      "lifecycle": "proposed",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "human",
+          "title": "Release manager"
+        },
+        "confidence": 0.5,
+        "review_status": "unreviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "evidence:changelog-updated",
+      "cell_type": "evidence",
+      "space_id": "space:casegraphen",
+      "title": "Required: CHANGELOG records 0.9.0",
+      "summary": "Placeholder for human-supplied release-note evidence.",
+      "lifecycle": "proposed",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "human",
+          "title": "Release manager"
+        },
+        "confidence": 0.5,
+        "review_status": "unreviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:release-plan-review",
+      "cell_type": "custom:capability",
+      "space_id": "space:casegraphen",
+      "title": "Accept or reject release execution plans",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": [
+          "actor:release-manager"
+        ]
+      }
+    },
+    {
+      "id": "capability:release-dispatch",
+      "cell_type": "custom:capability",
+      "space_id": "space:casegraphen",
+      "title": "Dispatch release workers",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": [
+          "actor:release-runner"
+        ]
+      }
+    },
+    {
+      "id": "capability:release-worker-exec",
+      "cell_type": "custom:capability",
+      "space_id": "space:casegraphen",
+      "title": "Execute the release gate worker",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": [
+          "actor:release-runner"
+        ]
+      }
+    },
+    {
+      "id": "capability:release-durable-mutation",
+      "cell_type": "custom:capability",
+      "space_id": "space:casegraphen",
+      "title": "Apply reviewed morphisms, attach evidence, transition cells",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": [
+          "actor:release-manager"
+        ]
+      }
+    }
+  ],
+  "case_relations": [
+    {
+      "id": "relation:gate-covers-goal",
+      "relation_type": "covers",
+      "relation_strength": "hard",
+      "from_id": "work:schema-id-gate",
+      "to_id": "goal:release-0-9-0",
+      "evidence_ids": [],
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "relation:tag-covers-goal",
+      "relation_type": "covers",
+      "relation_strength": "hard",
+      "from_id": "work:tag-release",
+      "to_id": "goal:release-0-9-0",
+      "evidence_ids": [],
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "relation:tag-depends-on-gate",
+      "relation_type": "depends_on",
+      "relation_strength": "hard",
+      "from_id": "work:tag-release",
+      "to_id": "work:schema-id-gate",
+      "evidence_ids": [],
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "relation:tag-requires-changelog",
+      "relation_type": "requires_evidence",
+      "relation_strength": "hard",
+      "from_id": "work:tag-release",
+      "to_id": "evidence:changelog-updated",
+      "evidence_ids": [],
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    }
+  ],
+  "morphism_log": [
+    {
+      "schema": "highergraphen.case.morphism_log_entry.v1",
+      "schema_version": 1,
+      "case_space_id": "case_space:casegraphen-release-0-9-0",
+      "sequence": 1,
+      "entry_id": "morphism_log_entry:release-genesis",
+      "morphism_id": "morphism:create-release-space",
+      "target_revision_id": "revision:release-genesis",
+      "morphism": {
+        "morphism_id": "morphism:create-release-space",
+        "morphism_type": "create",
+        "target_revision_id": "revision:release-genesis",
+        "added_ids": [
+          "goal:release-0-9-0",
+          "work:schema-id-gate",
+          "work:tag-release",
+          "evidence:schema-id-gate-clean",
+          "evidence:changelog-updated",
+          "capability:release-plan-review",
+          "capability:release-dispatch",
+          "capability:release-worker-exec",
+          "capability:release-durable-mutation",
+          "relation:gate-covers-goal",
+          "relation:tag-covers-goal",
+          "relation:tag-depends-on-gate",
+          "relation:tag-requires-changelog"
+        ],
+        "updated_ids": [],
+        "retired_ids": [],
+        "preserved_ids": [],
+        "violated_invariant_ids": [],
+        "review_status": "accepted",
+        "evidence_ids": [],
+        "source_ids": [
+          "source:release-intent"
+        ],
+        "metadata": {
+          "lift_semantics": "source_snapshot_to_case_space",
+          "source_boundary_id": "source_boundary:release-0-9-0-intent",
+          "source_boundary": {
+            "id": "source_boundary:release-0-9-0-intent",
+            "included_sources": [
+              "docs/adr/0001-extraction-from-higher-graphen.md",
+              "schemas/casegraphen/*.schema.json",
+              "Cargo.toml"
+            ],
+            "excluded_sources": [
+              "crates.io registry state",
+              "GitHub release state"
+            ],
+            "adapters": [
+              "release.intent.v1"
+            ],
+            "accepted_fact_policy": "Only the release intent document and worker output validated by this tool are facts.",
+            "inference_policy": "Anything an agent proposes enters unreviewed and cannot satisfy a hard requirement.",
+            "information_loss": [
+              "The intent document is summarized into goal/work cells; prose rationale is not carried over."
+            ]
+          },
+          "payload": {
+            "added_cells": [
+              {
+                "id": "goal:release-0-9-0",
+                "cell_type": "goal",
+                "space_id": "space:casegraphen",
+                "title": "Release CaseGraphen 0.9.0 safely",
+                "summary": "0.9.0 ships only when the contract gate passed and the tag is cut from a clean tree.",
+                "lifecycle": "active",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "work:schema-id-gate",
+                "cell_type": "work",
+                "space_id": "space:casegraphen",
+                "title": "Run the schema $id gate",
+                "summary": "Every shipped schema file must carry an $id; this is executed by a worker.",
+                "lifecycle": "active",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Release manager"
+                  },
+                  "confidence": 0.9,
+                  "review_status": "reviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "work:tag-release",
+                "cell_type": "work",
+                "space_id": "space:casegraphen",
+                "title": "Cut the v0.9.0 tag",
+                "summary": "Tagging is the irreversible step and must wait for the gate and the changelog.",
+                "lifecycle": "active",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Release manager"
+                  },
+                  "confidence": 0.9,
+                  "review_status": "reviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "evidence:schema-id-gate-clean",
+                "cell_type": "evidence",
+                "space_id": "space:casegraphen",
+                "title": "Required: the schema $id gate reports clean",
+                "summary": "Placeholder for the evidence the worker must produce.",
+                "lifecycle": "proposed",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Release manager"
+                  },
+                  "confidence": 0.5,
+                  "review_status": "unreviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "evidence:changelog-updated",
+                "cell_type": "evidence",
+                "space_id": "space:casegraphen",
+                "title": "Required: CHANGELOG records 0.9.0",
+                "summary": "Placeholder for human-supplied release-note evidence.",
+                "lifecycle": "proposed",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Release manager"
+                  },
+                  "confidence": 0.5,
+                  "review_status": "unreviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "capability:release-plan-review",
+                "cell_type": "custom:capability",
+                "space_id": "space:casegraphen",
+                "title": "Accept or reject release execution plans",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:release-manager"
+                  ]
+                }
+              },
+              {
+                "id": "capability:release-dispatch",
+                "cell_type": "custom:capability",
+                "space_id": "space:casegraphen",
+                "title": "Dispatch release workers",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:release-runner"
+                  ]
+                }
+              },
+              {
+                "id": "capability:release-worker-exec",
+                "cell_type": "custom:capability",
+                "space_id": "space:casegraphen",
+                "title": "Execute the release gate worker",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:release-runner"
+                  ]
+                }
+              },
+              {
+                "id": "capability:release-durable-mutation",
+                "cell_type": "custom:capability",
+                "space_id": "space:casegraphen",
+                "title": "Apply reviewed morphisms, attach evidence, transition cells",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:release-manager"
+                  ]
+                }
+              }
+            ],
+            "added_relations": [
+              {
+                "id": "relation:gate-covers-goal",
+                "relation_type": "covers",
+                "relation_strength": "hard",
+                "from_id": "work:schema-id-gate",
+                "to_id": "goal:release-0-9-0",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:tag-covers-goal",
+                "relation_type": "covers",
+                "relation_strength": "hard",
+                "from_id": "work:tag-release",
+                "to_id": "goal:release-0-9-0",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:tag-depends-on-gate",
+                "relation_type": "depends_on",
+                "relation_strength": "hard",
+                "from_id": "work:tag-release",
+                "to_id": "work:schema-id-gate",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:tag-requires-changelog",
+                "relation_type": "requires_evidence",
+                "relation_strength": "hard",
+                "from_id": "work:tag-release",
+                "to_id": "evidence:changelog-updated",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:release-intent"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+                    "title": "Release intent for 0.9.0"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              }
+            ],
+            "updated_cells": [],
+            "updated_relations": []
+          },
+          "genesis_case_space": {
+            "space_id": "space:casegraphen",
+            "projections": [],
+            "close_policy_id": "close_policy:release-default",
+            "metadata": {
+              "release_target": "0.9.0",
+              "source_boundary": {
+                "id": "source_boundary:release-0-9-0-intent",
+                "included_sources": [
+                  "docs/adr/0001-extraction-from-higher-graphen.md",
+                  "schemas/casegraphen/*.schema.json",
+                  "Cargo.toml"
+                ],
+                "excluded_sources": [
+                  "crates.io registry state",
+                  "GitHub release state"
+                ],
+                "adapters": [
+                  "release.intent.v1"
+                ],
+                "accepted_fact_policy": "Only the release intent document and worker output validated by this tool are facts.",
+                "inference_policy": "Anything an agent proposes enters unreviewed and cannot satisfy a hard requirement.",
+                "information_loss": [
+                  "The intent document is summarized into goal/work cells; prose rationale is not carried over."
+                ]
+              }
+            },
+            "revision_metadata": {}
+          }
+        }
+      },
+      "actor_id": "actor:release-manager",
+      "recorded_at": "2026-07-30T00:00:00Z",
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "uri": "docs/adr/0001-extraction-from-higher-graphen.md",
+          "title": "Release intent for 0.9.0"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "source_ids": [
+        "source:release-intent"
+      ],
+      "replay_checksum": "sha256:recomputed-on-lift"
+    }
+  ],
+  "projections": [],
+  "revision": {
+    "revision_id": "revision:release-genesis",
+    "case_space_id": "case_space:casegraphen-release-0-9-0",
+    "applied_entry_ids": [
+      "morphism_log_entry:release-genesis"
+    ],
+    "applied_morphism_ids": [
+      "morphism:create-release-space"
+    ],
+    "checksum": "sha256:recomputed-on-lift",
+    "created_at": "2026-07-30T00:00:00Z",
+    "source_ids": [
+      "source:release-intent"
+    ],
+    "metadata": {}
+  },
+  "close_policy_id": "close_policy:release-default",
+  "metadata": {
+    "release_target": "0.9.0",
+    "source_boundary": {
+      "id": "source_boundary:release-0-9-0-intent",
+      "included_sources": [
+        "docs/adr/0001-extraction-from-higher-graphen.md",
+        "schemas/casegraphen/*.schema.json",
+        "Cargo.toml"
+      ],
+      "excluded_sources": [
+        "crates.io registry state",
+        "GitHub release state"
+      ],
+      "adapters": [
+        "release.intent.v1"
+      ],
+      "accepted_fact_policy": "Only the release intent document and worker output validated by this tool are facts.",
+      "inference_policy": "Anything an agent proposes enters unreviewed and cannot satisfy a hard requirement.",
+      "information_loss": [
+        "The intent document is summarized into goal/work cells; prose rationale is not carried over."
+      ]
+    }
+  }
+}
