@@ -439,10 +439,13 @@ The readiness projection emits:
 
 Default readiness rules:
 
-- dependency closure: hard `depends_on` targets must be resolved, accepted, or
-  otherwise complete under the selected policy;
-- wait resolution: hard `waits_for` targets must be recorded, accepted, or
-  explicitly waived by review;
+- dependency closure: hard `depends_on` targets must be complete, where complete
+  means lifecycle `resolved`, `accepted`, `retired`, or `superseded`, **or**
+  `provenance.review_status` of `accepted`. The second clause means a cell
+  authored with accepted provenance satisfies dependencies on it immediately, so
+  work cells should not be authored that way;
+- wait resolution: hard `waits_for` targets must be complete by the same rule, or
+  carry trusted evidence, or be explicitly waived by review;
 - evidence availability: required evidence must be source-backed or
   review-promoted, and must meet the minimum review status;
 - proof availability: required proof cells must be accepted or explicitly
