@@ -35,7 +35,8 @@
     },
     "command": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
     },
     "args": {
       "type": "array",
@@ -45,12 +46,31 @@
     },
     "working_directory": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
     },
     "env_allowlist": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "allOf": [
+          {
+            "not": {
+              "enum": [
+                "PATH",
+                "LD_PRELOAD",
+                "LD_LIBRARY_PATH",
+                "DYLD_INSERT_LIBRARIES",
+                "DYLD_LIBRARY_PATH"
+              ]
+            }
+          },
+          {
+            "not": {
+              "pattern": "^CASEGRAPHEN_"
+            }
+          }
+        ]
       }
     },
     "timeout_ms": {

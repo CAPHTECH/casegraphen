@@ -1,6 +1,6 @@
 use super::{
     append_validated_morphism,
-    binding::{binding_path, read_registered_worker_binding},
+    binding::binding_path,
     case_reason,
     io::{provenance, timestamp, write_json},
     plan::{plan_path, read_stored_plan},
@@ -9,7 +9,7 @@ use super::{
 use crate::{
     exec::{
         accepted_plan_content_hash_matches,
-        binding::{worker_binding_content_hash, WorkerKind},
+        binding::{validate_worker_binding, WorkerBinding, WorkerKind},
         records::{
             ExecutionInformationLoss, ExecutionObstruction, ExecutionTrace, WorkerOutput,
             WorkerOutputName, WorkerReport, EXECUTION_RECORD_SCHEMA_VERSION,
@@ -90,49 +90,52 @@ pub(in crate::native_cli) fn run_step(
 
     let expected_binding_hash = expected_binding_hash(&plan, &step.worker_binding_id);
     let binding_path = binding_path(store, &step.worker_binding_id);
-    let actual_binding_hash = binding_file_content_hash(&binding_path)?;
-    let trace_binding_hash = actual_binding_hash
-        .clone()
-        .or_else(|| expected_binding_hash.clone())
-        .unwrap_or_else(empty_content_hash);
-    let binding_hash_matches = matches!(
-        (&actual_binding_hash, &expected_binding_hash),
-        (Some(actual), Some(expected)) if actual == expected
-    );
-    if !binding_hash_matches {
-        let summary = format!(
-            "worker binding {} content hash does not match the hash accepted with plan {}",
-            step.worker_binding_id, plan.plan_id
-        );
-        let obstruction_type = if actual_binding_hash.is_none() {
-            "binding_not_registered"
-        } else {
-            "binding_hash_mismatch"
-        };
-        let trace = write_pre_dispatch_trace(PreDispatchTraceInput {
-            case_space: &replay.case_space,
-            plan: &plan,
-            step,
-            base_revision_id: options.base_revision_id,
-            identity: &trace_identity,
-            binding_content_hash: trace_binding_hash,
-            started_at: trace_started_at,
-            obstruction: ExecutionObstruction {
-                obstruction_type: obstruction_type.to_owned(),
-                summary,
-                witness_ids: vec![step.worker_binding_id.clone()],
-            },
-        })?;
-        return Ok(run_report(
-            "no_dispatchable_step",
-            Some(trace),
-            None,
-            selection.step_reasons,
-        ));
-    }
-
-    let binding = read_registered_worker_binding(store, &step.worker_binding_id)?;
-    let binding_content_hash = worker_binding_content_hash(&binding)?;
+    let verified_binding = match read_verified_worker_binding_snapshot(
+        &binding_path,
+        &step.worker_binding_id,
+        expected_binding_hash.as_deref(),
+    )? {
+        BindingSnapshot::Verified(verified) => verified,
+        snapshot @ (BindingSnapshot::Missing | BindingSnapshot::HashMismatch { .. }) => {
+            let (obstruction_type, actual_binding_hash) = match snapshot {
+                BindingSnapshot::Missing => ("binding_not_registered", None),
+                BindingSnapshot::HashMismatch { actual_hash } => {
+                    ("binding_hash_mismatch", Some(actual_hash))
+                }
+                BindingSnapshot::Verified(_) => unreachable!("matched verified binding"),
+            };
+            let trace_binding_hash = actual_binding_hash
+                .or_else(|| expected_binding_hash.clone())
+                .unwrap_or_else(empty_content_hash);
+            let trace = write_pre_dispatch_trace(PreDispatchTraceInput {
+                case_space: &replay.case_space,
+                plan: &plan,
+                step,
+                base_revision_id: options.base_revision_id,
+                identity: &trace_identity,
+                binding_content_hash: trace_binding_hash,
+                started_at: trace_started_at,
+                obstruction: ExecutionObstruction {
+                    obstruction_type: obstruction_type.to_owned(),
+                    summary: format!(
+                        "worker binding {} content hash does not match the hash accepted with plan {}",
+                        step.worker_binding_id, plan.plan_id
+                    ),
+                    witness_ids: vec![step.worker_binding_id.clone()],
+                },
+            })?;
+            return Ok(run_report(
+                "no_dispatchable_step",
+                Some(trace),
+                None,
+                selection.step_reasons,
+            ));
+        }
+    };
+    let VerifiedWorkerBinding {
+        binding,
+        content_hash: binding_content_hash,
+    } = *verified_binding;
     if binding.worker_kind == WorkerKind::Shell
         && !options
             .enabled_worker_kinds
@@ -486,10 +489,27 @@ fn expected_binding_hash(plan: &ExecutionPlan, binding_id: &Id) -> Option<String
         .map(str::to_owned)
 }
 
-fn binding_file_content_hash(path: &Path) -> Result<Option<String>, NativeCliError> {
+struct VerifiedWorkerBinding {
+    binding: WorkerBinding,
+    content_hash: String,
+}
+
+enum BindingSnapshot {
+    Missing,
+    HashMismatch { actual_hash: String },
+    Verified(Box<VerifiedWorkerBinding>),
+}
+
+fn read_verified_worker_binding_snapshot(
+    path: &Path,
+    binding_id: &Id,
+    expected_hash: Option<&str>,
+) -> Result<BindingSnapshot, NativeCliError> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BindingSnapshot::Missing)
+        }
         Err(source) => {
             return Err(NativeCliError::Io {
                 path: path.to_owned(),
@@ -497,11 +517,30 @@ fn binding_file_content_hash(path: &Path) -> Result<Option<String>, NativeCliErr
             })
         }
     };
-    let canonical = match serde_json::from_slice::<Value>(&bytes) {
-        Ok(value) => serde_json::to_string(&value)?.into_bytes(),
-        Err(_) => bytes,
+    let parsed = serde_json::from_slice::<Value>(&bytes);
+    let actual_hash = match &parsed {
+        Ok(value) => crate::native_hash::sha256_hex(serde_json::to_string(value)?.as_bytes()),
+        Err(_) => crate::native_hash::sha256_hex(&bytes),
     };
-    Ok(Some(crate::native_hash::sha256_hex(&canonical)))
+    if expected_hash != Some(actual_hash.as_str()) {
+        return Ok(BindingSnapshot::HashMismatch { actual_hash });
+    }
+
+    let binding: WorkerBinding = serde_json::from_value(parsed?)?;
+    validate_worker_binding(&binding)
+        .map_err(|error| NativeCliError::invalid(format!("{}: {error}", path.display())))?;
+    if binding.binding_id != *binding_id {
+        return Err(NativeCliError::invalid(format!(
+            "{}: worker binding id {} does not match requested {binding_id}",
+            path.display(),
+            binding.binding_id
+        )));
+    }
+
+    Ok(BindingSnapshot::Verified(Box::new(VerifiedWorkerBinding {
+        binding,
+        content_hash: actual_hash,
+    })))
 }
 
 fn empty_content_hash() -> String {
@@ -570,18 +609,23 @@ fn worker_report(
         step_id: step.step_id.clone(),
         exit_status: invocation.exit_status,
         timed_out: invocation.timed_out,
+        descendants_may_survive: invocation.descendants_may_survive,
         outputs: vec![
             WorkerOutput {
                 name: WorkerOutputName::Stdout,
                 content_hash: invocation.stdout_sha256.clone(),
-                byte_len: u64::try_from(invocation.stdout.len()).unwrap_or(u64::MAX),
+                byte_len: invocation.stdout_byte_len,
+                retained_byte_len: u64::try_from(invocation.stdout.len()).unwrap_or(u64::MAX),
                 truncated: invocation.stdout_truncated,
+                incomplete: invocation.stdout_incomplete,
             },
             WorkerOutput {
                 name: WorkerOutputName::Stderr,
                 content_hash: invocation.stderr_sha256.clone(),
-                byte_len: u64::try_from(invocation.stderr.len()).unwrap_or(u64::MAX),
+                byte_len: invocation.stderr_byte_len,
+                retained_byte_len: u64::try_from(invocation.stderr.len()).unwrap_or(u64::MAX),
                 truncated: invocation.stderr_truncated,
+                incomplete: invocation.stderr_incomplete,
             },
         ],
         trust_boundary: WORKER_REPORT_TRUST_BOUNDARY.to_owned(),
@@ -840,6 +884,7 @@ fn run_report(
             "report_id": report.report_id,
             "exit_status": report.exit_status,
             "timed_out": report.timed_out,
+            "descendants_may_survive": report.descendants_may_survive,
             "outputs": report.outputs,
             "trust_boundary": report.trust_boundary,
         })
@@ -854,4 +899,63 @@ fn run_report(
             "step_reasons": step_reasons,
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::binding::worker_binding_content_hash;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn verified_binding_snapshot_is_unchanged_after_the_file_is_swapped() {
+        let directory = std::env::temp_dir().join(format!(
+            "casegraphen-binding-snapshot-{}-{}",
+            std::process::id(),
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).expect("create snapshot test directory");
+        let path = directory.join("worker.binding.json");
+        let accepted: WorkerBinding = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/worker.binding.example.json"
+        ))
+        .expect("accepted worker binding");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&accepted).expect("serialize accepted binding"),
+        )
+        .expect("write accepted binding");
+        let expected_hash = worker_binding_content_hash(&accepted).expect("accepted binding hash");
+
+        let snapshot = read_verified_worker_binding_snapshot(
+            &path,
+            &accepted.binding_id,
+            Some(&expected_hash),
+        )
+        .expect("read and verify binding exactly once");
+
+        let mut malicious = accepted.clone();
+        malicious.args = vec!["-c".to_owned(), "printf 'malicious'".to_owned()];
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&malicious).expect("serialize malicious binding"),
+        )
+        .expect("swap binding after verification");
+
+        let BindingSnapshot::Verified(verified) = snapshot else {
+            panic!("accepted binding should produce a verified snapshot");
+        };
+        assert_eq!(verified.binding, accepted);
+        assert_eq!(verified.content_hash, expected_hash);
+        assert_ne!(
+            serde_json::from_slice::<WorkerBinding>(
+                &fs::read(&path).expect("read swapped binding for test assertion")
+            )
+            .expect("parse swapped binding"),
+            verified.binding
+        );
+        fs::remove_dir_all(directory).expect("remove snapshot test directory");
+    }
 }

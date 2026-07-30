@@ -9,9 +9,7 @@
     "printf 'casegraphen worker output\\n'"
   ],
   "working_directory": "/tmp",
-  "env_allowlist": [
-    "PATH"
-  ],
+  "env_allowlist": [],
   "timeout_ms": 5000,
   "capability_ids": [
     "capability:execute-native-contract-review"

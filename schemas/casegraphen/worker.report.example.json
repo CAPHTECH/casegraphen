@@ -9,18 +9,23 @@
   "step_id": "step:review-native-contract",
   "exit_status": 0,
   "timed_out": false,
+  "descendants_may_survive": false,
   "outputs": [
     {
       "name": "stdout",
       "content_hash": "edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb",
       "byte_len": 7,
-      "truncated": false
+      "retained_byte_len": 7,
+      "truncated": false,
+      "incomplete": false
     },
     {
       "name": "stderr",
       "content_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "byte_len": 0,
-      "truncated": false
+      "retained_byte_len": 0,
+      "truncated": false,
+      "incomplete": false
     }
   ],
   "trust_boundary": "local_process_output_untrusted_until_validated_and_reviewed",

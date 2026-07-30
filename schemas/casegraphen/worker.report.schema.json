@@ -15,6 +15,7 @@
     "step_id",
     "exit_status",
     "timed_out",
+    "descendants_may_survive",
     "outputs",
     "trust_boundary",
     "started_at",
@@ -55,6 +56,10 @@
     "timed_out": {
       "type": "boolean"
     },
+    "descendants_may_survive": {
+      "type": "boolean",
+      "description": "True when process-group containment was unavailable or failed and worker descendants may remain alive."
+    },
     "outputs": {
       "type": "array",
       "items": {
@@ -92,7 +97,9 @@
         "name",
         "content_hash",
         "byte_len",
-        "truncated"
+        "retained_byte_len",
+        "truncated",
+        "incomplete"
       ],
       "properties": {
         "name": {
@@ -106,10 +113,20 @@
         },
         "byte_len": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Total bytes read from the stream. When incomplete is true, this is the observed lower bound."
+        },
+        "retained_byte_len": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes retained in the output artifact after applying the storage cap."
         },
         "truncated": {
           "type": "boolean"
+        },
+        "incomplete": {
+          "type": "boolean",
+          "description": "True when the bounded reader grace expired before end-of-stream."
         }
       }
     }

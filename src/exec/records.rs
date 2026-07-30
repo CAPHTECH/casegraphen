@@ -21,7 +21,9 @@ pub struct WorkerOutput {
     pub name: WorkerOutputName,
     pub content_hash: String,
     pub byte_len: u64,
+    pub retained_byte_len: u64,
     pub truncated: bool,
+    pub incomplete: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -37,6 +39,7 @@ pub struct WorkerReport {
     pub step_id: Id,
     pub exit_status: Option<i32>,
     pub timed_out: bool,
+    pub descendants_may_survive: bool,
     pub outputs: Vec<WorkerOutput>,
     pub trust_boundary: String,
     pub started_at: String,

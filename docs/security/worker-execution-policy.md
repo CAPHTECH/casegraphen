@@ -73,12 +73,21 @@ workers under a dedicated OS user or container is the operator's control.
 
 ### 2.4 Worker containment
 
-- Environment is cleared; only `env_allowlist` variables pass through. No
-  allowlist entry may name known secret-bearing variables unless the reviewer
-  accepted that binding knowingly — reviewers MUST treat `env_allowlist` as
-  the secret-exposure surface during plan review.
-- `working_directory` is fixed by the reviewed binding; timeout is mandatory;
-  stdout/stderr are captured with a hard cap and hashed.
+- Environment is cleared; only `env_allowlist` variables pass through.
+  `PATH`, loader-injection variables, and the reserved `CASEGRAPHEN_*`
+  namespace are rejected even if listed.
+- `command` and `working_directory` must be absolute. Both are canonicalized
+  immediately before spawn; the command must resolve to a file and the working
+  directory must resolve to a directory.
+- Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
+  are available, the worker is launched in a dedicated session and timeout
+  kills the process group. Otherwise the direct child is killed and the worker
+  report records `descendants_may_survive: true`.
+- Stdout/stderr reader waits are bounded by a two-second grace. Captured output
+  records whether the stream was incomplete, so descendants holding a pipe
+  cannot block dispatch indefinitely.
+- Stdout/stderr retain at most 4 MiB, but their SHA-256 and `byte_len` cover
+  the complete stream whenever `incomplete` is false.
 - Worker exit codes and timeouts are domain findings (evidence +
   obstructions), never silent.
 
@@ -121,6 +130,9 @@ trace → worker report + raw output hashes → log entries → revision replay.
 2. Hash chains detect tampering but cannot prevent a writer with store access
    from rewriting the whole log; the store directory must be access-controlled
    and, for high-assurance use, backed up append-only.
-3. `env_allowlist` review is a human judgment; a reviewer can still approve a
-   secret-leaking binding. Mitigation: reviewers check allowlists against a
-   deny-list of known credential variables.
+3. `env_allowlist` review remains a human judgment beyond the built-in loader,
+   path, and reserved-namespace deny-list; a reviewer can still approve another
+   secret-bearing variable.
+4. Hosts without usable `setsid` and `kill` utilities cannot guarantee
+   descendant termination. The direct child is killed, reader waits remain
+   bounded, and `descendants_may_survive` makes that residual risk explicit.
