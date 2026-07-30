@@ -5,9 +5,10 @@
 # first failure. CI runs exactly this script, so a green local run and a green
 # CI run mean the same thing.
 #
-# Requires: cargo (with rustfmt and clippy), python3 with the jsonschema
-# package (the integration tests shell out to `python3 -m jsonschema` to
-# validate generated reports against the shipped contracts).
+# Requires: cargo (with rustfmt and clippy), python3 with
+# jsonschema==4.26.0 (the version pinned in CI; integration tests shell out to
+# `python3 -m jsonschema` to validate generated reports against the shipped
+# contracts).
 set -eu
 
 say() { printf '\n== %s\n' "$1"; }

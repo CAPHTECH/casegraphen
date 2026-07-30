@@ -23,12 +23,17 @@ Full investigation and design: `docs/design/independence-and-execution-control.m
 
 ## Decision
 
-1. Dependency direction: this crate depends only on published
+1. Dependency direction: this crate depends ~~only~~ on published
    `higher-graphen-{core, structure, reasoning}` crates. It must not depend on
    `higher-graphen-runtime`; runtime reports may be consumed as evidence input
    JSON only. `higher-graphen-projection` (unused) is dropped;
    `higher-graphen-evidence` is added only when quantitative confidence
    evaluation is needed.
+
+   **Amended by [ADR 0006](0006-dependency-criterion.md).** The word "only"
+   formerly imposed a general dependency ban. Other dependencies are now
+   admissible only under ADR 0006's measured risk-reduction criterion. The
+   prohibition on `higher-graphen-runtime` is unchanged.
 2. The execution substrate is the native case space generation (morphism log,
    revisions, replay checksums, close gates). The legacy case-graph generation
    is not carried over. The workflow graph remains a reasoning wire format.

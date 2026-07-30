@@ -6,10 +6,13 @@ preferences.
 
 ## Non-negotiable
 
-- **No new dependencies.** The crate depends on `higher-graphen-{core,structure,reasoning}`
-  plus `serde`/`serde_json`, and nothing else. SHA-256, canonical JSON, and
-  argument parsing are implemented in-repo on purpose. Removing this constraint is
-  a decision to record in an ADR, not something to do in passing.
+- **New dependencies must satisfy ADR 0006's criterion.** A dependency is
+  admissible only when it removes more risk than it adds, has a transitive tree
+  small enough to audit as measured with `cargo tree`, is pinned in
+  `Cargo.lock`, still lets the crate package and build standalone, and is
+  recorded in an ADR naming what it replaced and the measured tree size. The
+  measurement is required for every proposal: argue it with that proposal's
+  `cargo tree` output, not by precedent.
 - **No dependency on `higher-graphen-runtime`.** Runtime reports may be consumed
   as evidence input JSON. This is a contract inherited from HigherGraphen's spec.
 - **`unsafe_code` is forbidden** by lint. If a task seems to need it, the design

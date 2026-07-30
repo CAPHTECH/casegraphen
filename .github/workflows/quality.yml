@@ -15,6 +15,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Install the JSON Schema validator the integration tests shell out to
-        run: python3 -m pip install --user jsonschema
+        run: python3 -m pip install --user jsonschema==4.26.0
       - name: Run the release quality gate
         run: sh scripts/static-analysis.sh
