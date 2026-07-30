@@ -129,6 +129,7 @@ impl Worker for ShellWorker {
                 command_path.display()
             )));
         }
+        require_executable(binding, &command_path)?;
 
         let started_at = timestamp();
         let started = Instant::now();
@@ -277,6 +278,45 @@ fn reap_bounded(child: &mut Child, grace: Duration) -> Result<Option<ExitStatus>
             }
         }
     }
+}
+
+/// Refuses a command that carries no execute bit at all.
+///
+/// Without this the classification of an unrunnable command depends on the host.
+/// When `setsid` is available the worker is launched as `setsid <command>`, so an
+/// exec failure surfaces as a nonzero exit status of `setsid` — reported as "the
+/// worker ran and failed", which attaches worker evidence. Without `setsid` the
+/// command is spawned directly and the same binding produces a dispatch error.
+/// Checking before the spawn makes "could not be executed" mean the same thing
+/// on every host.
+#[cfg(unix)]
+fn require_executable(binding: &WorkerBinding, command_path: &Path) -> Result<(), WorkerError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(command_path)
+        .map_err(|error| {
+            WorkerError::new(format!(
+                "worker binding {} canonical command {} could not be inspected: {error}",
+                binding.binding_id,
+                command_path.display()
+            ))
+        })?
+        .permissions()
+        .mode();
+    if mode & 0o111 == 0 {
+        return Err(WorkerError::new(format!(
+            "worker binding {} canonical command {} is not executable (mode {:o})",
+            binding.binding_id,
+            command_path.display(),
+            mode & 0o7777
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn require_executable(_binding: &WorkerBinding, _command_path: &Path) -> Result<(), WorkerError> {
+    Ok(())
 }
 
 fn contained_command(command_path: &Path) -> (Command, Option<PathBuf>) {
@@ -566,6 +606,37 @@ mod tests {
             crate::native_hash::sha256_hex(&full_output),
             "the evidence hash must cover bytes beyond the retained prefix"
         );
+    }
+
+    /// The end-to-end dispatch test covers this too, but only on the spawn path
+    /// this host happens to take. Asserting the check directly proves the
+    /// classification does not depend on whether `setsid` exists here.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_without_any_execute_bit_is_refused_before_spawning() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = test_directory("not-executable");
+        let command = directory.join("worker");
+        fs::write(&command, b"#!/bin/sh\nexit 0\n").expect("write worker");
+        let mut permissions = fs::metadata(&command).expect("metadata").permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&command, permissions).expect("drop execute bits");
+
+        let refused = require_executable(&binding(&directory, "exit 0", 1000), &command)
+            .expect_err("a non-executable command must be refused");
+        assert!(
+            refused.to_string().contains("is not executable"),
+            "unexpected message: {refused}"
+        );
+
+        let mut permissions = fs::metadata(&command).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&command, permissions).expect("restore execute bit");
+        require_executable(&binding(&directory, "exit 0", 1000), &command)
+            .expect("an executable command must be accepted");
+
+        fs::remove_dir_all(directory).expect("remove worker test directory");
     }
 
     fn binding(directory: &Path, script: &str, timeout_ms: u64) -> WorkerBinding {

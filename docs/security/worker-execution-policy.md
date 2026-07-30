@@ -112,8 +112,11 @@ workers under a dedicated OS user or container is the operator's control.
   `PATH`, every `LD_*`/`DYLD_*` loader namespace variable, and the reserved
   `CASEGRAPHEN_*` namespace are rejected even if listed.
 - `command` and `working_directory` must be absolute. Both are canonicalized
-  immediately before spawn; the command must resolve to a file and the working
-  directory must resolve to a directory.
+  immediately before spawn; the command must resolve to an executable file (a
+  file carrying no execute bit is refused before spawning, so "could not be
+  executed" is classified the same way on every host rather than depending on
+  whether `setsid` is present) and the working directory must resolve to a
+  directory.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
   are available, the worker is launched in a dedicated session and timeout
   kills the process group. Otherwise the direct child is killed and the worker
