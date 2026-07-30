@@ -55,8 +55,8 @@ impl Command {
             Some("version") | Some("--version") | Some("-V") => Ok(Self::Version),
             Some(
                 segment @ ("lift" | "space" | "obstruction" | "completion" | "projection"
-                | "equivalence" | "invariant" | "case" | "morphism" | "plan" | "binding"
-                | "run" | "review" | "evidence" | "cell"),
+                | "equivalence" | "invariant" | "morphism" | "plan" | "binding" | "run"
+                | "review" | "evidence" | "cell"),
             ) => NativeCliCommand::parse(segment, args)
                 .map(|command| Self::Native(Box::new(command)))
                 .map_err(CliError::from),

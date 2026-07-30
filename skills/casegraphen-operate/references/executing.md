@@ -74,7 +74,6 @@ One step per work item. `base_revision_id` is the current revision.
   "steps": [{
     "step_id": "step:<name>",
     "work_cell_id": "work:<id>",
-    "input_projection_id": null,
     "worker_binding_id": "worker_binding:<name>",
     "success_evidence_requirement_ids": ["evidence:<existing placeholder cell>"],
     "allowed_transition_classes": [

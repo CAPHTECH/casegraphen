@@ -16,7 +16,6 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         let mut args = args.into_iter();
         match namespace {
-            "case" => Self::parse_case(required_segment(&mut args, "case operation")?, args),
             "space" => Self::parse_space(required_segment(&mut args, "space operation")?, args),
             "lift" => Self::parse_lift(required_segment(&mut args, "lift adapter")?, args),
             "obstruction" => {
@@ -48,78 +47,6 @@ impl NativeCliCommand {
             }
             "cell" => Self::parse_cell(required_segment(&mut args, "cell operation")?, args),
             _ => Err(NativeCliError::usage("unsupported native namespace")),
-        }
-    }
-
-    fn parse_case(
-        operation: OsString,
-        args: impl IntoIterator<Item = OsString>,
-    ) -> Result<Self, NativeCliError> {
-        let operation = operation
-            .to_str()
-            .ok_or_else(|| NativeCliError::usage("case operation must be UTF-8"))?;
-        let mut args = args.into_iter().collect::<Vec<_>>();
-        let history_topology = is_history_topology(operation, &args);
-        if history_topology {
-            args.remove(0);
-        }
-        let history_topology_diff = history_topology
-            && args
-                .first()
-                .and_then(|argument| argument.to_str())
-                .is_some_and(|argument| argument == "diff");
-        if history_topology_diff {
-            args.remove(0);
-        }
-        let options = NativeOptions::parse(args)?;
-        match operation {
-            "new" | "create" => Ok(Self::CaseNew {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                space_id: options.require_id("--space-id")?,
-                title: options.require_string("--title")?,
-                revision_id: options.require_id("--revision-id")?,
-                output: options.output,
-            }),
-            "import" => Ok(Self::CaseImport {
-                store: options.require_store()?,
-                input: options.require_path("--input")?,
-                revision_id: options.require_id("--revision-id")?,
-                output: options.output,
-            }),
-            "list" => Ok(Self::CaseList {
-                store: options.require_store()?,
-                output: options.output,
-            }),
-            "inspect" => Ok(Self::CaseInspect {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                output: options.output,
-            }),
-            "history" => Self::parse_history_case(options, history_topology, history_topology_diff),
-            "replay" => Ok(Self::CaseReplay {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                output: options.output,
-            }),
-            "rebuild" => Ok(Self::CaseRebuild {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                output: options.output,
-            }),
-            "validate" => Ok(Self::CaseValidate {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                output: options.output,
-            }),
-            "reason" => Self::parse_reason(options, NativeReasonSection::Reason),
-            "frontier" => Self::parse_reason(options, NativeReasonSection::Frontier),
-            "obstructions" => Self::parse_reason(options, NativeReasonSection::Obstructions),
-            "completions" => Self::parse_reason(options, NativeReasonSection::Completions),
-            "evidence" => Self::parse_reason(options, NativeReasonSection::Evidence),
-            "project" => Self::parse_reason(options, NativeReasonSection::Project),
-            "close-check" => Self::parse_close_check(options),
-            _ => Err(NativeCliError::usage("unsupported native case command")),
         }
     }
 
@@ -187,6 +114,8 @@ impl NativeCliCommand {
             }),
             "reason" => Self::parse_reason(options, NativeReasonSection::Reason),
             "frontier" => Self::parse_reason(options, NativeReasonSection::Frontier),
+            "evidence" => Self::parse_reason(options, NativeReasonSection::Evidence),
+            "project" => Self::parse_reason(options, NativeReasonSection::Project),
             "topology" if topology_diff => Ok(Self::CaseTopologyDiff {
                 left_store: options.require_path("--left-store")?,
                 left_case_space_id: options.require_id("--left-case-space-id")?,
@@ -328,36 +257,6 @@ impl NativeCliCommand {
                 audience: options.audience,
                 source_boundary_id: options.source_boundary_id,
             },
-            output: options.output,
-        })
-    }
-
-    fn parse_history_case(
-        options: NativeOptions,
-        history_topology: bool,
-        history_topology_diff: bool,
-    ) -> Result<Self, NativeCliError> {
-        if history_topology_diff {
-            return Ok(Self::CaseTopologyDiff {
-                left_store: options.require_path("--left-store")?,
-                left_case_space_id: options.require_id("--left-case-space-id")?,
-                right_store: options.require_path("--right-store")?,
-                right_case_space_id: options.require_id("--right-case-space-id")?,
-                topology_options: options.topology_options(),
-                output: options.output,
-            });
-        }
-        if history_topology {
-            return Ok(Self::CaseTopology {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                topology_options: options.topology_options(),
-                output: options.output,
-            });
-        }
-        Ok(Self::CaseHistory {
-            store: options.require_store()?,
-            case_space_id: options.require_id("--case-space-id")?,
             output: options.output,
         })
     }
@@ -613,12 +512,4 @@ fn mutation_gate_options(options: &NativeOptions) -> NativeMutationGateOptions {
         audience: options.audience,
         source_boundary_id: options.source_boundary_id.clone(),
     }
-}
-
-fn is_history_topology(operation: &str, args: &[OsString]) -> bool {
-    operation == "history"
-        && args
-            .first()
-            .and_then(|argument| argument.to_str())
-            .is_some_and(|argument| argument == "topology")
 }

@@ -3,7 +3,7 @@
   "report_type": "native_case_contract",
   "report_version": 1,
   "metadata": {
-    "command": "casegraphen case inspect --format json",
+    "command": "casegraphen space inspect --format json",
     "tool_package": "casegraphen",
     "core_packages": [
       "higher-graphen-core"

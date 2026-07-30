@@ -87,8 +87,7 @@ All commands take `--format json` and optionally `--output <path>`.
 
 ```text
 casegraphen lift native|workflow|case-graph      # bounded lift into a case space
-casegraphen space new|list|inspect|history|replay|rebuild|validate|reason|frontier|topology
-casegraphen case  ... |obstructions|completions|evidence|project|close-check
+casegraphen space new|list|inspect|history|replay|rebuild|validate|reason|frontier|evidence|project|topology
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
 casegraphen review accept|reject|reopen|waive     # gated
 casegraphen evidence attach                       # gated

@@ -57,7 +57,7 @@ language to `lift`, `space`, `morphism`, `obstruction`, `completion`,
 | `casegraphen history topology` | Emits lifted first-order topology diagnostics for a case graph. `--higher-order` adds optional persistence diagnostics with `--max-dimension` and `--min-persistence` / `--min-persistence-stages`. | Provides a read-only structural signal over the graph. Higher-order persistence is opt-in and diagnostic; baseline output omits `result.higher_order`. |
 | `casegraphen history topology diff` | Compares two lifted topology reports and emits scalar topology deltas plus source-mapping added/removed IDs. `--higher-order` adds summary deltas when both sides include higher-order summaries. | Provides topology-specific pairwise change detection without overloading raw case `compare` or workflow correspondence. |
 | `casegraphen cg workflow history topology` | Replays a stored workflow graph and, with `--higher-order`, orders filtration stages from workflow revision history. | Store-backed topology can expose `filtration_source: workflow_history` and `stage_sources` for revision-aware diagnostics. |
-| `casegraphen space topology diff` | Replays two native case spaces and compares their topology reports. | Native topology diff uses morphism-log-aware topology reports and emits `result.topology_diff` without mutating either store. The old `casegraphen case history topology diff` spelling is a transitional alias. |
+| `casegraphen space topology diff` | Replays two native case spaces and compares their topology reports. | Native topology diff uses morphism-log-aware topology reports and emits `result.topology_diff` without mutating either store. |
 
 All commands require `--format json`. `--output` writes pretty JSON to a file
 and suppresses stdout. Domain findings such as missing cases, conflicts, and
@@ -88,8 +88,6 @@ break:
 | `casegraphen workflow project` | `casegraphen projection apply` |
 | `casegraphen workflow correspond` | `casegraphen equivalence check` |
 | `casegraphen cg workflow patch check/apply/reject` | `casegraphen morphism check/apply/reject` |
-| `casegraphen case ...` | Transitional alias for `casegraphen space ...` and related high-order namespaces |
-
 The old `highergraphen.case.graph.v1` schema can remain as an importable source
 format, but it should not force a permanent top-level command family.
 

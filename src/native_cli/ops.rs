@@ -108,11 +108,11 @@ pub(super) fn case_reason(
             json!({ "completion_candidates": evaluation.completion_candidates }),
         ),
         NativeReasonSection::Evidence => (
-            "casegraphen invariant evidence",
+            "casegraphen space evidence",
             json!({ "evidence_findings": evaluation.evidence_findings }),
         ),
         NativeReasonSection::Project => (
-            "casegraphen projection apply",
+            "casegraphen space project",
             json!({
                 "projections": replay.case_space.projections,
                 "projection_loss": evaluation.projection_loss,

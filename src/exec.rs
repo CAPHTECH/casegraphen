@@ -33,8 +33,6 @@ pub struct ExecutionStep {
     pub step_id: Id,
     pub work_cell_id: Id,
     pub worker_binding_id: Id,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_projection_id: Option<Id>,
     pub success_evidence_requirement_ids: Vec<Id>,
     pub allowed_transition_classes: Vec<AllowedTransitionClass>,
 }
@@ -107,12 +105,6 @@ pub fn validate_execution_plan(plan: &ExecutionPlan) -> Result<(), ExecutionPlan
             &format!("steps[{index}].worker_binding_id"),
             &step.worker_binding_id,
         )?;
-        if let Some(input_projection_id) = &step.input_projection_id {
-            validate_id(
-                &format!("steps[{index}].input_projection_id"),
-                input_projection_id,
-            )?;
-        }
         if step.success_evidence_requirement_ids.is_empty() {
             return Err(ExecutionPlanValidationError::new(format!(
                 "steps[{index}].success_evidence_requirement_ids must not be empty"

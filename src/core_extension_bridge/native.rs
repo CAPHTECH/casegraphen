@@ -189,8 +189,11 @@ fn close_derivation(
     );
     derivation.warrants = witnesses.iter().map(|witness| witness.id.clone()).collect();
     derivation.verifier = Some(
-        Verifier::new(VerifierKind::CustomEngine, "casegraphen case close-check")
-            .expect("generated verifier is valid"),
+        Verifier::new(
+            VerifierKind::CustomEngine,
+            "casegraphen invariant close-check",
+        )
+        .expect("generated verifier is valid"),
     );
     derivation.verification_status = VerificationStatus::MachineChecked;
     derivation.failure_mode = if check.closeable {

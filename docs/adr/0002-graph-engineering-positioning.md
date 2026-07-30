@@ -63,11 +63,10 @@ harness's job. Measured on this codebase (release build, single run):
 readiness derivation is O(n²) — 0.3 s at 1,000 cells, 2.6 s at 3,000, 32 s at
 10,000 — and every revision stores a full snapshot (a 10,000-cell space grew
 29 MB → 51 MB on one appended cell). `run --step` advances exactly one item
-under a per-case lock; there is no fan-out. Step-to-step dataflow does not
-exist (`input_projection_id` is declared in the plan contract but inert:
-validated in `src/exec.rs`, never read at dispatch). Cost is not tracked;
-model identity is not part of a binding's content address; the only worker
-kind is `shell`.
+under a per-case lock; there is no fan-out. Step-to-step dataflow and typed
+handoff do not exist; the execution-plan contract has no field that supplies
+one step's output as another step's input. Cost is not tracked; model identity
+is not part of a binding's content address; the only worker kind is `shell`.
 
 ## Decision
 
@@ -125,6 +124,10 @@ kind is `shell`.
   security-policy amendment (`worker_kind` beyond `shell` requires a new
   design review by policy). Deferred until an LLM worker kind is actually
   proposed.
+- **No typed step handoff.** The execution-plan contract intentionally has no
+  step-input field. Any future decision must introduce and implement typed
+  handoff through the contract-change process rather than advertise a
+  half-alive hook.
 - **No memory of past misjudgments.** The judgment-precision critique is only
   half-answered here: branch decisions must be evidence-backed and a wrong one
   surfaces as an obstruction rather than passing silently, but nothing
@@ -136,10 +139,6 @@ kind is `shell`.
   adapter: runtime report → evidence-cell JSON → gated `evidence attach` →
   gated `review accept` → transition. No CaseGraphen code change is required
   to start; the adapter is external by design.
-- The inert `input_projection_id` field is left as-is for now. Whichever
-  future decision introduces typed step handoff must either implement it or
-  supersede it through the contract-change process — it must not stay
-  half-alive in a contract we advertise.
 - The positioning claim in this ADR is falsifiable the same way the security
   policy is: every "already enforced" bullet cites a walkthrough section that
   reproduces it against the shipped binary. If a refactor breaks one, this

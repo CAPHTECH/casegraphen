@@ -199,16 +199,6 @@
         "worker_binding_id": {
           "$ref": "#/$defs/id"
         },
-        "input_projection_id": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/id"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "success_evidence_requirement_ids": {
           "type": "array",
           "minItems": 1,

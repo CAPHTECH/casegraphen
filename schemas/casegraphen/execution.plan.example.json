@@ -9,7 +9,6 @@
       "step_id": "step:review-native-contract",
       "work_cell_id": "work:review-native-contract",
       "worker_binding_id": "worker_binding:native-contract-review",
-      "input_projection_id": null,
       "success_evidence_requirement_ids": [
         "evidence:native-schema-json-valid"
       ],

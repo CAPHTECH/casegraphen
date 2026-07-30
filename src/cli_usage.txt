@@ -6,7 +6,7 @@ usage:
   casegraphen lift case-graph --store <dir> --input <case.graph.json> --revision-id <id> --format json [--output <path>]
   casegraphen space new --store <dir> --case-space-id <id> --space-id <id> --title <text> --revision-id <id> --format json [--output <path>]
   casegraphen space list --store <dir> --format json [--output <path>]
-  casegraphen space inspect|history|replay|rebuild|validate|reason|frontier --store <dir> --case-space-id <id> --format json [--output <path>]
+  casegraphen space inspect|history|replay|rebuild|validate|reason|frontier|evidence|project --store <dir> --case-space-id <id> --format json [--output <path>]
   casegraphen space topology --store <dir> --case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>]] [--output <path>]
   casegraphen space topology diff --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>]] [--output <path>]
   casegraphen morphism propose --store <dir> --case-space-id <id> --input <case_morphism.json> --format json [--output <path>]  (ungated proposal-file write; no durable case-state mutation)

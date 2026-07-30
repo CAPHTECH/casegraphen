@@ -51,7 +51,7 @@ family survives *because* the bridge is too weak to replace it.
    `cg workflow *` CLI surfaces, the workflow topology paths, and the
    workflow report schemas are deleted. The reports those commands produced
    are now spelled: lift the graph, then use the native derived surface —
-   `space reason`, `space frontier`, `obstruction list`, `case evidence`,
+   `space reason`, `space frontier`, `obstruction list`, `space evidence`,
    `space topology`. Readiness over a workflow graph is thereby *derived by
    the one evaluator* instead of stored-and-recomputed by a second one.
 
@@ -130,6 +130,10 @@ relation-strength defaulting.
 - `workflow.report.schema.json`, `workflow.report.example.json`, and
   `workflow.operation.report.schema.json` are retired through the
   contract-change process (schema deletions are contract decisions).
+- The typed-handoff obligation was discharged before first publication by
+  deleting the inert execution-plan field. A future typed-handoff decision
+  starts from a contract with no dead field and must introduce its contract
+  and behavior together.
 - The adversarial-execution-reviewer pass ran on the implementation and found
   five defects, each reproduced independently before the fix and re-attacked
   after. Four are recorded in decision 5 and its store counterparts: a cell

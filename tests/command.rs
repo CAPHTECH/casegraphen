@@ -31,7 +31,7 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
     fs::create_dir_all(&directory).expect("create temp directory");
 
     let created = run_cli(&[
-        "case",
+        "space",
         "new",
         "--store",
         directory.to_str().expect("temp path"),
@@ -59,7 +59,7 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
     );
 
     let list = run_cli(&[
-        "case",
+        "space",
         "list",
         "--store",
         directory.to_str().expect("temp path"),
@@ -314,8 +314,7 @@ fn generated_native_cli_report_validates_against_schema() {
 
     let topology_report_path = directory.join("native-cli-topology.report.json");
     let topology = run_cli(&[
-        "case",
-        "history",
+        "space",
         "topology",
         "--store",
         directory.to_str().expect("temp path"),
@@ -358,7 +357,7 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
 
     let frontier_output = directory.join("native.frontier.report.json");
     let frontier = run_cli(&[
-        "case",
+        "space",
         "frontier",
         "--store",
         directory.to_str().expect("temp path"),
@@ -377,7 +376,7 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
         .contains(&json!("goal:native-case-contract")));
 
     let close_check = run_cli(&[
-        "case",
+        "invariant",
         "close-check",
         "--store",
         directory.to_str().expect("temp path"),
@@ -422,7 +421,12 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
     );
 
     for command in ["obstructions", "completions", "evidence", "project"] {
-        let output = run_native_case_store_command(&directory, command);
+        let output = match command {
+            "obstructions" => run_native_store_command(&directory, "obstruction", "list"),
+            "completions" => run_native_store_command(&directory, "completion", "candidates"),
+            "evidence" | "project" => run_native_case_store_command(&directory, command),
+            _ => unreachable!("test command set is fixed"),
+        };
         assert!(
             output.status.success(),
             "{command} stderr: {}",
@@ -431,8 +435,8 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
         let expected = match command {
             "obstructions" => "casegraphen obstruction list",
             "completions" => "casegraphen completion candidates",
-            "evidence" => "casegraphen invariant evidence",
-            "project" => "casegraphen projection apply",
+            "evidence" => "casegraphen space evidence",
+            "project" => "casegraphen space project",
             _ => unreachable!("test command set is fixed"),
         };
         assert_eq!(stdout_json(&output)["metadata"]["command"], json!(expected));
@@ -448,8 +452,7 @@ fn native_case_topology_emits_domain_report() {
     import_native_case_space(&directory, "revision:native-cli-imported");
 
     let output = run_cli(&[
-        "case",
-        "history",
+        "space",
         "topology",
         "--store",
         directory.to_str().expect("temp path"),
@@ -475,8 +478,7 @@ fn native_case_topology_emits_domain_report() {
     assert!(value["result"]["topology"].get("higher_order").is_none());
 
     let higher_order = run_cli(&[
-        "case",
-        "history",
+        "space",
         "topology",
         "--store",
         directory.to_str().expect("temp path"),
@@ -529,8 +531,7 @@ fn native_case_topology_diff_compares_store_replays() {
     import_native_case_space(&right_directory, "revision:native-cli-right");
 
     let output = run_cli(&[
-        "case",
-        "history",
+        "space",
         "topology",
         "diff",
         "--left-store",
@@ -582,7 +583,7 @@ fn native_close_check_uses_metadata_core_extensions_as_close_gate() {
     import_native_case_space_from_input(&directory, &native_path, "revision:native-cli-imported");
 
     let close_check = run_cli(&[
-        "case",
+        "invariant",
         "close-check",
         "--store",
         directory.to_str().expect("temp path"),
@@ -2434,7 +2435,7 @@ fn native_typed_morphism_materializes_payload_end_to_end() {
         }));
 
     let history = run_cli(&[
-        "case",
+        "space",
         "history",
         "--store",
         directory.to_str().expect("temp path"),
@@ -2554,7 +2555,7 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
         .to_owned();
 
     let history = run_cli(&[
-        "case",
+        "space",
         "history",
         "--store",
         directory.to_str().expect("temp path"),
@@ -3061,7 +3062,7 @@ fn native_cli_invalid_targets_exit_nonzero() {
     import_native_case_space(&directory, "revision:native-cli-imported");
 
     let blank_title = run_cli(&[
-        "case",
+        "space",
         "new",
         "--store",
         directory.to_str().expect("temp path"),
@@ -3080,7 +3081,7 @@ fn native_cli_invalid_targets_exit_nonzero() {
     assert!(stderr(&blank_title).contains("case title must not be empty"));
 
     let missing_case = run_cli(&[
-        "case",
+        "space",
         "inspect",
         "--store",
         directory.to_str().expect("temp path"),
@@ -3678,8 +3679,8 @@ fn import_native_case_space_from_input(
     revision_id: &str,
 ) -> Output {
     let output = run_cli(&[
-        "case",
-        "import",
+        "lift",
+        "native",
         "--store",
         directory.to_str().expect("temp path"),
         "--input",
@@ -3694,8 +3695,12 @@ fn import_native_case_space_from_input(
 }
 
 fn run_native_case_store_command(directory: &Path, command: &str) -> Output {
+    run_native_store_command(directory, "space", command)
+}
+
+fn run_native_store_command(directory: &Path, namespace: &str, command: &str) -> Output {
     let output = run_cli(&[
-        "case",
+        namespace,
         command,
         "--store",
         directory.to_str().expect("temp path"),

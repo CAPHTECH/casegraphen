@@ -681,10 +681,9 @@ casegraphen invariant check --store <dir> --case-space-id <id> --format json
 casegraphen invariant close-check --store <dir> --case-space-id <id> --base-revision-id <id> --validation-evidence-id <id> --format json
 ```
 
-The implemented `casegraphen case ...` commands are transitional aliases for
-the native case-space operations above. They should not define the long-term
-product language: a case is a cell type, while `space`, `morphism`,
-`projection`, `equivalence`, and `invariant` are the structural operations.
+The native CLI exposes the case-space operations above through structural
+namespaces: a case is a cell type, while `space`, `morphism`, `projection`,
+`equivalence`, and `invariant` are the operation language.
 
 Morphism commands:
 
@@ -953,9 +952,9 @@ release gate run on 2026-04-26 passed `cargo fmt --all --check`,
 - Append-only logs need compaction or snapshot strategy once case spaces grow.
 - Content-addressed entries and revision checksums are useful, but they add
   compatibility constraints for future schema migrations.
-- Transitional commands may confuse operators if docs do not clearly
-  distinguish canonical higher-order namespaces from compatibility aliases
-  such as `casegraphen case ...` and `casegraphen cg workflow ...`.
+- Compatibility command families may confuse operators if docs do not keep
+  cases as cell types and reserve top-level operation language for the
+  canonical higher-order namespaces.
 - Close invariants are policy-sensitive; early implementation should keep the
   default policy strict and make waivers explicit review morphisms.
 - Projection `allowed_operations` can be misread as authorization unless
