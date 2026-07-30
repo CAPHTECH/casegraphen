@@ -29,15 +29,39 @@ impl NativeCaseStore {
         require_case_space_contract(&self.root, case_space)?;
         require_importable_materialized_log(&self.root, case_space)?;
         validate_materialized_log(&self.root, case_space)?;
+        let latest = latest_entry(&case_space.morphism_log, &self.root)?;
+        require_snapshot_checksum(&self.root, case_space, latest)?;
 
         let case_dir = self.case_dir(&case_space.case_space_id);
+        fs::create_dir_all(self.native_root()).map_err(|source| NativeStoreError::Io {
+            path: self.native_root(),
+            source,
+        })?;
+        let created_case_dir = match fs::create_dir(&case_dir) {
+            Ok(()) => true,
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(source) => {
+                return Err(NativeStoreError::Io {
+                    path: case_dir,
+                    source,
+                });
+            }
+        };
+        if !created_case_dir && !case_dir.is_dir() {
+            return Err(NativeStoreError::ExistingCase { path: case_dir });
+        }
+        let _lock = CaseLockGuard::acquire(&case_dir)?;
+        let log_path = self.log_path(&case_space.case_space_id);
+        if !created_case_dir || log_path.exists() {
+            return Err(NativeStoreError::ExistingCase { path: case_dir });
+        }
+
         let snapshots_dir = case_dir.join("snapshots");
         fs::create_dir_all(&snapshots_dir).map_err(|source| NativeStoreError::Io {
             path: snapshots_dir.clone(),
             source,
         })?;
 
-        let log_path = self.log_path(&case_space.case_space_id);
         let mut snapshot = case_space.clone();
         snapshot.morphism_log = case_space.morphism_log.clone();
         write_json(
@@ -67,6 +91,14 @@ impl NativeCaseStore {
         case_space_id: &Id,
         entry: MorphismLogEntry,
     ) -> NativeStoreResult<NativeCaseSpaceRecord> {
+        let case_dir = self.case_dir(case_space_id);
+        if !case_dir.is_dir() {
+            return Err(NativeStoreError::MissingCase {
+                case_space_id: case_space_id.clone(),
+                path: self.log_path(case_space_id),
+            });
+        }
+        let _lock = CaseLockGuard::acquire(&case_dir)?;
         let replay = self.replay_current_case_space(case_space_id)?;
         let log_path = self.log_path(case_space_id);
         validate_append(&log_path, &replay.case_space, &entry, &replay.history)?;
@@ -166,8 +198,7 @@ impl NativeCaseStore {
             &self.relative_snapshot_path(&latest.case_space_id, &latest.target_revision_id),
             &self.log_path(case_space_id),
         )?;
-        let case_space = read_case_space(&snapshot_path)?;
-        require_case_space_matches_entry(&snapshot_path, &case_space, latest)?;
+        let case_space = read_verified_snapshot(&snapshot_path, latest, &entries)?;
         validate_materialized_log(&snapshot_path, &case_space)?;
 
         Ok(NativeCaseSpaceReplay {
@@ -256,10 +287,9 @@ fn native_record(
     }
     let current_snapshot_path =
         store.relative_snapshot_path(case_space_id, &latest.target_revision_id);
-    let current_snapshot = read_case_space(
-        &store.resolve_snapshot_path(&current_snapshot_path, &store.log_path(case_space_id))?,
-    )?;
-    require_case_space_matches_entry(&store.log_path(case_space_id), &current_snapshot, latest)?;
+    let resolved_snapshot_path =
+        store.resolve_snapshot_path(&current_snapshot_path, &store.log_path(case_space_id))?;
+    let current_snapshot = read_verified_snapshot(&resolved_snapshot_path, latest, entries)?;
 
     let revisions = entries
         .iter()
@@ -428,8 +458,7 @@ fn validate_log_entries(
             &store.relative_snapshot_path(&entry.case_space_id, &entry.target_revision_id),
             path,
         )?;
-        let snapshot = read_case_space(&snapshot_path)?;
-        require_case_space_matches_entry(&snapshot_path, &snapshot, entry)?;
+        read_verified_snapshot(&snapshot_path, entry, &entries[..=index])?;
         previous_revision_id = Some(entry.target_revision_id.clone());
     }
     Ok(())
@@ -686,6 +715,94 @@ fn require_case_space_matches_entry(
     Ok(())
 }
 
+fn require_snapshot_checksum(
+    path: &Path,
+    case_space: &CaseSpace,
+    authoritative_entry: &MorphismLogEntry,
+) -> NativeStoreResult<()> {
+    let computed = snapshot_checksum(path, case_space)?;
+    require_computed_snapshot_checksum(path, case_space, authoritative_entry, &computed)
+}
+
+fn snapshot_checksum(path: &Path, case_space: &CaseSpace) -> NativeStoreResult<String> {
+    crate::native_hash::case_space_checksum(case_space).map_err(|source| NativeStoreError::Json {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+fn require_computed_snapshot_checksum(
+    path: &Path,
+    case_space: &CaseSpace,
+    authoritative_entry: &MorphismLogEntry,
+    computed: &str,
+) -> NativeStoreResult<()> {
+    if computed != case_space.revision.checksum || computed != authoritative_entry.replay_checksum {
+        return Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "snapshot checksum mismatch: computed {computed}, stored revision.checksum {}, authoritative replay_checksum {}",
+                case_space.revision.checksum, authoritative_entry.replay_checksum
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn require_embedded_log_matches_prefix(
+    path: &Path,
+    embedded: &[MorphismLogEntry],
+    authoritative_prefix: &[MorphismLogEntry],
+) -> NativeStoreResult<()> {
+    if embedded.len() != authoritative_prefix.len() {
+        return Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "embedded morphism_log mismatch: snapshot has {} entries, authoritative prefix has {}",
+                embedded.len(),
+                authoritative_prefix.len()
+            ),
+        });
+    }
+    for (index, (embedded_entry, authoritative_entry)) in
+        embedded.iter().zip(authoritative_prefix).enumerate()
+    {
+        if embedded_entry.entry_id != authoritative_entry.entry_id {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: format!(
+                    "embedded morphism_log mismatch at sequence {}: entry id {} does not match authoritative {}",
+                    index + 1,
+                    embedded_entry.entry_id,
+                    authoritative_entry.entry_id
+                ),
+            });
+        }
+        let embedded_hash =
+            crate::native_hash::morphism_log_entry_hash(embedded_entry).map_err(|source| {
+                NativeStoreError::Json {
+                    path: path.to_owned(),
+                    source,
+                }
+            })?;
+        let authoritative_hash = crate::native_hash::morphism_log_entry_hash(authoritative_entry)
+            .map_err(|source| NativeStoreError::Json {
+            path: path.to_owned(),
+            source,
+        })?;
+        if embedded_hash != authoritative_hash {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: format!(
+                    "embedded morphism_log mismatch at entry {}: hash {embedded_hash} does not match authoritative {authoritative_hash}",
+                    embedded_entry.entry_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn require_ids_exist(path: &Path, case_space: &CaseSpace) -> NativeStoreResult<()> {
     let ids = known_ids(case_space);
     for relation in &case_space.case_relations {
@@ -756,7 +873,11 @@ fn known_ids(case_space: &CaseSpace) -> BTreeSet<Id> {
         .collect()
 }
 
-fn read_case_space(path: &Path) -> NativeStoreResult<CaseSpace> {
+fn read_verified_snapshot(
+    path: &Path,
+    authoritative_entry: &MorphismLogEntry,
+    authoritative_prefix: &[MorphismLogEntry],
+) -> NativeStoreResult<CaseSpace> {
     let text = fs::read_to_string(path).map_err(|source| NativeStoreError::Io {
         path: path.to_owned(),
         source,
@@ -767,6 +888,10 @@ fn read_case_space(path: &Path) -> NativeStoreResult<CaseSpace> {
             source,
         })?;
     require_case_space_contract(path, &case_space)?;
+    let computed_checksum = snapshot_checksum(path, &case_space)?;
+    require_embedded_log_matches_prefix(path, &case_space.morphism_log, authoritative_prefix)?;
+    require_computed_snapshot_checksum(path, &case_space, authoritative_entry, &computed_checksum)?;
+    require_case_space_matches_entry(path, &case_space, authoritative_entry)?;
     Ok(case_space)
 }
 

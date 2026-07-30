@@ -35,6 +35,13 @@ pub enum NativeStoreError {
         case_space_id: Id,
         path: PathBuf,
     },
+    ExistingCase {
+        path: PathBuf,
+    },
+    LockUnavailable {
+        path: PathBuf,
+        reason: String,
+    },
     ReplayMismatch {
         path: PathBuf,
         reason: String,
@@ -133,6 +140,16 @@ impl std::fmt::Display for NativeStoreError {
                 "{}: missing native case space {case_space_id}",
                 path.display()
             ),
+            Self::ExistingCase { path } => {
+                write!(
+                    formatter,
+                    "{}: native case space already exists",
+                    path.display()
+                )
+            }
+            Self::LockUnavailable { path, reason } => {
+                write!(formatter, "{}: {reason}", path.display())
+            }
             Self::ReplayMismatch { path, reason } => {
                 write!(formatter, "{}: {reason}", path.display())
             }

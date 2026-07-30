@@ -2,7 +2,7 @@ use super::*;
 use crate::native_model::{CaseMorphismType, CaseSpace};
 use higher_graphen_core::{Id, ReviewStatus};
 use std::{
-    fs,
+    fs::{self, FileTimes, OpenOptions},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -78,6 +78,188 @@ fn append_metadata_only_morphism_advances_history_and_replay() {
         Some(genesis_hash.as_str())
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn tampered_snapshot_checksum_fails_replay_and_validation() {
+    let root = temp_root("tampered-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("snapshot path");
+    let mut snapshot = read_json(&snapshot_path);
+    snapshot["case_cells"][0]["lifecycle"] = serde_json::json!("retired");
+    write_json_value(&snapshot_path, &snapshot);
+
+    let replay_error = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect_err("tampered snapshot must fail replay");
+    let validation_error = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect_err("tampered snapshot must fail validation");
+
+    for error in [replay_error, validation_error] {
+        assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+        assert!(error.to_string().contains("snapshot checksum mismatch"));
+        assert!(error
+            .to_string()
+            .contains(snapshot_path.to_str().expect("utf-8 snapshot path")));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn snapshot_embedded_morphism_log_must_match_external_prefix() {
+    let root = temp_root("tampered-embedded-log");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("snapshot path");
+    let mut snapshot = read_json(&snapshot_path);
+    snapshot["morphism_log"][0]["morphism"]["metadata"]["tampered"] = serde_json::json!(true);
+    write_json_value(&snapshot_path, &snapshot);
+
+    let error = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect_err("embedded log disagreement must fail replay");
+
+    assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+    assert!(error.to_string().contains("embedded morphism_log mismatch"));
+    assert!(error
+        .to_string()
+        .contains(snapshot_path.to_str().expect("utf-8 snapshot path")));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn import_rejects_existing_case_space_and_preserves_log() {
+    let root = temp_root("duplicate-import");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second history entry");
+    let log_path = store.log_path(&case_space.case_space_id);
+    let log_before = fs::read_to_string(&log_path).expect("read history before duplicate import");
+    let entry_count_before = store
+        .history_entries(&case_space.case_space_id)
+        .expect("history before duplicate import")
+        .len();
+
+    let error = store
+        .import_case_space(&case_space)
+        .expect_err("duplicate import must fail");
+
+    assert!(matches!(error, NativeStoreError::ExistingCase { .. }));
+    assert!(error.to_string().contains(
+        store
+            .case_dir(&case_space.case_space_id)
+            .to_str()
+            .expect("utf-8 case path")
+    ));
+    assert_eq!(
+        store
+            .history_entries(&case_space.case_space_id)
+            .expect("history after duplicate import")
+            .len(),
+        entry_count_before
+    );
+    assert_eq!(
+        fs::read_to_string(&log_path).expect("read history after duplicate import"),
+        log_before
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn append_fails_while_case_lock_is_held_without_corrupting_history() {
+    let root = temp_root("held-lock");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let lock_path = store.case_dir(&case_space.case_space_id).join(".lock");
+    fs::write(&lock_path, "held by test\n").expect("create held lock");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect_err("append must not pass a held lock");
+
+    assert!(matches!(error, NativeStoreError::LockUnavailable { .. }));
+    assert_eq!(
+        store
+            .history_entries(&case_space.case_space_id)
+            .expect("history after rejected append")
+            .len(),
+        1
+    );
+    assert!(!store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &id("revision:native-contract-v2"),
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("second snapshot path")
+        .exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn append_breaks_stale_case_lock() {
+    let root = temp_root("stale-lock");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let lock_path = store.case_dir(&case_space.case_space_id).join(".lock");
+    fs::write(&lock_path, "stale lock\n").expect("create stale lock");
+    OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("open stale lock")
+        .set_times(FileTimes::new().set_modified(UNIX_EPOCH))
+        .expect("age stale lock");
+
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append after breaking stale lock");
+
+    assert_eq!(
+        store
+            .history_entries(&case_space.case_space_id)
+            .expect("history after stale lock")
+            .len(),
+        2
+    );
+    assert!(!lock_path.exists());
     let _ = fs::remove_dir_all(root);
 }
 
@@ -278,7 +460,20 @@ fn history_rejects_a_wrong_previous_entry_hash() {
 }
 
 fn fixture_space() -> CaseSpace {
-    serde_json::from_str(NATIVE_EXAMPLE).expect("native case space example")
+    let mut case_space: CaseSpace =
+        serde_json::from_str(NATIVE_EXAMPLE).expect("native case space example");
+    case_space.revision.checksum.clear();
+    for entry in &mut case_space.morphism_log {
+        entry.replay_checksum.clear();
+    }
+    let checksum = case_space_checksum(&case_space).expect("fixture checksum");
+    case_space.revision.checksum = checksum.clone();
+    case_space
+        .morphism_log
+        .last_mut()
+        .expect("fixture morphism log")
+        .replay_checksum = checksum;
+    case_space
 }
 
 fn metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
@@ -323,6 +518,22 @@ fn rewrite_history(store: &NativeCaseStore, case_space_id: &Id, history: &[Morph
         .join("\n");
     text.push('\n');
     fs::write(store.log_path(case_space_id), text).expect("rewrite history");
+}
+
+fn read_json(path: &std::path::Path) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read JSON fixture"))
+        .expect("parse JSON fixture")
+}
+
+fn write_json_value(path: &std::path::Path, value: &serde_json::Value) {
+    fs::write(
+        path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(value).expect("serialize JSON fixture")
+        ),
+    )
+    .expect("write JSON fixture");
 }
 
 fn temp_root(name: &str) -> PathBuf {
