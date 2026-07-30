@@ -382,7 +382,11 @@
           "capability:durable-mutation",
           "capability:native-run-worker",
           "capability:native-integration-worker",
-          "capability:casegraphen-cli:close-check"
+          "capability:casegraphen-cli:close-check",
+          "relation:case-covers-goal",
+          "relation:work-waits-for-review",
+          "relation:evidence-verifies-case",
+          "relation:review-accepts-evidence"
         ],
         "updated_ids": [],
         "retired_ids": [],
@@ -419,6 +423,485 @@
             "information_loss": [
               "Fixture summarizes implementation and test evidence instead of embedding full source files or cargo test output."
             ]
+          },
+          "payload": {
+            "added_cells": [
+              {
+                "id": "goal:native-case-contract",
+                "cell_type": "goal",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Define native case schema and API contracts",
+                "summary": "Stable native CaseSpace and MorphismLog contracts exist before store or CLI implementation.",
+                "lifecycle": "active",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [
+                  "schemas/casegraphen/native.case.space.schema.json",
+                  "tools/casegraphen/src/native_model.rs"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "docs/specs/intermediate-tools/casegraphen-native-case-management.md",
+                    "title": "Native CaseGraphen Case Management Design"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "case:native-contract-example",
+                "cell_type": "case",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Native contract fixture parses as strict serde",
+                "summary": "The example fixture rejects hidden readiness fields and round-trips through Rust models.",
+                "lifecycle": "active",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [
+                  "goal:native-case-contract"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "uri": "schemas/casegraphen/native.case.space.example.json"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "evidence_boundary": "source_backed"
+                }
+              },
+              {
+                "id": "work:review-native-contract",
+                "cell_type": "work",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Review native contract before store implementation",
+                "summary": "Review must be explicit before generated native changes can satisfy hard requirements.",
+                "lifecycle": "waiting",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [
+                  "review:native-contract-acceptance"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Implementation task"
+                  },
+                  "confidence": 0.9,
+                  "review_status": "reviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "evidence:native-schema-json-valid",
+                "cell_type": "evidence",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Native schema and example JSON parse",
+                "summary": "Package tests parse native schema and example files as valid JSON.",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:cargo-test"
+                ],
+                "structure_ids": [
+                  "schemas/casegraphen/native.case.space.schema.json",
+                  "schemas/casegraphen/native.case.space.example.json"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "log",
+                    "title": "cargo test -p casegraphen"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "evidence_boundary": "source_backed"
+                }
+              },
+              {
+                "id": "review:native-contract-acceptance",
+                "cell_type": "review",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Native contract acceptance review",
+                "summary": "Review record cell preserving accepted source-backed evidence boundary.",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [
+                  "evidence:native-schema-json-valid"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "human",
+                    "title": "Contract review"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted",
+                  "reviewer_id": "reviewer:native-lead",
+                  "reviewed_at": "2026-04-26T01:00:00Z"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "capability:plan-review",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Review execution plans",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native execution authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:plan-review",
+                    "actor:plan-accept",
+                    "actor:plan-reject",
+                    "actor:run-plan-review",
+                    "actor:unsatisfied-plan",
+                    "actor:run-plan-reject"
+                  ]
+                }
+              },
+              {
+                "id": "capability:dispatch",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Dispatch native workers",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native execution authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:native-run"
+                  ]
+                }
+              },
+              {
+                "id": "capability:durable-mutation",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Authorize native durable mutations",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native durable mutation authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:native-mutation-cli",
+                    "actor:native-evidence-cli",
+                    "actor:native-transition-cli"
+                  ]
+                }
+              },
+              {
+                "id": "capability:native-run-worker",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Run the native integration worker",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native execution authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:native-run"
+                  ]
+                }
+              },
+              {
+                "id": "capability:native-integration-worker",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Run the native plan integration worker",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native execution authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {
+                  "actor_ids": [
+                    "actor:native-integration"
+                  ]
+                }
+              },
+              {
+                "id": "capability:casegraphen-cli:close-check",
+                "cell_type": "custom:capability",
+                "space_id": "space:higher-graphen-casegraphen",
+                "title": "Run native close checks",
+                "lifecycle": "accepted",
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "structure_ids": [],
+                "provenance": {
+                  "source": {
+                    "kind": "document",
+                    "title": "Native close authorization"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              }
+            ],
+            "added_relations": [
+              {
+                "id": "relation:case-covers-goal",
+                "relation_type": "covers",
+                "relation_strength": "hard",
+                "from_id": "case:native-contract-example",
+                "to_id": "goal:native-case-contract",
+                "evidence_ids": [
+                  "evidence:native-schema-json-valid"
+                ],
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:work-waits-for-review",
+                "relation_type": "waits_for",
+                "relation_strength": "hard",
+                "from_id": "work:review-native-contract",
+                "to_id": "review:native-contract-acceptance",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "document"
+                  },
+                  "confidence": 0.9,
+                  "review_status": "reviewed"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:evidence-verifies-case",
+                "relation_type": "verifies",
+                "relation_strength": "hard",
+                "from_id": "evidence:native-schema-json-valid",
+                "to_id": "case:native-contract-example",
+                "evidence_ids": [],
+                "source_ids": [
+                  "source:cargo-test"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "log"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              },
+              {
+                "id": "relation:review-accepts-evidence",
+                "relation_type": "accepts",
+                "relation_strength": "hard",
+                "from_id": "review:native-contract-acceptance",
+                "to_id": "evidence:native-schema-json-valid",
+                "evidence_ids": [
+                  "evidence:native-schema-json-valid"
+                ],
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "provenance": {
+                  "source": {
+                    "kind": "human"
+                  },
+                  "confidence": 1.0,
+                  "review_status": "accepted"
+                },
+                "metadata": {}
+              }
+            ],
+            "updated_cells": [],
+            "updated_relations": []
+          },
+          "genesis_case_space": {
+            "space_id": "space:higher-graphen-casegraphen",
+            "projections": [
+              {
+                "projection_id": "projection:native-human-review",
+                "audience": "human_review",
+                "revision_id": "revision:native-contract-v1",
+                "represented_cell_ids": [
+                  "work:review-native-contract",
+                  "review:native-contract-acceptance"
+                ],
+                "represented_relation_ids": [
+                  "relation:work-waits-for-review"
+                ],
+                "omitted_cell_ids": [
+                  "goal:native-case-contract",
+                  "case:native-contract-example",
+                  "evidence:native-schema-json-valid",
+                  "capability:plan-review",
+                  "capability:dispatch",
+                  "capability:durable-mutation",
+                  "capability:native-run-worker",
+                  "capability:native-integration-worker",
+                  "capability:casegraphen-cli:close-check"
+                ],
+                "omitted_relation_ids": [
+                  "relation:case-covers-goal",
+                  "relation:evidence-verifies-case",
+                  "relation:review-accepts-evidence"
+                ],
+                "information_loss": [
+                  {
+                    "description": "Human review view omits source-backed schema evidence details.",
+                    "represented_ids": [
+                      "review:native-contract-acceptance"
+                    ],
+                    "omitted_ids": [
+                      "evidence:native-schema-json-valid"
+                    ]
+                  }
+                ],
+                "allowed_operations": [
+                  "review.accept",
+                  "review.reject",
+                  "review.reopen"
+                ],
+                "source_ids": [
+                  "source:native-design-doc"
+                ],
+                "warnings": [
+                  "information_loss"
+                ],
+                "metadata": {}
+              },
+              {
+                "projection_id": "projection:native-audit",
+                "audience": "audit",
+                "revision_id": "revision:native-contract-v1",
+                "represented_cell_ids": [
+                  "goal:native-case-contract",
+                  "case:native-contract-example",
+                  "work:review-native-contract",
+                  "evidence:native-schema-json-valid",
+                  "review:native-contract-acceptance",
+                  "capability:plan-review",
+                  "capability:dispatch",
+                  "capability:durable-mutation",
+                  "capability:native-run-worker",
+                  "capability:native-integration-worker",
+                  "capability:casegraphen-cli:close-check"
+                ],
+                "represented_relation_ids": [
+                  "relation:case-covers-goal",
+                  "relation:work-waits-for-review",
+                  "relation:evidence-verifies-case",
+                  "relation:review-accepts-evidence"
+                ],
+                "omitted_cell_ids": [],
+                "omitted_relation_ids": [],
+                "information_loss": [],
+                "allowed_operations": [
+                  "case.inspect",
+                  "morphism.history",
+                  "case.close-check"
+                ],
+                "source_ids": [
+                  "source:native-design-doc",
+                  "source:cargo-test"
+                ],
+                "warnings": [],
+                "metadata": {}
+              }
+            ],
+            "close_policy_id": "close_policy:native-default",
+            "metadata": {
+              "contract_status": "schema_and_api_only",
+              "source_boundary": {
+                "id": "source_boundary:native-case-management-contract",
+                "included_sources": [
+                  "docs/specs/intermediate-tools/casegraphen-native-case-management.md",
+                  "schemas/casegraphen/native.case.space.schema.json",
+                  "schemas/casegraphen/native.case.space.example.json",
+                  "tools/casegraphen/src/native_model.rs"
+                ],
+                "excluded_sources": [
+                  "external casegraphen reference workspace events",
+                  "installed cg workspace cache"
+                ],
+                "adapters": [
+                  "native.case.fixture.v1"
+                ],
+                "accepted_fact_policy": "Only records supplied by the native fixture or explicit review morphisms are accepted input facts.",
+                "inference_policy": "AI or heuristic records start unreviewed unless review-promoted.",
+                "information_loss": [
+                  "Fixture summarizes implementation and test evidence instead of embedding full source files or cargo test output."
+                ]
+              }
+            },
+            "revision_metadata": {}
           }
         }
       },

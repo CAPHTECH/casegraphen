@@ -139,6 +139,12 @@ and lift loss. Native validation rejects case spaces whose top-level
 `metadata.source_boundary` is missing or underspecified, and the first
 `MorphismLogEntry` must preserve the lift boundary in
 `morphism.metadata.source_boundary` with `morphism.metadata.lift_semantics`.
+That genesis morphism also carries every initial cell and relation in
+`morphism.metadata.payload` using the ordinary `MorphismPayload` reducer shape;
+its `added_ids` must name exactly those payload records. The free-form
+`morphism.metadata.genesis_case_space` object preserves the remaining immutable
+case-space shell needed for checksum-identical reconstruction: `space_id`,
+projections, close policy, case-space metadata, and genesis revision metadata.
 A future v2 schema may promote `source_boundary` from metadata into a
 first-class `CaseSpace` field.
 
@@ -161,8 +167,9 @@ Required fields:
 | `close_policy_id` | Optional policy selecting close invariants. |
 | `metadata` | Downstream-owned object. In v1, native CaseGraphen reserves `metadata.source_boundary` and `metadata.higher_graphen_extensions` as documented integration contracts. |
 
-The materialized `CaseSpace` is a replay result, not the source of truth. The
-source of truth is the ordered `MorphismLog`.
+The materialized `CaseSpace` is a disposable snapshot, not the source of truth.
+The ordered `MorphismLog` contains enough data to reconstruct every revision
+from an empty case space.
 
 ### CaseCell Taxonomy
 
@@ -299,6 +306,11 @@ Lift morphism metadata should preserve:
 - generated cell and relation IDs;
 - review status of any AI-created or heuristic structures.
 
+For the genesis entry, `metadata.payload` is required and uses the same
+`MorphismPayload` shape as later reducers. `added_ids` includes both cells and
+relations and must match the payload exactly. `metadata.genesis_case_space`
+contains the non-reducer shell fields described under `CaseSpace`.
+
 ### MorphismLog
 
 `MorphismLog` is the append-only source of truth for a native case space.
@@ -310,14 +322,20 @@ Each entry includes:
 - monotonic log sequence or content-addressed entry ID;
 - `morphism_id`;
 - `source_revision_id` and `target_revision_id`;
-- serialized morphism payload or stable pointer to it;
+- serialized reducer payload for every state-bearing morphism;
 - actor, timestamp, provenance, and source IDs;
 - hash of the previous entry when content-addressing is enabled;
 - replay checksum for the produced revision.
 
-Reducers replay the log into a materialized `CaseSpace`, revision index,
-projection cache, and close-check cache. Caches are disposable. If cache and log
-disagree, replay wins.
+The shared reducer folds the log from an empty `CaseSpace` and recomputes the
+checksum at each revision. Revision snapshots are disposable caches:
+`space rebuild` reports agreement per revision and recreates a snapshot only
+when its file is missing. An existing snapshot that disagrees with the fold is a
+tool failure naming the revision and is never overwritten. `space replay` is a
+snapshot read with checksum and embedded-log-prefix verification; it does not
+repair or replace a disagreeing snapshot. `space validate` performs those
+snapshot checks and additionally requires the full log fold to reproduce the
+current revision and checksum.
 
 ### Revision
 
@@ -326,7 +344,7 @@ and the derived checksum of the materialized case space.
 
 Revision records support:
 
-- deterministic replay;
+- deterministic log reconstruction;
 - diff and evolution reports;
 - stale-write checks through `base_revision` or `source_revision_id`;
 - migration from current workflow graph snapshots;
@@ -356,6 +374,14 @@ capability gates allow it.
 CaseGraphen is an agent-operated product surface. Operations that mutate,
 approve, export, close, or otherwise change durable case state must be gated by
 policy and capability, not by projection visibility alone.
+
+For durable morphism-log mutation, gate enforcement is also a store invariant.
+Commands validate the requested operation gate against the current case space
+before constructing a morphism. Independently, `append_morphism` requires a
+well-formed `morphism.metadata.operation_gate`, validates it against the current
+case space, and requires its actor to match the log entry actor. The only
+ungated log write is the structurally separate single-entry genesis path through
+`import_case_space`; it cannot be reached through `append_morphism`.
 
 Current native close-check enforces this at the package API boundary by adding
 `close:native-policy-capability-gate`: a close attempt must select a close
@@ -601,24 +627,24 @@ case_spaces/
 
 Contracts:
 
-- `morphisms.jsonl` is append-only and authoritative.
+- `morphisms.jsonl` is append-only, reconstructive, and authoritative.
 - `revisions/`, `projections/`, and `close_checks/` are replayable caches.
 - Path segments are encoded from IDs using a deterministic safe-segment
   function.
-- Appends require `source_revision_id` or `base_revision` to avoid stale
-  writes.
+- Appends require `source_revision_id` or `base_revision` to avoid stale writes,
+  plus a validated operation gate; the single-entry genesis import is the sole
+  explicit exemption.
 - Validation must replay the log, verify revision checksums, check schema
   versions, and verify that cached projections do not claim authority.
 - Import/migration records preserve source workflow graph IDs, installed `cg`
   case IDs, event IDs, and snapshot paths when available.
 
-Implementation note: `tools/casegraphen/src/native_store.rs` currently provides
+Implementation note: `src/native_store.rs` currently provides
 the first file-backed native store under `native_case_spaces/`. It records
 `morphism_log.jsonl`, deterministic revision snapshots, list/inspect/history,
-replay, validation, and conservative append support for metadata-only
-morphisms. Typed reducers for materializing arbitrary cell or relation payloads
-remain out of scope until the native reasoning and CLI tasks define those
-operation contracts.
+replay, reconstruction, validation, and gated typed cell/relation morphism
+append. `space rebuild` folds the entire log, reports per-revision snapshot
+agreement, recreates missing snapshots, and refuses disagreeing snapshots.
 
 ## CLI And Package API Target Surface
 
@@ -637,6 +663,7 @@ casegraphen space list --store <dir> --format json
 casegraphen space inspect --store <dir> --case-space-id <id> --format json
 casegraphen space validate --store <dir> --case-space-id <id> --format json
 casegraphen space history --store <dir> --case-space-id <id> --format json
+casegraphen space rebuild --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen space topology --store <dir> --case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen space topology diff --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen space replay --store <dir> --case-space-id <id> --format json
@@ -664,26 +691,25 @@ casegraphen morphism apply --store <dir> --case-space-id <id> --morphism-id <id>
 casegraphen morphism reject --store <dir> --case-space-id <id> --morphism-id <id> --reviewer-id <id> --reason <text> --revision-id <id> --format json
 ```
 
-The first implementation intentionally bounds morphism application to
-metadata-only morphisms because typed reducers for arbitrary cell/relation
-payloads are not yet part of the native store. Candidate morphisms are proposed
-into a native proposal area under the supplied store root, checked against the
-current replayed case-space revision, then either appended through
-`morphism apply` or rejected by an explicit review morphism.
+Candidate morphisms are proposed into a native proposal area under the supplied
+store root, checked against the current case-space revision, reduced through the
+typed cell/relation reducer, then either appended through `morphism apply` or
+rejected by an explicit review morphism. Application and rejection commands
+validate their operation gates before construction, and the store validates the
+recorded gate again before every append.
 
-Planned review commands:
+Implemented review mutation commands:
 
 ```sh
-casegraphen review list --store <dir> --case-space-id <id> --format json
 casegraphen review accept --store <dir> --case-space-id <id> --target-id <id> --reviewer-id <id> --reason <text> --format json
 casegraphen review reject --store <dir> --case-space-id <id> --target-id <id> --reviewer-id <id> --reason <text> --format json
 casegraphen review reopen --store <dir> --case-space-id <id> --target-id <id> --reviewer-id <id> --reason <text> --format json
 casegraphen review waive --store <dir> --case-space-id <id> --target-id <id> --reviewer-id <id> --reason <text> --format json
 ```
 
-These `review ...` commands are not implemented in the current CLI. Until that
-surface exists, review state is represented through native morphism
-proposal/check/apply/reject flows and metadata-only review morphisms.
+These commands produce typed or metadata-only review morphisms as appropriate,
+validate an operation gate before construction, and append through the gated
+store boundary. There is no `review list` command in the current CLI.
 
 `space topology` emits a native CLI operation report with topology
 diagnostics under `result.topology`. Baseline output omits
@@ -739,9 +765,9 @@ The native package contract defines strict serde model boundaries in
 `tools/casegraphen/src/native_model.rs`, a stable package-level report envelope
 in `tools/casegraphen/src/native_report.rs`, and the current file-backed native
 store, evaluator, close-check, and CLI routing in `tools/casegraphen/src/`.
-Review commands and arbitrary payload materialization remain planned; current
-mutation is intentionally bounded to metadata-only morphism append/reject
-flows.
+Review commands and typed payload materialization are implemented for the
+current native mutation surface. Additional domain-specific reducer operations
+remain subject to their command contracts.
 
 Versioned JSON contracts live in:
 
@@ -863,11 +889,11 @@ Recommended implementation sequence and status:
 5. Add read-only CLI commands under the canonical `space`, `obstruction`,
    `completion`, `projection`, `equivalence`, and `invariant` namespaces, with
    `case ...` retained only as transitional aliases. Implemented.
-6. Add morphism proposal/check/apply/reject commands with conservative
-   metadata-only materialization. Implemented.
+6. Add morphism proposal/check/apply/reject commands with typed cell/relation
+   payload materialization. Implemented.
 7. Add close-check. Implemented.
-8. Add full review commands, arbitrary typed morphism reducers, and native
-   `case close`. Planned.
+8. Add review mutation commands and arbitrary typed morphism reducers.
+   Implemented. Native `case close` remains planned.
 9. Add migration from current workflow graph stores and keep the bridge
    documented as transitional.
 10. Update skills, examples, and verification gates after command names are
@@ -894,7 +920,7 @@ morphism promotes or waives it.
 
 Final verification status for `task_native_case_e2e_verification`: the native
 reference fixture and CLI integration tests exercise create, import, list,
-inspect, history, replay, reason, frontier, obstructions, completions,
+inspect, history, replay, rebuild, validation, reason, frontier, obstructions, completions,
 evidence, project, close-check, and morphism propose/check/apply/reject flows.
 The native case-space and native report example JSON files are validated
 against their checked-in JSON Schema files by package integration tests. The

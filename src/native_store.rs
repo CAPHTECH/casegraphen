@@ -1,7 +1,8 @@
 use crate::native_model::{
-    apply_morphism, CaseSpace, MorphismLogEntry, Revision, NATIVE_CASE_SPACE_SCHEMA,
-    NATIVE_CASE_SPACE_SCHEMA_VERSION, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
+    apply_morphism, genesis_case_space_materialization, CaseSpace, MorphismLogEntry, Revision,
+    NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
 };
+use crate::native_review::{check_operation_gate, NativeOperationGate};
 use higher_graphen_core::Id;
 use serde_json::Map;
 use std::{
@@ -31,6 +32,20 @@ impl NativeCaseStore {
         validate_materialized_log(&self.root, case_space)?;
         let latest = latest_entry(&case_space.morphism_log, &self.root)?;
         require_snapshot_checksum(&self.root, case_space, latest)?;
+        let folded = fold_morphism_log(&self.root, &case_space.morphism_log)?;
+        let reconstructed = folded
+            .last()
+            .expect("importable materialized log is non-empty");
+        require_fold_checksum(&self.root, reconstructed)?;
+        if reconstructed.case_space != *case_space {
+            return Err(NativeStoreError::ReplayMismatch {
+                path: self.root.clone(),
+                reason: format!(
+                    "genesis morphism does not reconstruct imported case space {} at revision {}",
+                    case_space.case_space_id, case_space.revision.revision_id
+                ),
+            });
+        }
 
         let case_dir = self.case_dir(&case_space.case_space_id);
         fs::create_dir_all(self.native_root()).map_err(|source| NativeStoreError::Io {
@@ -101,6 +116,7 @@ impl NativeCaseStore {
         let _lock = CaseLockGuard::acquire(&case_dir)?;
         let replay = self.replay_current_case_space(case_space_id)?;
         let log_path = self.log_path(case_space_id);
+        require_valid_operation_gate(&log_path, &replay.case_space, &entry)?;
         validate_append(&log_path, &replay.case_space, &entry, &replay.history)?;
 
         let mut next = replay.case_space;
@@ -213,7 +229,7 @@ impl NativeCaseStore {
             source,
         })?;
         let entries = parse_log_entries(&path, &text)?;
-        validate_log_entries(self, Some(case_space_id), &path, &entries)?;
+        validate_log_entries(Some(case_space_id), &path, &entries)?;
         Ok(entries)
     }
 
@@ -246,6 +262,16 @@ impl NativeCaseStore {
         case_space_id: &Id,
     ) -> NativeStoreResult<NativeCaseSpaceValidation> {
         let replay = self.replay_current_case_space(case_space_id)?;
+        let folded = fold_morphism_log(&self.log_path(case_space_id), &replay.history)?;
+        let current = folded
+            .last()
+            .expect("validated morphism history is non-empty");
+        require_snapshot_agrees_with_fold(
+            &self.log_path(case_space_id),
+            &replay.case_space,
+            current,
+        )?;
+        require_fold_checksum(&self.log_path(case_space_id), current)?;
         Ok(NativeCaseSpaceValidation {
             schema: NATIVE_CASE_SPACE_VALIDATION_SCHEMA.to_owned(),
             schema_version: NATIVE_STORE_SCHEMA_VERSION,
@@ -256,6 +282,75 @@ impl NativeCaseStore {
         })
     }
 
+    pub fn rebuild_case_space(
+        &self,
+        case_space_id: &Id,
+    ) -> NativeStoreResult<NativeCaseSpaceRebuild> {
+        let case_dir = self.case_dir(case_space_id);
+        if !case_dir.is_dir() {
+            return Err(NativeStoreError::MissingCase {
+                case_space_id: case_space_id.clone(),
+                path: self.log_path(case_space_id),
+            });
+        }
+        let _lock = CaseLockGuard::acquire(&case_dir)?;
+        let entries = self.history_entries(case_space_id)?;
+        let log_path = self.log_path(case_space_id);
+        let folded = fold_morphism_log(&log_path, &entries)?;
+        let mut reports = Vec::with_capacity(folded.len());
+        let mut missing = Vec::new();
+
+        for (index, revision) in folded.iter().enumerate() {
+            let entry = &entries[index];
+            let relative_snapshot_path =
+                self.relative_snapshot_path(case_space_id, &entry.target_revision_id);
+            let snapshot_path = self.resolve_snapshot_path(&relative_snapshot_path, &log_path)?;
+            let snapshot_status = match fs::metadata(&snapshot_path) {
+                Ok(_) => {
+                    let snapshot =
+                        read_verified_snapshot(&snapshot_path, entry, &entries[..=index]).map_err(
+                            |error| snapshot_fold_disagreement(&snapshot_path, entry, error),
+                        )?;
+                    require_snapshot_agrees_with_fold(&snapshot_path, &snapshot, revision)?;
+                    NativeSnapshotStatus::Agrees
+                }
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                    missing.push((snapshot_path, revision.case_space.clone()));
+                    NativeSnapshotStatus::Rebuilt
+                }
+                Err(source) => {
+                    return Err(NativeStoreError::Io {
+                        path: snapshot_path,
+                        source,
+                    });
+                }
+            };
+            require_fold_checksum(&log_path, revision)?;
+            reports.push(NativeRebuildRevision {
+                revision_id: entry.target_revision_id.clone(),
+                sequence: entry.sequence,
+                snapshot_path: relative_snapshot_path,
+                computed_checksum: revision.computed_checksum.clone(),
+                replay_checksum: entry.replay_checksum.clone(),
+                snapshot_status,
+            });
+        }
+
+        for (snapshot_path, case_space) in missing {
+            write_json_create_new(&snapshot_path, &case_space)?;
+        }
+
+        let latest = latest_entry(&entries, &log_path)?;
+        Ok(NativeCaseSpaceRebuild {
+            schema: NATIVE_CASE_SPACE_REBUILD_SCHEMA.to_owned(),
+            schema_version: NATIVE_STORE_SCHEMA_VERSION,
+            case_space_id: case_space_id.clone(),
+            current_revision_id: latest.target_revision_id.clone(),
+            revision_count: reports.len() as u32,
+            revisions: reports,
+        })
+    }
+
     fn inspect_directory(&self, directory: &Path) -> NativeStoreResult<NativeCaseSpaceRecord> {
         let log_path = directory.join("morphism_log.jsonl");
         let text = fs::read_to_string(&log_path).map_err(|source| NativeStoreError::Io {
@@ -263,7 +358,7 @@ impl NativeCaseStore {
             source,
         })?;
         let entries = parse_log_entries(&log_path, &text)?;
-        validate_log_entries(self, None, &log_path, &entries)?;
+        validate_log_entries(None, &log_path, &entries)?;
         let latest = latest_entry(&entries, &log_path)?;
         native_record(self, &latest.case_space_id, &entries)
     }
@@ -453,7 +548,6 @@ fn snapshot_already_exists(
 }
 
 fn validate_log_entries(
-    store: &NativeCaseStore,
     expected_case_space_id: Option<&Id>,
     path: &Path,
     entries: &[MorphismLogEntry],
@@ -522,11 +616,6 @@ fn validate_log_entries(
                 format!("duplicate morphism {}", entry.morphism_id),
             ));
         }
-        let snapshot_path = store.resolve_snapshot_path(
-            &store.relative_snapshot_path(&entry.case_space_id, &entry.target_revision_id),
-            path,
-        )?;
-        read_verified_snapshot(&snapshot_path, entry, &entries[..=index])?;
         previous_revision_id = Some(entry.target_revision_id.clone());
     }
     Ok(())
@@ -627,6 +716,173 @@ fn apply_bounded_morphism(
     require_referenced_ids_exist(path, case_space, &morphism.preserved_ids)?;
     require_referenced_ids_exist(path, case_space, &morphism.evidence_ids)?;
     Ok(())
+}
+
+struct FoldedRevision {
+    entry_id: Id,
+    revision_id: Id,
+    replay_checksum: String,
+    computed_checksum: String,
+    case_space: CaseSpace,
+}
+
+fn fold_morphism_log(
+    path: &Path,
+    entries: &[MorphismLogEntry],
+) -> NativeStoreResult<Vec<FoldedRevision>> {
+    let genesis = entries
+        .first()
+        .ok_or_else(|| NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: "morphism log is empty".to_owned(),
+        })?;
+    let materialization = genesis_case_space_materialization(&genesis.morphism)
+        .map_err(|error| invalid_morphism(path, error.to_string()))?;
+    let genesis_revision_metadata = materialization.revision_metadata;
+    let mut case_space = CaseSpace {
+        schema: NATIVE_CASE_SPACE_SCHEMA.to_owned(),
+        schema_version: NATIVE_CASE_SPACE_SCHEMA_VERSION,
+        case_space_id: genesis.case_space_id.clone(),
+        space_id: materialization.space_id,
+        case_cells: Vec::new(),
+        case_relations: Vec::new(),
+        morphism_log: Vec::new(),
+        projections: materialization.projections,
+        revision: revision_from_entry(&genesis.case_space_id, genesis),
+        close_policy_id: materialization.close_policy_id,
+        metadata: materialization.metadata,
+    };
+
+    let mut revisions = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        apply_bounded_morphism(path, &mut case_space, entry).map_err(|error| {
+            NativeStoreError::ReplayMismatch {
+                path: path.to_owned(),
+                reason: format!(
+                    "cannot fold morphism {} for revision {}: {error}",
+                    entry.morphism_id, entry.target_revision_id
+                ),
+            }
+        })?;
+        case_space.morphism_log.push(entry.clone());
+        case_space.revision = revision_from_entry(&case_space.case_space_id, entry);
+        if index == 0 {
+            case_space.revision.metadata = genesis_revision_metadata.clone();
+        }
+        require_ids_exist(path, &case_space)?;
+        let computed_checksum = case_space_checksum(&case_space)?;
+        revisions.push(FoldedRevision {
+            entry_id: entry.entry_id.clone(),
+            revision_id: entry.target_revision_id.clone(),
+            replay_checksum: entry.replay_checksum.clone(),
+            computed_checksum,
+            case_space: case_space.clone(),
+        });
+    }
+    Ok(revisions)
+}
+
+fn require_fold_checksum(path: &Path, folded: &FoldedRevision) -> NativeStoreResult<()> {
+    if folded.computed_checksum == folded.replay_checksum {
+        return Ok(());
+    }
+    Err(NativeStoreError::ReplayMismatch {
+        path: path.to_owned(),
+        reason: format!(
+            "revision {} disagrees with folded log at entry {}: computed checksum {}, replay_checksum {}",
+            folded.revision_id,
+            folded.entry_id,
+            folded.computed_checksum,
+            folded.replay_checksum
+        ),
+    })
+}
+
+fn require_snapshot_agrees_with_fold(
+    path: &Path,
+    snapshot: &CaseSpace,
+    folded: &FoldedRevision,
+) -> NativeStoreResult<()> {
+    if snapshot == &folded.case_space {
+        return Ok(());
+    }
+    Err(NativeStoreError::ReplayMismatch {
+        path: path.to_owned(),
+        reason: format!(
+            "snapshot for revision {} disagrees with folded morphism log at entry {}",
+            folded.revision_id, folded.entry_id
+        ),
+    })
+}
+
+fn snapshot_fold_disagreement(
+    path: &Path,
+    entry: &MorphismLogEntry,
+    error: NativeStoreError,
+) -> NativeStoreError {
+    NativeStoreError::ReplayMismatch {
+        path: path.to_owned(),
+        reason: format!(
+            "snapshot for revision {} cannot agree with folded morphism log: {error}",
+            entry.target_revision_id
+        ),
+    }
+}
+
+fn require_valid_operation_gate(
+    path: &Path,
+    case_space: &CaseSpace,
+    entry: &MorphismLogEntry,
+) -> NativeStoreResult<()> {
+    let value = entry
+        .morphism
+        .metadata
+        .get("operation_gate")
+        .ok_or_else(|| {
+            invalid_morphism(
+                path,
+                format!(
+                    "morphism {} is missing required metadata.operation_gate",
+                    entry.morphism_id
+                ),
+            )
+        })?;
+    let gate: NativeOperationGate = serde_json::from_value(value.clone()).map_err(|error| {
+        invalid_morphism(
+            path,
+            format!(
+                "morphism {} has malformed metadata.operation_gate: {error}",
+                entry.morphism_id
+            ),
+        )
+    })?;
+    if gate.operation.trim().is_empty() {
+        return Err(invalid_morphism(
+            path,
+            format!(
+                "morphism {} metadata.operation_gate.operation must not be empty",
+                entry.morphism_id
+            ),
+        ));
+    }
+    if entry.actor_id != gate.actor_id {
+        return Err(invalid_morphism(
+            path,
+            format!(
+                "morphism {} metadata.operation_gate.actor_id {} does not match log actor_id {}",
+                entry.morphism_id, gate.actor_id, entry.actor_id
+            ),
+        ));
+    }
+    check_operation_gate(case_space, &gate, &gate.operation).map_err(|error| {
+        invalid_morphism(
+            path,
+            format!(
+                "morphism {} has invalid metadata.operation_gate: {error}",
+                entry.morphism_id
+            ),
+        )
+    })
 }
 
 fn revision_from_entry(case_space_id: &Id, entry: &MorphismLogEntry) -> Revision {

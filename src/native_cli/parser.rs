@@ -102,6 +102,11 @@ impl NativeCliCommand {
                 case_space_id: options.require_id("--case-space-id")?,
                 output: options.output,
             }),
+            "rebuild" => Ok(Self::CaseRebuild {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                output: options.output,
+            }),
             "validate" => Ok(Self::CaseValidate {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
@@ -166,6 +171,11 @@ impl NativeCliCommand {
                 output: options.output,
             }),
             "replay" => Ok(Self::CaseReplay {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                output: options.output,
+            }),
+            "rebuild" => Ok(Self::CaseRebuild {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
                 output: options.output,

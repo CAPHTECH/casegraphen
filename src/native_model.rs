@@ -285,6 +285,19 @@ pub struct MorphismPayload {
     pub updated_relations: Vec<CaseRelation>,
 }
 
+pub(crate) const GENESIS_CASE_SPACE_METADATA_KEY: &str = "genesis_case_space";
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GenesisCaseSpaceMaterialization {
+    pub space_id: Id,
+    pub projections: Vec<Projection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_policy_id: Option<Id>,
+    pub metadata: Map<String, Value>,
+    pub revision_metadata: Map<String, Value>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MorphismApplyError {
     reason: String,
@@ -306,10 +319,89 @@ impl fmt::Display for MorphismApplyError {
 
 impl std::error::Error for MorphismApplyError {}
 
+pub(crate) fn write_genesis_materialization(
+    case_space: &mut CaseSpace,
+) -> Result<(), MorphismApplyError> {
+    if case_space.morphism_log.len() != 1 {
+        return Err(MorphismApplyError::new(
+            "genesis materialization requires exactly one morphism log entry",
+        ));
+    }
+
+    let payload = MorphismPayload {
+        added_cells: case_space.case_cells.clone(),
+        added_relations: case_space.case_relations.clone(),
+        ..MorphismPayload::default()
+    };
+    let added_ids = payload
+        .added_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .chain(
+            payload
+                .added_relations
+                .iter()
+                .map(|relation| relation.id.clone()),
+        )
+        .collect();
+    let materialization = GenesisCaseSpaceMaterialization {
+        space_id: case_space.space_id.clone(),
+        projections: case_space.projections.clone(),
+        close_policy_id: case_space.close_policy_id.clone(),
+        metadata: case_space.metadata.clone(),
+        revision_metadata: case_space.revision.metadata.clone(),
+    };
+    let genesis = &mut case_space.morphism_log[0].morphism;
+    genesis.added_ids = added_ids;
+    genesis.metadata.insert(
+        "payload".to_owned(),
+        serde_json::to_value(payload).map_err(|error| {
+            MorphismApplyError::new(format!(
+                "cannot serialize genesis morphism {} payload: {error}",
+                genesis.morphism_id
+            ))
+        })?,
+    );
+    genesis.metadata.insert(
+        GENESIS_CASE_SPACE_METADATA_KEY.to_owned(),
+        serde_json::to_value(materialization).map_err(|error| {
+            MorphismApplyError::new(format!(
+                "cannot serialize genesis morphism {} case-space materialization: {error}",
+                genesis.morphism_id
+            ))
+        })?,
+    );
+    Ok(())
+}
+
+pub(crate) fn genesis_case_space_materialization(
+    morphism: &CaseMorphism,
+) -> Result<GenesisCaseSpaceMaterialization, MorphismApplyError> {
+    let value = morphism
+        .metadata
+        .get(GENESIS_CASE_SPACE_METADATA_KEY)
+        .ok_or_else(|| {
+            MorphismApplyError::new(format!(
+                "genesis morphism {} is missing metadata.{GENESIS_CASE_SPACE_METADATA_KEY}",
+                morphism.morphism_id
+            ))
+        })?;
+    serde_json::from_value(value.clone()).map_err(|error| {
+        MorphismApplyError::new(format!(
+            "genesis morphism {} has malformed metadata.{GENESIS_CASE_SPACE_METADATA_KEY}: {error}",
+            morphism.morphism_id
+        ))
+    })
+}
+
 pub fn apply_morphism(
     case_space: &mut CaseSpace,
     morphism: &CaseMorphism,
 ) -> Result<(), MorphismApplyError> {
+    let is_genesis = morphism.source_revision_id.is_none()
+        && case_space.case_cells.is_empty()
+        && case_space.case_relations.is_empty()
+        && case_space.morphism_log.is_empty();
     let payload = morphism_payload(morphism)?;
     let (declared_added, declared_updated) = validate_declared_morphism_ids(morphism)?;
     let (payload_added, payload_updated) = validate_payload_ids(morphism, &payload)?;
@@ -332,7 +424,7 @@ pub fn apply_morphism(
     let mut known_ids = materialized_ids(&next);
 
     for cell in payload.added_cells {
-        require_not_capability_administration(morphism, &cell, "add")?;
+        require_not_capability_administration(morphism, &cell, "add", is_genesis)?;
         if !known_ids.insert(cell.id.clone()) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -362,8 +454,8 @@ pub fn apply_morphism(
                     morphism.morphism_id, cell.id
                 ))
             })?;
-        require_not_capability_administration(morphism, existing, "update")?;
-        require_not_capability_administration(morphism, &cell, "update")?;
+        require_not_capability_administration(morphism, existing, "update", is_genesis)?;
+        require_not_capability_administration(morphism, &cell, "update", is_genesis)?;
         require_immutable_cell_update_fields(morphism, existing, &cell)?;
         require_lifecycle_transition(morphism, &cell.id, existing.lifecycle, cell.lifecycle)?;
         *existing = cell;
@@ -388,7 +480,7 @@ pub fn apply_morphism(
             .iter_mut()
             .find(|candidate| candidate.id == *id)
         {
-            require_not_capability_administration(morphism, cell, "retire")?;
+            require_not_capability_administration(morphism, cell, "retire", is_genesis)?;
             require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
             cell.lifecycle = CaseCellLifecycle::Retired;
         } else if let Some(index) = next
@@ -580,8 +672,9 @@ fn require_not_capability_administration(
     morphism: &CaseMorphism,
     cell: &CaseCell,
     operation: &str,
+    is_genesis: bool,
 ) -> Result<(), MorphismApplyError> {
-    if cell.cell_type != CaseCellType::Custom("capability".to_owned()) {
+    if cell.cell_type != CaseCellType::Custom("capability".to_owned()) || is_genesis {
         return Ok(());
     }
     Err(MorphismApplyError::new(format!(

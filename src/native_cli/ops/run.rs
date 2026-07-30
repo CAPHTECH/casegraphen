@@ -318,6 +318,7 @@ pub(in crate::native_cli) fn run_step(
         &trace_identity,
         &worker_report,
         &relation_requirement_ids,
+        &gate,
     )?;
     let evidence_report = append_validated_morphism(
         &store_api,
@@ -355,6 +356,7 @@ pub(in crate::native_cli) fn run_step(
             step,
             &trace_identity,
             &evidence_cell_id,
+            &gate,
         )?;
         let mut candidate = post_evidence.case_space.clone();
         apply_morphism(&mut candidate, &transition)
@@ -942,6 +944,10 @@ impl TraceGuard {
             Value::String(status.to_owned()),
         );
         self.finished = true;
+        if check_operation_gate(case_space, &self.trace.operation_gate, "dispatch").is_err() {
+            write_trace(&self.run_directory, &self.trace)?;
+            return Ok(self.trace.clone());
+        }
         write_and_anchor_trace(
             &self.store,
             &self.actor_id,
@@ -1113,6 +1119,7 @@ fn evidence_morphism(
     identity: &TraceIdentity,
     worker_report: &WorkerReport,
     requirement_ids: &[Id],
+    operation_gate: &NativeOperationGate,
 ) -> Result<CaseMorphism, NativeCliError> {
     let evidence_id = Id::new(format!(
         "evidence:worker-output:{}",
@@ -1191,6 +1198,10 @@ fn evidence_morphism(
     metadata.insert("plan_id".to_owned(), json!(plan.plan_id));
     metadata.insert("step_id".to_owned(), json!(step.step_id));
     metadata.insert("trace_id".to_owned(), json!(identity.trace_id));
+    metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(operation_gate)?,
+    );
     Ok(CaseMorphism {
         morphism_id: Id::new(format!(
             "morphism:worker-evidence:{}",
@@ -1220,6 +1231,7 @@ fn transition_morphism(
     step: &ExecutionStep,
     identity: &TraceIdentity,
     evidence_cell_id: &Id,
+    operation_gate: &NativeOperationGate,
 ) -> Result<CaseMorphism, NativeCliError> {
     let mut updated_cell = case_space
         .case_cells
@@ -1250,6 +1262,10 @@ fn transition_morphism(
     metadata.insert(
         "authorization_source".to_owned(),
         Value::String("accepted_execution_plan".to_owned()),
+    );
+    metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(operation_gate)?,
     );
     Ok(CaseMorphism {
         morphism_id: Id::new(format!(
@@ -1339,6 +1355,10 @@ fn write_and_anchor_trace(
                 Value::String(trace_content_hash),
             ),
             ("trace_path".to_owned(), Value::String(relative_trace_path)),
+            (
+                "operation_gate".to_owned(),
+                serde_json::to_value(&trace.operation_gate)?,
+            ),
         ]),
     };
     let store_api = NativeCaseStore::new(store.to_path_buf());

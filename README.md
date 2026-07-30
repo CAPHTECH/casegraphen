@@ -16,19 +16,25 @@ and continues as a standalone repository from 0.8.0. See
 
 An LLM or agent proposes; CaseGraphen decides. Concretely:
 
-- The append-only, hash-chained `MorphismLog` is the source of truth. The
-  materialized case space is a replay result; if a snapshot and the log
-  disagree, replay wins and the disagreement is an error, not a preference.
-- Readiness, the frontier, and blockers are **derived** by replay. They are
-  never stored as mutable state.
+- The append-only, hash-chained `MorphismLog` is reconstructive source data:
+  genesis carries the complete initial cell/relation payload and the immutable
+  case-space shell, and later entries carry reducer payloads. `space rebuild`
+  folds that log from an empty case space, verifies every revision checksum,
+  recreates missing snapshots, and refuses to overwrite a snapshot that
+  disagrees. `space replay` itself reads the current snapshot after verifying
+  its checksum and embedded log prefix; `space validate` additionally proves
+  that a full log fold reproduces the current snapshot.
+- Readiness, the frontier, and blockers are **derived** from the loaded case
+  space. They are never stored as mutable state.
 - Generated structure — obstructions, completions, inferred evidence, proposed
   morphisms — is born `unreviewed` and stays that way until an explicit review
   morphism accepts it. Inferred evidence does not satisfy a hard requirement.
 - A morphism applies only when its base revision matches the replayed revision
   and the required checks pass.
-- Every durable mutation requires an operation gate naming an actor, a
-  capability that actually grants that actor, a scope, an audience, and a source
-  boundary. The validated gate is recorded with the mutation.
+- Every durable mutation after the explicitly ungated genesis import requires an
+  operation gate naming an actor, a capability that actually grants that actor,
+  a scope, an audience, and a source boundary. Commands validate the gate before
+  building a morphism, and the store validates it again at the append boundary.
 
 ## Execution control
 
@@ -81,7 +87,7 @@ All commands take `--format json` and optionally `--output <path>`.
 
 ```text
 casegraphen lift native|workflow|case-graph      # bounded lift into a case space
-casegraphen space new|list|inspect|history|replay|validate|reason|frontier|topology
+casegraphen space new|list|inspect|history|replay|rebuild|validate|reason|frontier|topology
 casegraphen case  ... |obstructions|completions|evidence|project|close-check
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
 casegraphen review accept|reject|reopen|waive     # gated

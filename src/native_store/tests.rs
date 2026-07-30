@@ -1,5 +1,5 @@
 use super::*;
-use crate::native_model::{CaseMorphismType, CaseSpace};
+use crate::native_model::{CaseMorphismType, CaseSpace, ProjectionAudience};
 use higher_graphen_core::{Id, ReviewStatus};
 use std::{
     fs::{self, FileTimes, OpenOptions},
@@ -45,6 +45,182 @@ fn import_list_inspect_history_and_replay_case_space() {
             .valid
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn genesis_payload_round_trips_after_its_snapshot_is_rebuilt() {
+    let root = temp_root("genesis-rebuild");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import reconstructable genesis");
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("genesis snapshot path");
+    fs::remove_file(&snapshot_path).expect("delete genesis snapshot");
+
+    let rebuild = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect("rebuild genesis from log");
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay rebuilt genesis");
+
+    assert_eq!(rebuild.revisions.len(), 1);
+    assert_eq!(
+        rebuild.revisions[0].snapshot_status,
+        NativeSnapshotStatus::Rebuilt
+    );
+    assert_eq!(replay.case_space, case_space);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn rebuild_recovers_a_deleted_current_snapshot() {
+    let root = temp_root("current-rebuild");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second revision");
+    let expected = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay before snapshot deletion")
+        .case_space;
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store
+                .relative_snapshot_path(&case_space.case_space_id, &expected.revision.revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("current snapshot path");
+    fs::remove_file(&snapshot_path).expect("delete current snapshot");
+
+    let rebuild = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect("recover current snapshot");
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay recovered current snapshot");
+
+    assert_eq!(rebuild.revisions.len(), 2);
+    assert_eq!(
+        rebuild.revisions[0].snapshot_status,
+        NativeSnapshotStatus::Agrees
+    );
+    assert_eq!(
+        rebuild.revisions[1].snapshot_status,
+        NativeSnapshotStatus::Rebuilt
+    );
+    assert_eq!(replay.case_space, expected);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn snapshot_disagreement_with_fold_fails_rebuild_and_validation() {
+    let root = temp_root("fold-disagreement");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(
+                &case_space.case_space_id,
+                &case_space.revision.revision_id,
+            ),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("snapshot path");
+    let mut snapshot: CaseSpace =
+        serde_json::from_value(read_json(&snapshot_path)).expect("typed snapshot");
+    snapshot.morphism_log[0].morphism.metadata["payload"]["added_cells"][0]["title"] =
+        serde_json::json!("Title supplied only by the folded log");
+    snapshot.revision.checksum.clear();
+    snapshot.morphism_log[0].replay_checksum.clear();
+    let checksum = case_space_checksum(&snapshot).expect("tampered snapshot checksum");
+    snapshot.revision.checksum = checksum.clone();
+    snapshot.morphism_log[0].replay_checksum = checksum;
+    write_json_value(
+        &snapshot_path,
+        &serde_json::to_value(&snapshot).expect("snapshot value"),
+    );
+    rewrite_history(&store, &case_space.case_space_id, &snapshot.morphism_log);
+
+    let rebuild_error = store
+        .rebuild_case_space(&case_space.case_space_id)
+        .expect_err("disagreeing snapshot must not be overwritten");
+    let validation_error = store
+        .validate_case_space(&case_space.case_space_id)
+        .expect_err("validation must compare snapshot with folded log");
+
+    for error in [rebuild_error, validation_error] {
+        assert!(matches!(error, NativeStoreError::ReplayMismatch { .. }));
+        assert!(error
+            .to_string()
+            .contains("disagrees with folded morphism log"));
+        assert!(error
+            .to_string()
+            .contains(case_space.revision.revision_id.as_str()));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn append_refuses_a_morphism_without_an_operation_gate() {
+    let root = temp_root("missing-operation-gate");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let mut entry = metadata_entry(&case_space);
+    entry.morphism.metadata.remove("operation_gate");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("ungated append must fail at the store boundary");
+
+    assert!(matches!(error, NativeStoreError::InvalidMorphism { .. }));
+    assert!(error
+        .to_string()
+        .contains("missing required metadata.operation_gate"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn genesis_import_is_the_ungated_append_exemption() {
+    let root = temp_root("ungated-genesis");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    assert!(!case_space.morphism_log[0]
+        .morphism
+        .metadata
+        .contains_key("operation_gate"));
+
+    let record = store
+        .import_case_space(&case_space)
+        .expect("genesis import remains explicitly ungated");
+
+    assert_eq!(record.history_entry_count, 1);
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("validate imported genesis")
+            .valid
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -624,6 +800,19 @@ fn metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
     entry.morphism.retired_ids = Vec::new();
     entry.morphism.preserved_ids = vec![id("goal:native-case-contract")];
     entry.morphism.review_status = ReviewStatus::Reviewed;
+    entry.morphism.metadata = serde_json::Map::new();
+    entry.morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::json!({
+            "actor_id": "actor:native-mutation-cli",
+            "operation": "store-test",
+            "operation_scope_id": case_space.case_space_id,
+            "audience": ProjectionAudience::Audit,
+            "capability_ids": ["capability:durable-mutation"],
+            "source_boundary_id": "source_boundary:native-case-management-contract"
+        }),
+    );
+    entry.actor_id = id("actor:native-mutation-cli");
     entry.previous_entry_hash = Some(
         crate::native_hash::morphism_log_entry_hash(
             case_space

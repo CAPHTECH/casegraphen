@@ -1285,6 +1285,49 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
 }
 
 #[test]
+fn space_rebuild_recovers_a_deleted_current_snapshot() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:native-cli-rebuild");
+    let imported_json = stdout_json(&imported);
+    let relative_snapshot = imported_json["result"]["record"]["current_snapshot_path"]
+        .as_str()
+        .expect("current snapshot path");
+    let snapshot_path = directory.join(relative_snapshot);
+    fs::remove_file(&snapshot_path).expect("delete current snapshot");
+
+    let rebuild = run_cli(&[
+        "space",
+        "rebuild",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+
+    assert!(rebuild.status.success(), "stderr: {}", stderr(&rebuild));
+    let rebuild_json = stdout_json(&rebuild);
+    assert_eq!(
+        rebuild_json["metadata"]["command"],
+        json!("casegraphen space rebuild")
+    );
+    assert_eq!(
+        rebuild_json["result"]["rebuild"]["revisions"][0]["snapshot_status"],
+        json!("rebuilt")
+    );
+    assert!(snapshot_path.exists());
+    let validation = run_native_case_store_command(&directory, "validate");
+    assert_eq!(
+        stdout_json(&validation)["result"]["validation"]["valid"],
+        json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn canonical_higher_order_commands_route_to_native_reports() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

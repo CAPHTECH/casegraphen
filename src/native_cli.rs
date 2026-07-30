@@ -72,6 +72,11 @@ pub(crate) enum NativeCliCommand {
         case_space_id: Id,
         output: Option<PathBuf>,
     },
+    CaseRebuild {
+        store: PathBuf,
+        case_space_id: Id,
+        output: Option<PathBuf>,
+    },
     CaseValidate {
         store: PathBuf,
         case_space_id: Id,
@@ -248,6 +253,7 @@ impl NativeCliCommand {
             | Self::CaseInspect { output, .. }
             | Self::CaseHistory { output, .. }
             | Self::CaseReplay { output, .. }
+            | Self::CaseRebuild { output, .. }
             | Self::CaseValidate { output, .. }
             | Self::InvariantCheck { output, .. }
             | Self::CaseReason { output, .. }
@@ -284,6 +290,7 @@ impl NativeCliCommand {
             | Self::CaseInspect { .. }
             | Self::CaseHistory { .. }
             | Self::CaseReplay { .. }
+            | Self::CaseRebuild { .. }
             | Self::CaseValidate { .. }
             | Self::InvariantCheck { .. }
             | Self::CaseReason { .. }
@@ -316,6 +323,7 @@ impl NativeCliCommand {
             | Self::CaseInspect { .. }
             | Self::CaseHistory { .. }
             | Self::CaseReplay { .. }
+            | Self::CaseRebuild { .. }
             | Self::CaseValidate { .. } => self.run_case_store_value(),
             Self::InvariantCheck { .. }
             | Self::CaseReason { .. }
@@ -367,6 +375,11 @@ impl NativeCliCommand {
                 case_space_id,
                 ..
             } => case_replay(store, case_space_id)?,
+            Self::CaseRebuild {
+                store,
+                case_space_id,
+                ..
+            } => case_rebuild(store, case_space_id)?,
             Self::CaseValidate {
                 store,
                 case_space_id,
@@ -660,6 +673,14 @@ fn case_replay(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliError
     Ok(report(
         "casegraphen space replay",
         json!({ "replay": replay }),
+    ))
+}
+
+fn case_rebuild(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliError> {
+    let rebuild = NativeCaseStore::new(store.to_path_buf()).rebuild_case_space(case_space_id)?;
+    Ok(report(
+        "casegraphen space rebuild",
+        json!({ "rebuild": rebuild }),
     ))
 }
 

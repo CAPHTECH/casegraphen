@@ -11,9 +11,9 @@ use crate::{
     math_diagnostics::{native_close_temporal_diagnostics, native_morphism_temporal_diagnostics},
     native_eval::evaluate_native_case,
     native_model::{
-        apply_morphism, CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType,
-        CaseSpace, MorphismLogEntry, ProjectionAudience, ReviewAction, Revision,
-        NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
+        apply_morphism, write_genesis_materialization, CaseCell, CaseCellLifecycle, CaseCellType,
+        CaseMorphism, CaseMorphismType, CaseSpace, MorphismLogEntry, ProjectionAudience,
+        ReviewAction, Revision, NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
     native_review::{
@@ -493,6 +493,8 @@ fn new_case_space(
     };
     case_space.revision.applied_entry_ids = vec![case_space.morphism_log[0].entry_id.clone()];
     case_space.revision.applied_morphism_ids = vec![case_space.morphism_log[0].morphism_id.clone()];
+    write_genesis_materialization(&mut case_space)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     let checksum = case_space_checksum(&case_space)?;
     case_space.revision.checksum = checksum.clone();
     case_space.morphism_log[0].replay_checksum = checksum;
@@ -638,18 +640,27 @@ fn retarget_latest_revision(
     case_space: &mut CaseSpace,
     revision_id: &Id,
 ) -> Result<(), NativeCliError> {
-    let latest = case_space
-        .morphism_log
-        .last_mut()
-        .ok_or_else(|| NativeCliError::invalid("case space morphism_log is empty"))?;
-    latest.target_revision_id = revision_id.clone();
-    latest.morphism.target_revision_id = revision_id.clone();
+    {
+        let latest = case_space
+            .morphism_log
+            .last_mut()
+            .ok_or_else(|| NativeCliError::invalid("case space morphism_log is empty"))?;
+        latest.target_revision_id = revision_id.clone();
+        latest.morphism.target_revision_id = revision_id.clone();
+    }
     case_space.revision.revision_id = revision_id.clone();
     for projection in &mut case_space.projections {
         projection.revision_id = revision_id.clone();
     }
+    write_genesis_materialization(case_space)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     case_space.revision.checksum.clear();
-    latest.replay_checksum.clear();
+    case_space
+        .morphism_log
+        .last_mut()
+        .expect("latest checked")
+        .replay_checksum
+        .clear();
     let checksum = case_space_checksum(case_space)?;
     case_space.revision.checksum = checksum.clone();
     case_space

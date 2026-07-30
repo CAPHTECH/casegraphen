@@ -7,6 +7,7 @@ pub type NativeStoreResult<T> = Result<T, NativeStoreError>;
 
 pub const NATIVE_CASE_SPACE_RECORD_SCHEMA: &str = "highergraphen.case.native_store.record.v1";
 pub const NATIVE_CASE_SPACE_REPLAY_SCHEMA: &str = "highergraphen.case.native_store.replay.v1";
+pub const NATIVE_CASE_SPACE_REBUILD_SCHEMA: &str = "highergraphen.case.native_store.rebuild.v1";
 pub const NATIVE_CASE_SPACE_VALIDATION_SCHEMA: &str =
     "highergraphen.case.native_store.validation.v1";
 pub const NATIVE_STORE_SCHEMA_VERSION: u32 = 1;
@@ -96,6 +97,35 @@ pub struct NativeCaseSpaceReplay {
     pub current_revision_id: Id,
     pub case_space: CaseSpace,
     pub history: Vec<MorphismLogEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCaseSpaceRebuild {
+    pub schema: String,
+    pub schema_version: u32,
+    pub case_space_id: Id,
+    pub current_revision_id: Id,
+    pub revision_count: u32,
+    pub revisions: Vec<NativeRebuildRevision>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRebuildRevision {
+    pub revision_id: Id,
+    pub sequence: u64,
+    pub snapshot_path: String,
+    pub computed_checksum: String,
+    pub replay_checksum: String,
+    pub snapshot_status: NativeSnapshotStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeSnapshotStatus {
+    Agrees,
+    Rebuilt,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

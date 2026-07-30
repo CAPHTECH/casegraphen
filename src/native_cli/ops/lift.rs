@@ -1,7 +1,7 @@
 use super::{
     io::{case_space_checksum, read_case_space},
     new_case_space, path_segment, report, retarget_latest_revision, source_boundary_value,
-    NativeCliError,
+    write_genesis_materialization, NativeCliError,
 };
 use crate::{native_model::CaseSpace, native_store::NativeCaseStore};
 use higher_graphen_core::Id;
@@ -165,6 +165,8 @@ fn annotate_lift_metadata(
 }
 
 fn refresh_lift_checksums(case_space: &mut CaseSpace) -> Result<(), NativeCliError> {
+    write_genesis_materialization(case_space)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     case_space.revision.checksum.clear();
     if let Some(entry) = case_space.morphism_log.first_mut() {
         entry.replay_checksum.clear();
