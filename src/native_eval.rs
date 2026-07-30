@@ -59,6 +59,20 @@ pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCa
     })
 }
 
+pub fn unsatisfied_evidence_requirement_ids(
+    case_space: &CaseSpace,
+    cell_id: &Id,
+    requirement_ids: &[Id],
+) -> NativeEvalResult<Vec<Id>> {
+    validate_native_case_space(case_space)?;
+    let context = NativeEvaluationContext::new(case_space);
+    Ok(requirement_ids
+        .iter()
+        .filter(|requirement_id| !context.evidence_requirement_satisfied(cell_id, requirement_id))
+        .cloned()
+        .collect())
+}
+
 struct NativeEvaluationContext<'a> {
     case_space: &'a CaseSpace,
     traversal: NativeCaseTraversal,
@@ -379,7 +393,7 @@ impl<'a> NativeEvaluationContext<'a> {
     ) -> impl Iterator<Item = &'a CaseCell> + 'a {
         self.case_space.case_cells.iter().filter(move |cell| {
             cell.cell_type == CaseCellType::Evidence
-                && acceptable_evidence(cell)
+                && acceptable_evidence(self.case_space, cell)
                 && (cell.id == *requirement_id
                     || cell.structure_ids.contains(requirement_id)
                     || cell.structure_ids.contains(cell_id)

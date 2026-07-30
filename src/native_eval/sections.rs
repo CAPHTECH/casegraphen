@@ -1,6 +1,5 @@
 use super::*;
-use crate::native_model::EvidenceBoundary;
-use higher_graphen_core::SourceKind;
+use crate::native_model::{CaseMorphismType, EvidenceBoundary, ReviewAction};
 use serde_json::{json, Value};
 
 pub(super) fn completion_candidates(
@@ -507,19 +506,66 @@ pub(super) fn close_check_skeleton(
     }
 }
 
-pub(super) fn acceptable_evidence(cell: &CaseCell) -> bool {
+pub(super) fn acceptable_evidence(case_space: &CaseSpace, cell: &CaseCell) -> bool {
+    let review_status = latest_evidence_review_status(case_space, &cell.id);
     cell.cell_type == CaseCellType::Evidence
         && cell.provenance.review_status != ReviewStatus::Rejected
+        && review_status != Some(ReviewStatus::Rejected)
         && !cell.source_ids.is_empty()
         && match evidence_boundary(cell) {
             EvidenceBoundary::SourceBacked => true,
             EvidenceBoundary::ReviewPromoted => {
                 cell.provenance.review_status == ReviewStatus::Accepted
+                    || review_status == Some(ReviewStatus::Accepted)
             }
-            EvidenceBoundary::Inferred
-            | EvidenceBoundary::Rejected
-            | EvidenceBoundary::Contradicting => false,
+            EvidenceBoundary::Inferred | EvidenceBoundary::WorkerOutput => {
+                review_status == Some(ReviewStatus::Accepted)
+            }
+            EvidenceBoundary::Rejected | EvidenceBoundary::Contradicting => false,
         }
+}
+
+fn latest_evidence_review_status(case_space: &CaseSpace, evidence_id: &Id) -> Option<ReviewStatus> {
+    let entry = case_space.morphism_log.iter().rev().find(|entry| {
+        entry
+            .morphism
+            .metadata
+            .get("target_kind")
+            .and_then(Value::as_str)
+            == Some("evidence")
+            && entry
+                .morphism
+                .metadata
+                .get("target_id")
+                .and_then(Value::as_str)
+                == Some(evidence_id.as_str())
+    })?;
+    if entry.morphism.morphism_type != CaseMorphismType::Review
+        || entry.morphism.review_status != ReviewStatus::Accepted
+        || entry
+            .morphism
+            .metadata
+            .get("native_review_schema_version")
+            .and_then(Value::as_u64)
+            != Some(1)
+    {
+        return Some(ReviewStatus::Rejected);
+    }
+    let action: ReviewAction =
+        serde_json::from_value(entry.morphism.metadata.get("action")?.clone()).ok()?;
+    let outcome: ReviewStatus = serde_json::from_value(
+        entry
+            .morphism
+            .metadata
+            .get("outcome_review_status")?
+            .clone(),
+    )
+    .ok()?;
+    match (action, outcome) {
+        (ReviewAction::Accept, ReviewStatus::Accepted) => Some(ReviewStatus::Accepted),
+        (ReviewAction::Reject, ReviewStatus::Rejected) => Some(ReviewStatus::Rejected),
+        _ => Some(ReviewStatus::Rejected),
+    }
 }
 
 fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
@@ -528,15 +574,12 @@ fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
         .get("evidence_boundary")
         .and_then(Value::as_str)
     else {
-        return if cell.provenance.source.kind == SourceKind::Ai {
-            EvidenceBoundary::Inferred
-        } else {
-            EvidenceBoundary::SourceBacked
-        };
+        return EvidenceBoundary::Inferred;
     };
     match value {
         "source_backed" | "source_backed_evidence" => EvidenceBoundary::SourceBacked,
         "inferred" | "ai_inference" => EvidenceBoundary::Inferred,
+        "worker_output" => EvidenceBoundary::WorkerOutput,
         "review_promoted" | "review_promotion" => EvidenceBoundary::ReviewPromoted,
         "rejected" => EvidenceBoundary::Rejected,
         "contradicting" => EvidenceBoundary::Contradicting,

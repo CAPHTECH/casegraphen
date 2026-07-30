@@ -216,12 +216,27 @@ fn evidence_cell_from_bytes(bytes: &[u8]) -> Result<CaseCell, NativeCliError> {
             cell.id, cell.cell_type
         )));
     }
-    if !cell.metadata.contains_key("content_hash") {
-        cell.metadata.insert(
-            "content_hash".to_owned(),
-            Value::String(crate::native_hash::sha256_hex(bytes)),
-        );
+    if cell
+        .metadata
+        .get("evidence_boundary")
+        .and_then(Value::as_str)
+        == Some("accepted_evidence")
+    {
+        return Err(NativeCliError::invalid(format!(
+            "evidence attach input cell {} cannot claim evidence_boundary \"accepted_evidence\"; use review accept to promote evidence",
+            cell.id
+        )));
     }
+    if cell.provenance.review_status == ReviewStatus::Accepted {
+        return Err(NativeCliError::invalid(format!(
+            "evidence attach input cell {} cannot claim accepted provenance; use review accept to promote evidence",
+            cell.id
+        )));
+    }
+    cell.metadata.insert(
+        "content_hash".to_owned(),
+        Value::String(crate::native_hash::sha256_hex(bytes)),
+    );
     Ok(cell)
 }
 
@@ -333,6 +348,45 @@ mod tests {
         assert_eq!(hash.len(), 64);
         assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_eq!(cell.provenance.review_status, ReviewStatus::Unreviewed);
+    }
+
+    #[test]
+    fn evidence_cell_validation_overwrites_caller_content_hash() {
+        let bytes = String::from_utf8(EVIDENCE_CELL.to_vec())
+            .expect("UTF-8 fixture")
+            .replace(
+                "\"metadata\": {}",
+                "\"metadata\": {\"content_hash\":\"bogus\"}",
+            );
+        let cell = evidence_cell_from_bytes(bytes.as_bytes()).expect("valid evidence cell");
+
+        assert_eq!(
+            cell.metadata["content_hash"],
+            json!(crate::native_hash::sha256_hex(bytes.as_bytes()))
+        );
+    }
+
+    #[test]
+    fn evidence_cell_validation_rejects_caller_claimed_acceptance() {
+        let accepted_boundary = String::from_utf8(EVIDENCE_CELL.to_vec())
+            .expect("UTF-8 fixture")
+            .replace(
+                "\"metadata\": {}",
+                "\"metadata\": {\"evidence_boundary\":\"accepted_evidence\"}",
+            );
+        let boundary_error = evidence_cell_from_bytes(accepted_boundary.as_bytes())
+            .expect_err("accepted boundary must require review");
+        assert!(boundary_error.to_string().contains("review accept"));
+
+        let accepted_review = String::from_utf8(EVIDENCE_CELL.to_vec())
+            .expect("UTF-8 fixture")
+            .replace(
+                "\"review_status\": \"unreviewed\"",
+                "\"review_status\": \"accepted\"",
+            );
+        let review_error = evidence_cell_from_bytes(accepted_review.as_bytes())
+            .expect_err("accepted provenance must require review");
+        assert!(review_error.to_string().contains("review accept"));
     }
 
     #[test]

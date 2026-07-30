@@ -302,13 +302,17 @@ fn fixture_space_with_completion() -> CaseSpace {
         SourceKind::Human,
         ReviewStatus::Reviewed,
     ));
-    space.case_cells.push(cell(
+    let mut source_backed_evidence = cell(
         "evidence:source-backed",
         CaseCellType::Evidence,
         CaseCellLifecycle::Active,
         SourceKind::Document,
         ReviewStatus::Reviewed,
-    ));
+    );
+    source_backed_evidence
+        .metadata
+        .insert("evidence_boundary".to_owned(), json!("source_backed"));
+    space.case_cells.push(source_backed_evidence);
     space.case_cells.push(cell(
         "completion:source-backed-evidence",
         CaseCellType::Completion,
@@ -393,12 +397,27 @@ fn fixture_space() -> CaseSpace {
     };
     let mut metadata = Map::new();
     metadata.insert("source_boundary".to_owned(), source_boundary);
-    CaseSpace {
+    let mut space = CaseSpace {
         schema: NATIVE_CASE_SPACE_SCHEMA.to_owned(),
         schema_version: NATIVE_CASE_SPACE_SCHEMA_VERSION,
         case_space_id: id("case_space:review-fixture"),
         space_id: id("space:review-fixture"),
-        case_cells: Vec::new(),
+        case_cells: vec![
+            cell(
+                "capability:plan-review",
+                CaseCellType::Custom("capability".to_owned()),
+                CaseCellLifecycle::Accepted,
+                SourceKind::Human,
+                ReviewStatus::Accepted,
+            ),
+            cell(
+                "capability:native-review-test:close-check",
+                CaseCellType::Custom("capability".to_owned()),
+                CaseCellLifecycle::Accepted,
+                SourceKind::Human,
+                ReviewStatus::Accepted,
+            ),
+        ],
         case_relations: Vec::new(),
         morphism_log: vec![MorphismLogEntry {
             schema: NATIVE_MORPHISM_LOG_ENTRY_SCHEMA.to_owned(),
@@ -421,7 +440,9 @@ fn fixture_space() -> CaseSpace {
         revision,
         close_policy_id: Some(id("close_policy:native-default")),
         metadata,
-    }
+    };
+    refresh_added_ids(&mut space);
+    space
 }
 
 fn source_boundary_metadata() -> serde_json::Value {

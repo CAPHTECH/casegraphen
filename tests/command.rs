@@ -1958,6 +1958,173 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
 }
 
 #[test]
+fn generic_morphisms_cannot_forge_plan_review_or_status() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:forged-plan-base");
+
+    let forged_morphism_path = directory.join("forged-plan-review.case_morphism.json");
+    write_native_metadata_morphism_with_metadata(
+        &forged_morphism_path,
+        "morphism:forged-plan-review",
+        "revision:forged-plan-base",
+        "revision:forged-plan-review",
+        json!({
+            "target_kind": "plan",
+            "target_id": "plan:forged-acceptance",
+            "action": "accept",
+            "plan_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }),
+    );
+    let forged_propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        forged_morphism_path.to_str().expect("forged morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!forged_propose.status.success());
+    assert!(stderr(&forged_propose).contains("reserved plan-review metadata"));
+
+    let safe_morphism_path = directory.join("safe-before-apply-tamper.case_morphism.json");
+    write_native_metadata_morphism(
+        &safe_morphism_path,
+        "morphism:apply-tamper",
+        "revision:forged-plan-base",
+        "revision:apply-tamper",
+    );
+    let safe_propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        safe_morphism_path.to_str().expect("safe morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        safe_propose.status.success(),
+        "stderr: {}",
+        stderr(&safe_propose)
+    );
+    let safe_propose_json = stdout_json(&safe_propose);
+    let proposal_path = directory.join(
+        safe_propose_json["result"]["proposal_path"]
+            .as_str()
+            .expect("proposal path"),
+    );
+    let mut proposal = json_file(proposal_path.clone());
+    proposal["morphism"]["metadata"]["operation_gate"] = json!({
+        "actor_id": "actor:forged",
+        "operation": "plan-review"
+    });
+    fs::write(
+        &proposal_path,
+        serde_json::to_string_pretty(&proposal).expect("serialize tampered proposal"),
+    )
+    .expect("tamper proposal");
+    let tampered_apply = run_cli(&[
+        "morphism",
+        "apply",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--morphism-id",
+        "morphism:apply-tamper",
+        "--base-revision-id",
+        "revision:forged-plan-base",
+        "--reviewer-id",
+        "reviewer:forged",
+        "--reason",
+        "Attempt reserved metadata at apply",
+        "--format",
+        "json",
+    ]);
+    assert!(!tampered_apply.status.success());
+    assert!(stderr(&tampered_apply).contains("reserved plan-review metadata"));
+
+    let plan_input = directory.join("forged-acceptance.execution.plan.json");
+    write_execution_plan(
+        &plan_input,
+        "plan:forged-acceptance",
+        "revision:forged-plan-base",
+        "work:review-native-contract",
+    );
+    let plan_propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input"),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        plan_propose.status.success(),
+        "stderr: {}",
+        stderr(&plan_propose)
+    );
+    let stored_plan_path = directory
+        .join("plans")
+        .join("plan~3aforged-acceptance.execution.plan.json");
+    let mut stored_plan = json_file(stored_plan_path.clone());
+    stored_plan["review_status"] = json!("accepted");
+    fs::write(
+        &stored_plan_path,
+        serde_json::to_string_pretty(&stored_plan).expect("serialize forged stored plan"),
+    )
+    .expect("forge stored plan status");
+
+    let forged_run = run_cli(&[
+        "run",
+        "--step",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:forged-acceptance",
+        "--base-revision-id",
+        "revision:forged-plan-base",
+        "--actor-id",
+        "actor:forged-run",
+        "--gate-actor-id",
+        "actor:forged-run-gate",
+        "--capability-id",
+        "capability:dispatch",
+        "--capability-id",
+        "capability:native-integration-worker",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--enable-worker",
+        "shell",
+        "--format",
+        "json",
+    ]);
+    assert!(!forged_run.status.success());
+    assert!(stderr(&forged_run).contains("disagrees with log-derived status unreviewed"));
+    assert!(stderr(&forged_run).contains("possible plan tampering"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_execution_plan_propose_check_and_accept_with_gate() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -2089,6 +2256,14 @@ fn native_execution_plan_propose_check_and_accept_with_gate() {
             "reviewed_at": entry["morphism"]["metadata"]["reviewed_at"],
             "reason": "Accept the bounded native execution plan",
             "plan_content_hash": content_hash,
+            "operation_gate": {
+                "actor_id": "actor:plan-accept",
+                "operation": "plan-review",
+                "operation_scope_id": native_case_space_id(),
+                "audience": "audit",
+                "capability_ids": ["capability:plan-review"],
+                "source_boundary_id": "source_boundary:native-case-management-contract",
+            },
         })
     );
     assert_eq!(
@@ -2161,6 +2336,37 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
     assert!(!no_gate.status.success());
     assert!(stderr(&no_gate).contains("--actor-id"));
 
+    let fabricated_capability = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        "plan:no-gate",
+        "--reviewer-id",
+        "reviewer:fabricated-capability",
+        "--reason",
+        "A fabricated capability must not authorize plan review",
+        "--base-revision-id",
+        "revision:plan-failure-base",
+        "--actor-id",
+        "actor:fabricated-capability",
+        "--capability-id",
+        "capability:fabricated",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!fabricated_capability.status.success());
+    assert!(stderr(&fabricated_capability).contains("existing case cell id"));
+
     let unknown_path = directory.join("execution-plan.unknown-work.json");
     write_execution_plan(
         &unknown_path,
@@ -2183,6 +2389,40 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
     assert!(!unknown.status.success());
     assert!(stderr(&unknown).contains("work:not-present"));
     assert!(stderr(&unknown).contains("missing work_cell_id"));
+
+    let missing_requirement_path = directory.join("execution-plan.missing-requirement.json");
+    write_execution_plan(
+        &missing_requirement_path,
+        "plan:missing-requirement",
+        "revision:plan-failure-base",
+        "work:review-native-contract",
+    );
+    let mut missing_requirement_plan = json_file(missing_requirement_path.clone());
+    missing_requirement_plan["steps"][0]["success_evidence_requirement_ids"] =
+        json!(["evidence:missing"]);
+    fs::write(
+        &missing_requirement_path,
+        serde_json::to_string_pretty(&missing_requirement_plan)
+            .expect("serialize missing requirement plan"),
+    )
+    .expect("write missing requirement plan");
+    let missing_requirement = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        missing_requirement_path
+            .to_str()
+            .expect("missing requirement plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!missing_requirement.status.success());
+    assert!(stderr(&missing_requirement).contains("evidence:missing"));
+    assert!(stderr(&missing_requirement).contains("not existing case cells"));
 
     let history = run_native_case_store_command(&directory, "history");
     assert_eq!(
@@ -2275,6 +2515,16 @@ fn native_execution_plan_reject_records_review_and_rewrites_plan() {
         "Reject the execution plan",
         "--base-revision-id",
         "revision:plan-reject-base",
+        "--actor-id",
+        "actor:plan-reject",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
         "--format",
         "json",
     ]);
@@ -2282,7 +2532,7 @@ fn native_execution_plan_reject_records_review_and_rewrites_plan() {
     let reject_json = stdout_json(&reject);
     assert_eq!(
         reject_json["result"]["entry"]["actor_id"],
-        json!("reviewer:plan-reject")
+        json!("actor:plan-reject")
     );
     assert_eq!(
         reject_json["result"]["entry"]["morphism"]["metadata"]["target_kind"],
@@ -2422,6 +2672,40 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
         worker_evidence["provenance"]["source"]["kind"],
         json!("custom:tool_captured_artifact")
     );
+    assert_eq!(
+        worker_evidence["metadata"]["evidence_boundary"],
+        json!("worker_output")
+    );
+    let relations = replay["result"]["replay"]["case_space"]["case_relations"]
+        .as_array()
+        .expect("replayed relations");
+    assert!(relations.iter().any(|relation| {
+        relation["relation_type"] == json!("satisfies_evidence_requirement")
+            && relation["from_id"] == worker_evidence["id"]
+            && relation["relation_strength"] == json!("diagnostic")
+    }));
+    let evidence_entry = replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .find(|entry| {
+            entry["morphism"]["morphism_type"] == json!("evidence_attach")
+                && entry["morphism"]["metadata"]["trace_id"]
+                    == first_json["result"]["trace"]["trace_id"]
+        })
+        .expect("worker evidence morphism");
+    assert_eq!(
+        evidence_entry["morphism"]["review_status"],
+        json!("unreviewed")
+    );
+    assert_eq!(
+        first_json["result"]["trace"]["operation_gate"]["capability_ids"],
+        json!(["capability:dispatch", "capability:native-run-worker"])
+    );
+    assert_eq!(
+        first_json["result"]["trace"]["unsatisfied_success_evidence_requirement_ids"],
+        json!([])
+    );
 
     let result_revision = first_json["result"]["trace"]["result_revision_id"]
         .as_str()
@@ -2434,6 +2718,55 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
         json!("no_dispatchable_step")
     );
     assert!(second_json["result"]["trace"].is_null());
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_refuses_plan_whose_latest_review_is_reject() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "accept-then-reject", "printf 'must-not-run\\n'");
+
+    let reject = run_cli(&[
+        "plan",
+        "reject",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &fixture.plan_id,
+        "--reviewer-id",
+        "reviewer:run-plan-reject",
+        "--reason",
+        "A later rejection revokes the earlier acceptance",
+        "--base-revision-id",
+        &fixture.accepted_revision_id,
+        "--actor-id",
+        "actor:run-plan-reject",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(reject.status.success(), "stderr: {}", stderr(&reject));
+    let rejected_revision = stdout_json(&reject)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("rejected revision")
+        .to_owned();
+
+    let output = run_native_step_with_base(&directory, &fixture, &rejected_revision, true, None);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("latest plan review"));
+    assert!(stderr(&output).contains("Rejected"));
+    assert!(!directory.join("runs").exists());
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -2497,6 +2830,91 @@ fn native_run_step_records_tampered_binding_as_domain_obstruction() {
 }
 
 #[test]
+fn native_run_step_rejects_fabricated_and_incomplete_dispatch_capabilities() {
+    let fabricated_directory = unique_temp_dir();
+    fs::create_dir_all(&fabricated_directory).expect("create fabricated temp directory");
+    let fabricated_fixture = setup_native_run(
+        &fabricated_directory,
+        "fabricated-gate",
+        "printf 'must-not-run\\n'",
+    );
+    let fabricated = run_native_step_with_gate_capabilities(
+        &fabricated_directory,
+        &fabricated_fixture,
+        &fabricated_fixture.accepted_revision_id,
+        true,
+        None,
+        &["capability:fabricated", "capability:native-run-worker"],
+    );
+    assert!(
+        fabricated.status.success(),
+        "stderr: {}",
+        stderr(&fabricated)
+    );
+    let fabricated_json = stdout_json(&fabricated);
+    assert_eq!(
+        fabricated_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert_eq!(
+        fabricated_json["result"]["obstructions"][0]["obstruction_type"],
+        json!("operation_gate_rejected")
+    );
+    assert!(fabricated_json["result"]["obstructions"][0]["summary"]
+        .as_str()
+        .expect("gate summary")
+        .contains("existing case cell id"));
+    assert!(!fabricated_directory.join("runs").exists());
+    fs::remove_dir_all(fabricated_directory).expect("remove fabricated temp directory");
+
+    let incomplete_directory = unique_temp_dir();
+    fs::create_dir_all(&incomplete_directory).expect("create incomplete temp directory");
+    let incomplete_fixture = setup_native_run(
+        &incomplete_directory,
+        "incomplete-gate",
+        "printf 'must-not-run\\n'",
+    );
+    let incomplete = run_native_step_with_gate_capabilities(
+        &incomplete_directory,
+        &incomplete_fixture,
+        &incomplete_fixture.accepted_revision_id,
+        true,
+        None,
+        &["capability:dispatch"],
+    );
+    assert!(
+        incomplete.status.success(),
+        "stderr: {}",
+        stderr(&incomplete)
+    );
+    let incomplete_json = stdout_json(&incomplete);
+    assert_eq!(
+        incomplete_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert_eq!(
+        incomplete_json["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("operation_gate_rejected")
+    );
+    assert_eq!(
+        incomplete_json["result"]["trace"]["obstructions"][0]["witness_ids"],
+        json!(["capability:native-run-worker"])
+    );
+    assert_eq!(
+        incomplete_json["result"]["trace"]["operation_gate"]["capability_ids"],
+        json!(["capability:dispatch"])
+    );
+    assert_eq!(
+        replayed_work_lifecycle(&stdout_json(&run_native_case_store_command(
+            &incomplete_directory,
+            "replay"
+        ))),
+        "active"
+    );
+    fs::remove_dir_all(incomplete_directory).expect("remove incomplete temp directory");
+}
+
+#[test]
 fn native_run_step_records_failed_worker_evidence_without_transition() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -2546,6 +2964,29 @@ fn native_run_step_records_failed_worker_evidence_without_transition() {
                 && cell["metadata"]["exit_status"] == json!(1)
                 && cell["metadata"]["worker_report_id"].is_string()
         }));
+    assert!(!replay["result"]["replay"]["case_space"]["case_relations"]
+        .as_array()
+        .expect("replayed relations")
+        .iter()
+        .any(|relation| {
+            relation["relation_type"] == json!("satisfies_evidence_requirement")
+                && relation["from_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("evidence:worker-output:"))
+        }));
+    let failed_evidence_entry = replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .find(|entry| {
+            entry["morphism"]["morphism_type"] == json!("evidence_attach")
+                && entry["morphism"]["metadata"]["trace_id"] == value["result"]["trace"]["trace_id"]
+        })
+        .expect("failed worker evidence morphism");
+    assert_eq!(
+        failed_evidence_entry["morphism"]["review_status"],
+        json!("unreviewed")
+    );
 
     let failed_revision = value["result"]["trace"]["result_revision_id"]
         .as_str()
@@ -2617,6 +3058,123 @@ fn native_run_step_preserves_unauthorized_transition_as_unreviewed_proposal() {
         proposed["metadata"]["authorization_source"],
         json!("accepted_execution_plan")
     );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert_eq!(replayed_work_lifecycle(&replay), "active");
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_blocks_successful_worker_when_success_evidence_is_unsatisfied() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let initial = setup_native_run(
+        &directory,
+        "unsatisfied-base",
+        "printf 'diagnostic-only\\n'",
+    );
+    let binding_id = json_file(initial.binding_path.clone())["binding_id"]
+        .as_str()
+        .expect("binding id")
+        .to_owned();
+    let plan_id = "plan:run-unsatisfied-success";
+    let plan_input = directory.join("unsatisfied-success.execution.plan.input.json");
+    write_execution_plan_for_binding(
+        &plan_input,
+        plan_id,
+        &initial.accepted_revision_id,
+        "work:review-native-contract",
+        &binding_id,
+    );
+    let mut plan = json_file(plan_input.clone());
+    plan["steps"][0]["success_evidence_requirement_ids"] =
+        json!(["review:native-contract-acceptance"]);
+    fs::write(
+        &plan_input,
+        serde_json::to_string_pretty(&plan).expect("serialize unsatisfied plan"),
+    )
+    .expect("write unsatisfied plan");
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        plan_id,
+        "--reviewer-id",
+        "reviewer:unsatisfied-plan",
+        "--reason",
+        "Accept plan to exercise runtime success authorization",
+        "--base-revision-id",
+        &initial.accepted_revision_id,
+        "--actor-id",
+        "actor:unsatisfied-plan",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let fixture = NativeRunFixture {
+        plan_id: plan_id.to_owned(),
+        step_id: format!("step:{plan_id}"),
+        accepted_revision_id: stdout_json(&accept)["result"]["record"]["current_revision_id"]
+            .as_str()
+            .expect("accepted revision")
+            .to_owned(),
+        binding_path: initial.binding_path,
+    };
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(
+        value["result"]["status"],
+        json!("transition_not_authorized")
+    );
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("success_conditions_unsatisfied")
+    );
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["blocking"],
+        json!(true)
+    );
+    assert_eq!(
+        value["result"]["trace"]["unsatisfied_success_evidence_requirement_ids"],
+        json!(["review:native-contract-acceptance"])
+    );
+    assert!(!value["result"]["trace"]["transition_applied"]
+        .as_bool()
+        .expect("transition applied"));
+    let proposed = json_file(
+        only_run_file(&directory, "execution.trace.json")
+            .parent()
+            .expect("run directory")
+            .join("proposed.morphism.json"),
+    );
+    assert_eq!(proposed["review_status"], json!("unreviewed"));
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
     assert_eq!(replayed_work_lifecycle(&replay), "active");
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -2997,7 +3555,8 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
     evidence_cell["lifecycle"] = json!("active");
     evidence_cell["provenance"]["review_status"] = json!("unreviewed");
     evidence_cell["source_ids"] = json!(["source:attached-cli"]);
-    evidence_cell["metadata"] = json!({"evidence_boundary": "source_backed"});
+    evidence_cell["metadata"] =
+        json!({"evidence_boundary": "source_backed", "content_hash": "caller-bogus-hash"});
     fs::write(
         &input_path,
         serde_json::to_string_pretty(&evidence_cell).expect("serialize evidence cell"),
@@ -3050,6 +3609,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
     let content_hash = attached_cell["metadata"]["content_hash"]
         .as_str()
         .expect("content hash");
+    assert_ne!(content_hash, "caller-bogus-hash");
     assert_eq!(content_hash.len(), 64);
     assert!(content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_eq!(
@@ -4134,6 +4694,24 @@ fn run_native_step_with_base(
     enable_shell: bool,
     retry_step_id: Option<&str>,
 ) -> Output {
+    run_native_step_with_gate_capabilities(
+        directory,
+        fixture,
+        base_revision_id,
+        enable_shell,
+        retry_step_id,
+        &["capability:dispatch", "capability:native-run-worker"],
+    )
+}
+
+fn run_native_step_with_gate_capabilities(
+    directory: &Path,
+    fixture: &NativeRunFixture,
+    base_revision_id: &str,
+    enable_shell: bool,
+    retry_step_id: Option<&str>,
+    capability_ids: &[&str],
+) -> Output {
     let mut args = vec![
         "run".to_owned(),
         "--step".to_owned(),
@@ -4149,8 +4727,6 @@ fn run_native_step_with_base(
         "actor:native-run".to_owned(),
         "--gate-actor-id".to_owned(),
         "actor:native-run-gate".to_owned(),
-        "--capability-id".to_owned(),
-        "capability:dispatch".to_owned(),
         "--operation-scope-id".to_owned(),
         native_case_space_id().to_owned(),
         "--audience".to_owned(),
@@ -4160,6 +4736,9 @@ fn run_native_step_with_base(
         "--format".to_owned(),
         "json".to_owned(),
     ];
+    for capability_id in capability_ids {
+        args.extend(["--capability-id".to_owned(), (*capability_id).to_owned()]);
+    }
     if enable_shell {
         args.extend(["--enable-worker".to_owned(), "shell".to_owned()]);
     }

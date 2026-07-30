@@ -734,6 +734,7 @@ pub enum ReviewAction {
 pub enum EvidenceBoundary {
     SourceBacked,
     Inferred,
+    WorkerOutput,
     ReviewPromoted,
     Rejected,
     Contradicting,
@@ -816,7 +817,7 @@ mod tests {
 
         assert_eq!(space.schema, NATIVE_CASE_SPACE_SCHEMA);
         assert_eq!(space.schema_version, NATIVE_CASE_SPACE_SCHEMA_VERSION);
-        assert_eq!(space.case_cells.len(), 5);
+        assert_eq!(space.case_cells.len(), 10);
         assert_eq!(space.case_relations.len(), 4);
         assert_eq!(space.morphism_log.len(), 1);
         assert_eq!(space.projections.len(), 2);

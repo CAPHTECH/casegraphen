@@ -289,6 +289,7 @@ pub(super) fn morphism_propose(
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let morphism = read_morphism(input)?;
+    validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
     let proposal = proposal_value(case_space_id, &morphism);
     let path = proposal_path(store, case_space_id, &morphism.morphism_id)?;
@@ -311,6 +312,7 @@ pub(super) fn morphism_check(
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let morphism = read_proposal(store, case_space_id, morphism_id)?;
+    validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
     let core_extensions = native_morphism_check_extensions(&replay.case_space, &morphism);
     let mathematical_diagnostics =
@@ -332,6 +334,7 @@ pub(super) fn morphism_apply(
     let replay = store_api.replay_current_case_space(case_space_id)?;
     require_current_revision(&replay.current_revision_id, base_revision_id)?;
     let mut morphism = read_proposal(store, case_space_id, morphism_id)?;
+    validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
     morphism.review_status = ReviewStatus::Accepted;
     if let Some(reviewer_id) = reviewer_id {
@@ -367,6 +370,7 @@ pub(super) fn morphism_reject(
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
     let proposal = read_proposal(store, case_space_id, morphism_id)?;
+    validate_generic_morphism_metadata(&proposal)?;
     validate_candidate_morphism(&replay.case_space, &proposal)?;
     let review = review_morphism(
         &replay.case_space.revision.revision_id,
@@ -649,6 +653,18 @@ fn validate_candidate_morphism(
                 "unknown referenced id {id}"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_generic_morphism_metadata(morphism: &CaseMorphism) -> Result<(), NativeCliError> {
+    if morphism.metadata.get("target_kind").and_then(Value::as_str) == Some("plan")
+        || morphism.metadata.contains_key("operation_gate")
+    {
+        return Err(NativeCliError::invalid(
+            "generic morphism propose/apply cannot use reserved plan-review metadata: \
+             target_kind=\"plan\" and operation_gate are reserved for casegraphen plan accept/reject",
+        ));
     }
     Ok(())
 }

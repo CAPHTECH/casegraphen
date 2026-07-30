@@ -1,3 +1,4 @@
+use crate::native_review::NativeOperationGate;
 use higher_graphen_core::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -53,6 +54,7 @@ pub struct ExecutionObstruction {
     pub obstruction_type: String,
     pub summary: String,
     pub witness_ids: Vec<Id>,
+    pub blocking: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -77,9 +79,11 @@ pub struct ExecutionTrace {
     pub work_cell_id: Id,
     pub binding_id: Id,
     pub binding_content_hash: String,
+    pub operation_gate: NativeOperationGate,
     pub worker_report_id: Id,
     pub appended_entry_ids: Vec<Id>,
     pub transition_applied: bool,
+    pub unsatisfied_success_evidence_requirement_ids: Vec<Id>,
     pub obstructions: Vec<ExecutionObstruction>,
     pub information_loss: Vec<ExecutionInformationLoss>,
     pub started_at: String,

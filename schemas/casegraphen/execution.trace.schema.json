@@ -16,9 +16,11 @@
     "work_cell_id",
     "binding_id",
     "binding_content_hash",
+    "operation_gate",
     "worker_report_id",
     "appended_entry_ids",
     "transition_applied",
+    "unsatisfied_success_evidence_requirement_ids",
     "obstructions",
     "information_loss",
     "started_at",
@@ -66,6 +68,9 @@
     "binding_content_hash": {
       "$ref": "#/$defs/sha256"
     },
+    "operation_gate": {
+      "$ref": "#/$defs/operation_gate"
+    },
     "worker_report_id": {
       "$ref": "#/$defs/id"
     },
@@ -74,6 +79,9 @@
     },
     "transition_applied": {
       "type": "boolean"
+    },
+    "unsatisfied_success_evidence_requirement_ids": {
+      "$ref": "#/$defs/id_array"
     },
     "obstructions": {
       "type": "array",
@@ -114,13 +122,49 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "operation_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor_id",
+        "operation",
+        "operation_scope_id",
+        "audience",
+        "capability_ids",
+        "source_boundary_id"
+      ],
+      "properties": {
+        "actor_id": {
+          "$ref": "#/$defs/id"
+        },
+        "operation": {
+          "const": "dispatch"
+        },
+        "operation_scope_id": {
+          "$ref": "#/$defs/id"
+        },
+        "audience": {
+          "enum": [
+            "audit",
+            "system"
+          ]
+        },
+        "capability_ids": {
+          "$ref": "#/$defs/id_array"
+        },
+        "source_boundary_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
     "obstruction": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "obstruction_type",
         "summary",
-        "witness_ids"
+        "witness_ids",
+        "blocking"
       ],
       "properties": {
         "obstruction_type": {
@@ -133,6 +177,9 @@
         },
         "witness_ids": {
           "$ref": "#/$defs/id_array"
+        },
+        "blocking": {
+          "type": "boolean"
         }
       }
     },

@@ -75,6 +75,24 @@ fn generalized_operation_gate_rejects_each_rule_violation() {
 }
 
 #[test]
+fn generalized_operation_gate_rejects_fabricated_capability_id() {
+    let space = fixture_space();
+    let gate = NativeOperationGate {
+        actor_id: id("actor:plan-review"),
+        operation: "plan-review".to_owned(),
+        operation_scope_id: space.case_space_id.clone(),
+        audience: ProjectionAudience::Audit,
+        capability_ids: vec![id("capability:fabricated")],
+        source_boundary_id: id("source_boundary:review-fixture"),
+    };
+
+    let error =
+        check_operation_gate(&space, &gate, "plan-review").expect_err("fabricated capability");
+
+    assert!(error.to_string().contains("existing case cell id"));
+}
+
+#[test]
 fn close_requires_validation_evidence_to_name_existing_evidence() {
     let space = fixture_space();
     let close = check_native_close(

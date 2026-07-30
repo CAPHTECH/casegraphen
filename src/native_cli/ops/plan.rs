@@ -10,7 +10,7 @@ use crate::{
         ExecutionPlan,
     },
     native_eval::evaluate_native_case,
-    native_model::{CaseSpace, ReviewAction},
+    native_model::{CaseMorphismType, CaseSpace, ReviewAction},
     native_review::{
         accept_review_morphism, check_operation_gate, reject_review_morphism, NativeOperationGate,
         NativeReviewRequest, NativeReviewTargetKind,
@@ -116,16 +116,20 @@ pub(in crate::native_cli) fn plan_review(
     require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
     let path = plan_path(store, options.plan_id);
     let mut plan = read_stored_plan(&path, options.plan_id)?;
-    validate_plan_for_current_case_space(&plan, case_space_id, &replay.case_space)?;
+    validate_plan_shape_and_references(&plan, case_space_id, &replay.case_space)?;
+    let prior_status = verified_plan_review_status(&plan, &replay.case_space)?;
+    if prior_status == ReviewStatus::Unreviewed
+        && plan.base_revision_id != replay.case_space.revision.revision_id
+    {
+        return Err(NativeCliError::invalid(format!(
+            "execution plan {} base revision {} is stale; current revision is {}",
+            plan.plan_id, plan.base_revision_id, replay.case_space.revision.revision_id
+        )));
+    }
     let content_hash = plan_content_hash(&plan)?;
-    let operation_gate = if options.action == ReviewAction::Accept {
-        let gate = resolve_plan_review_gate(options.gate_options)?;
-        check_operation_gate(&replay.case_space, &gate, "plan-review")
-            .map_err(|error| NativeCliError::invalid(error.to_string()))?;
-        Some(gate)
-    } else {
-        None
-    };
+    let operation_gate = resolve_plan_review_gate(options.gate_options)?;
+    check_operation_gate(&replay.case_space, &operation_gate, "plan-review")
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     let request = NativeReviewRequest {
         target_kind: NativeReviewTargetKind::Plan,
         target_id: plan.plan_id.clone(),
@@ -150,10 +154,11 @@ pub(in crate::native_cli) fn plan_review(
         "plan_content_hash".to_owned(),
         Value::String(content_hash.clone()),
     );
-    let actor_id = operation_gate
-        .as_ref()
-        .map(|gate| gate.actor_id.clone())
-        .unwrap_or_else(|| options.reviewer_id.clone());
+    morphism.metadata.insert(
+        "operation_gate".to_owned(),
+        serde_json::to_value(&operation_gate)?,
+    );
+    let actor_id = operation_gate.actor_id.clone();
     let command = if options.action == ReviewAction::Accept {
         "casegraphen plan accept"
     } else {
@@ -176,9 +181,7 @@ pub(in crate::native_cli) fn plan_review(
     review_report["result"]["plan"] = json!(plan);
     review_report["result"]["plan_path"] = json!(relative_store_path(store, &path));
     review_report["result"]["plan_content_hash"] = json!(content_hash);
-    if let Some(gate) = operation_gate {
-        review_report["result"]["operation_gate"] = json!(gate);
-    }
+    review_report["result"]["operation_gate"] = json!(operation_gate);
     Ok(review_report)
 }
 
@@ -189,17 +192,17 @@ fn resolve_plan_review_gate(
         actor_id: options
             .actor_id
             .clone()
-            .ok_or_else(|| NativeCliError::usage("--actor-id <id> is required for plan accept"))?,
+            .ok_or_else(|| NativeCliError::usage("--actor-id <id> is required for plan review"))?,
         operation: "plan-review".to_owned(),
         operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
-            NativeCliError::usage("--operation-scope-id <id> is required for plan accept")
+            NativeCliError::usage("--operation-scope-id <id> is required for plan review")
         })?,
         audience: options.audience.ok_or_else(|| {
-            NativeCliError::usage("--audience audit|system is required for plan accept")
+            NativeCliError::usage("--audience audit|system is required for plan review")
         })?,
         capability_ids: options.capability_ids.clone(),
         source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
-            NativeCliError::usage("--source-boundary-id <id> is required for plan accept")
+            NativeCliError::usage("--source-boundary-id <id> is required for plan review")
         })?,
     })
 }
@@ -209,13 +212,7 @@ fn validate_plan_for_current_case_space(
     case_space_id: &Id,
     case_space: &CaseSpace,
 ) -> Result<(), NativeCliError> {
-    validate_execution_plan(plan).map_err(|error| NativeCliError::invalid(error.to_string()))?;
-    if plan.case_space_id != *case_space_id {
-        return Err(NativeCliError::invalid(format!(
-            "execution plan {} belongs to case space {}, expected {}",
-            plan.plan_id, plan.case_space_id, case_space_id
-        )));
-    }
+    validate_plan_shape_and_references(plan, case_space_id, case_space)?;
     if plan.review_status != ReviewStatus::Unreviewed {
         return Err(NativeCliError::invalid(format!(
             "execution plan {} review_status must be unreviewed",
@@ -226,6 +223,21 @@ fn validate_plan_for_current_case_space(
         return Err(NativeCliError::invalid(format!(
             "execution plan {} base revision {} is stale; current revision is {}",
             plan.plan_id, plan.base_revision_id, case_space.revision.revision_id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_plan_shape_and_references(
+    plan: &ExecutionPlan,
+    case_space_id: &Id,
+    case_space: &CaseSpace,
+) -> Result<(), NativeCliError> {
+    validate_execution_plan(plan).map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    if plan.case_space_id != *case_space_id {
+        return Err(NativeCliError::invalid(format!(
+            "execution plan {} belongs to case space {}, expected {}",
+            plan.plan_id, plan.case_space_id, case_space_id
         )));
     }
     let cell_ids = case_space
@@ -251,7 +263,134 @@ fn validate_plan_for_current_case_space(
                 .join(", ")
         )));
     }
+    let missing_success_requirement_ids = plan
+        .steps
+        .iter()
+        .flat_map(|step| &step.success_evidence_requirement_ids)
+        .filter(|id| !cell_ids.contains(*id))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if !missing_success_requirement_ids.is_empty() {
+        return Err(NativeCliError::invalid(format!(
+            "execution plan {} names success_evidence_requirement_ids that are not existing case cells: {}",
+            plan.plan_id,
+            missing_success_requirement_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
     Ok(())
+}
+
+pub(super) fn verified_plan_review_status(
+    plan: &ExecutionPlan,
+    case_space: &CaseSpace,
+) -> Result<ReviewStatus, NativeCliError> {
+    let latest = case_space.morphism_log.iter().rev().find(|entry| {
+        let metadata = &entry.morphism.metadata;
+        metadata.get("target_kind").and_then(Value::as_str) == Some("plan")
+            && metadata.get("target_id").and_then(Value::as_str) == Some(plan.plan_id.as_str())
+    });
+    let Some(entry) = latest else {
+        if plan.review_status != ReviewStatus::Unreviewed {
+            return Err(NativeCliError::invalid(format!(
+                "execution plan {} stored review_status {:?} disagrees with log-derived status unreviewed; possible plan tampering",
+                plan.plan_id, plan.review_status
+            )));
+        }
+        return Ok(ReviewStatus::Unreviewed);
+    };
+    let metadata = &entry.morphism.metadata;
+    let malformed = |field: &str| {
+        NativeCliError::invalid(format!(
+            "latest plan review for {} has invalid canonical field {field}",
+            plan.plan_id
+        ))
+    };
+    if entry.morphism.morphism_type != CaseMorphismType::Review
+        || entry.morphism.review_status != ReviewStatus::Accepted
+    {
+        return Err(malformed("morphism_type/review_status"));
+    }
+    if metadata
+        .get("native_review_schema_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Err(malformed("native_review_schema_version"));
+    }
+    for field in ["review_id", "reviewer_id"] {
+        let value = metadata
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| Id::is_valid_value(value))
+            .ok_or_else(|| malformed(field))?;
+        if value.trim().is_empty() {
+            return Err(malformed(field));
+        }
+    }
+    for field in ["reviewed_at", "reason"] {
+        if !metadata
+            .get(field)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(malformed(field));
+        }
+    }
+    let action: ReviewAction = serde_json::from_value(
+        metadata
+            .get("action")
+            .cloned()
+            .ok_or_else(|| malformed("action"))?,
+    )
+    .map_err(|_| malformed("action"))?;
+    let derived_status = match action {
+        ReviewAction::Accept => ReviewStatus::Accepted,
+        ReviewAction::Reject => ReviewStatus::Rejected,
+        _ => return Err(malformed("action")),
+    };
+    let outcome: ReviewStatus = serde_json::from_value(
+        metadata
+            .get("outcome_review_status")
+            .cloned()
+            .ok_or_else(|| malformed("outcome_review_status"))?,
+    )
+    .map_err(|_| malformed("outcome_review_status"))?;
+    if outcome != derived_status {
+        return Err(malformed("outcome_review_status"));
+    }
+    let recorded_hash = metadata
+        .get("plan_content_hash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| malformed("plan_content_hash"))?;
+    if !crate::exec::accepted_plan_content_hash_matches(plan, recorded_hash)? {
+        return Err(NativeCliError::invalid(format!(
+            "latest plan review for {} has plan_content_hash {recorded_hash}, but the stored plan content no longer matches",
+            plan.plan_id
+        )));
+    }
+    let gate: NativeOperationGate = serde_json::from_value(
+        metadata
+            .get("operation_gate")
+            .cloned()
+            .ok_or_else(|| malformed("operation_gate"))?,
+    )
+    .map_err(|_| malformed("operation_gate"))?;
+    check_operation_gate(case_space, &gate, "plan-review")
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    if entry.actor_id != gate.actor_id {
+        return Err(malformed("operation_gate.actor_id"));
+    }
+    if plan.review_status != derived_status {
+        return Err(NativeCliError::invalid(format!(
+            "execution plan {} stored review_status {:?} disagrees with log-derived status {:?}; possible plan tampering",
+            plan.plan_id, plan.review_status, derived_status
+        )));
+    }
+    Ok(derived_status)
 }
 
 pub(super) fn read_stored_plan(

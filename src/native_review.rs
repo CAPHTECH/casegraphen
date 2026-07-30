@@ -266,7 +266,9 @@ impl OperationGateViolation {
             Self::Operation => "operation",
             Self::Scope => "operation_scope_id",
             Self::Audience => "audience",
-            Self::Capabilities => "capability_ids",
+            Self::Capabilities => {
+                "capability_ids (each capability id must equal an existing case cell id)"
+            }
             Self::SourceBoundary => "source_boundary_id",
         }
     }
@@ -290,7 +292,14 @@ fn operation_gate_violations(
     ) {
         violations.push(OperationGateViolation::Audience);
     }
-    if gate.capability_ids.is_empty() {
+    if gate.capability_ids.is_empty()
+        || gate.capability_ids.iter().any(|capability_id| {
+            !case_space
+                .case_cells
+                .iter()
+                .any(|cell| cell.id == *capability_id)
+        })
+    {
         violations.push(OperationGateViolation::Capabilities);
     }
     if declared_source_boundary_id(case_space).as_ref() != Some(&gate.source_boundary_id) {
@@ -305,9 +314,27 @@ fn operation_gate_violation_witnesses(
     violation: OperationGateViolation,
 ) -> Vec<Id> {
     match violation {
-        OperationGateViolation::Operation
-        | OperationGateViolation::Audience
-        | OperationGateViolation::Capabilities => vec![gate.actor_id.clone()],
+        OperationGateViolation::Operation | OperationGateViolation::Audience => {
+            vec![gate.actor_id.clone()]
+        }
+        OperationGateViolation::Capabilities => {
+            let unresolved = gate
+                .capability_ids
+                .iter()
+                .filter(|capability_id| {
+                    !case_space
+                        .case_cells
+                        .iter()
+                        .any(|cell| cell.id == **capability_id)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if unresolved.is_empty() {
+                vec![gate.actor_id.clone()]
+            } else {
+                unresolved
+            }
+        }
         OperationGateViolation::Scope => vec![
             gate.operation_scope_id.clone(),
             case_space.case_space_id.clone(),

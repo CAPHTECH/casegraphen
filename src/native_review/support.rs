@@ -6,7 +6,7 @@ use crate::{
         ReviewAction,
     },
 };
-use higher_graphen_core::{Id, ReviewStatus, Severity, SourceKind};
+use higher_graphen_core::{Id, ReviewStatus, Severity};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -136,20 +136,16 @@ fn evidence_acceptable_for_close(
         .get("evidence_boundary")
         .and_then(Value::as_str)
         .map(evidence_boundary_value)
-        .unwrap_or_else(|| {
-            if cell.provenance.source.kind == SourceKind::Ai {
-                EvidenceBoundary::Inferred
-            } else {
-                EvidenceBoundary::SourceBacked
-            }
-        });
+        .unwrap_or(EvidenceBoundary::Inferred);
     let review_promoted = target_has_action(reviews, &cell.id, ReviewAction::Accept);
     let has_source = !cell.source_ids.is_empty();
     let accepted = cell.provenance.review_status == ReviewStatus::Accepted;
     match boundary {
         EvidenceBoundary::SourceBacked => has_source,
         EvidenceBoundary::ReviewPromoted => has_source && (accepted || review_promoted),
-        EvidenceBoundary::Inferred => has_source && review_promoted,
+        EvidenceBoundary::Inferred | EvidenceBoundary::WorkerOutput => {
+            has_source && review_promoted
+        }
         EvidenceBoundary::Rejected | EvidenceBoundary::Contradicting => false,
     }
 }
@@ -157,6 +153,7 @@ fn evidence_acceptable_for_close(
 fn evidence_boundary_value(value: &str) -> EvidenceBoundary {
     match value {
         "source_backed" | "source_backed_evidence" => EvidenceBoundary::SourceBacked,
+        "worker_output" => EvidenceBoundary::WorkerOutput,
         "review_promoted" | "review_promotion" => EvidenceBoundary::ReviewPromoted,
         "rejected" => EvidenceBoundary::Rejected,
         "contradicting" => EvidenceBoundary::Contradicting,

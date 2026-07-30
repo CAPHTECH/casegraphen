@@ -127,6 +127,106 @@
         "reviewed_at": "2026-04-26T01:00:00Z"
       },
       "metadata": {}
+    },
+    {
+      "id": "capability:plan-review",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Review execution plans",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native execution authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:dispatch",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Dispatch native workers",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native execution authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:native-run-worker",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Run the native integration worker",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native execution authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:native-integration-worker",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Run the native plan integration worker",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native execution authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:casegraphen-cli:close-check",
+      "cell_type": "custom:capability",
+      "space_id": "space:higher-graphen-casegraphen",
+      "title": "Run native close checks",
+      "lifecycle": "accepted",
+      "source_ids": [
+        "source:native-design-doc"
+      ],
+      "structure_ids": [],
+      "provenance": {
+        "source": {
+          "kind": "document",
+          "title": "Native close authorization"
+        },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {}
     }
   ],
   "case_relations": [
@@ -229,7 +329,12 @@
           "case:native-contract-example",
           "work:review-native-contract",
           "evidence:native-schema-json-valid",
-          "review:native-contract-acceptance"
+          "review:native-contract-acceptance",
+          "capability:plan-review",
+          "capability:dispatch",
+          "capability:native-run-worker",
+          "capability:native-integration-worker",
+          "capability:casegraphen-cli:close-check"
         ],
         "updated_ids": [],
         "retired_ids": [],
@@ -300,7 +405,12 @@
       "omitted_cell_ids": [
         "goal:native-case-contract",
         "case:native-contract-example",
-        "evidence:native-schema-json-valid"
+        "evidence:native-schema-json-valid",
+        "capability:plan-review",
+        "capability:dispatch",
+        "capability:native-run-worker",
+        "capability:native-integration-worker",
+        "capability:casegraphen-cli:close-check"
       ],
       "omitted_relation_ids": [
         "relation:case-covers-goal",
@@ -340,7 +450,12 @@
         "case:native-contract-example",
         "work:review-native-contract",
         "evidence:native-schema-json-valid",
-        "review:native-contract-acceptance"
+        "review:native-contract-acceptance",
+        "capability:plan-review",
+        "capability:dispatch",
+        "capability:native-run-worker",
+        "capability:native-integration-worker",
+        "capability:casegraphen-cli:close-check"
       ],
       "represented_relation_ids": [
         "relation:case-covers-goal",

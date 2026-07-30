@@ -3,12 +3,11 @@ use super::{
     binding::binding_path,
     case_reason,
     io::{provenance, timestamp, write_json},
-    plan::{plan_path, read_stored_plan},
+    plan::{plan_path, read_stored_plan, verified_plan_review_status},
     report, require_current_revision, NativeCliError, NativeReasonSection, NativeRunStepOptions,
 };
 use crate::{
     exec::{
-        accepted_plan_content_hash_matches,
         binding::{validate_worker_binding, WorkerBinding, WorkerKind},
         records::{
             ExecutionInformationLoss, ExecutionObstruction, ExecutionTrace, WorkerOutput,
@@ -19,7 +18,7 @@ use crate::{
         worker::{execute_worker, WorkerContext},
         ExecutionPlan, ExecutionStep,
     },
-    native_eval::evaluate_native_case,
+    native_eval::{evaluate_native_case, unsatisfied_evidence_requirement_ids},
     native_model::{
         CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType, CaseRelation,
         CaseRelationType, CaseSpace, MorphismLogEntry, MorphismPayload, RelationStrength,
@@ -27,7 +26,7 @@ use crate::{
     native_review::{check_operation_gate, NativeOperationGate},
     native_store::NativeCaseStore,
 };
-use higher_graphen_core::{Id, ReviewStatus, SourceKind};
+use higher_graphen_core::{Id, ReviewStatus, Severity, SourceKind};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeSet,
@@ -64,6 +63,7 @@ pub(in crate::native_cli) fn run_step(
                 obstruction_type: "operation_gate_rejected".to_owned(),
                 summary: error.to_string(),
                 witness_ids: vec![gate.actor_id],
+                blocking: true,
             }],
             Vec::new(),
         ));
@@ -114,6 +114,7 @@ pub(in crate::native_cli) fn run_step(
                 base_revision_id: options.base_revision_id,
                 identity: &trace_identity,
                 binding_content_hash: trace_binding_hash,
+                operation_gate: &gate,
                 started_at: trace_started_at,
                 obstruction: ExecutionObstruction {
                     obstruction_type: obstruction_type.to_owned(),
@@ -122,6 +123,7 @@ pub(in crate::native_cli) fn run_step(
                         step.worker_binding_id, plan.plan_id
                     ),
                     witness_ids: vec![step.worker_binding_id.clone()],
+                    blocking: true,
                 },
             })?;
             return Ok(run_report(
@@ -136,6 +138,44 @@ pub(in crate::native_cli) fn run_step(
         binding,
         content_hash: binding_content_hash,
     } = *verified_binding;
+    let missing_binding_capability_ids = binding
+        .capability_ids
+        .iter()
+        .filter(|capability_id| !gate.capability_ids.contains(capability_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_binding_capability_ids.is_empty() {
+        let trace = write_pre_dispatch_trace(PreDispatchTraceInput {
+            case_space: &replay.case_space,
+            plan: &plan,
+            step,
+            base_revision_id: options.base_revision_id,
+            identity: &trace_identity,
+            binding_content_hash,
+            operation_gate: &gate,
+            started_at: trace_started_at,
+            obstruction: ExecutionObstruction {
+                obstruction_type: "operation_gate_rejected".to_owned(),
+                summary: format!(
+                    "dispatch operation gate does not cover worker binding {} capability_ids: {}",
+                    binding.binding_id,
+                    missing_binding_capability_ids
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                witness_ids: missing_binding_capability_ids,
+                blocking: true,
+            },
+        })?;
+        return Ok(run_report(
+            "no_dispatchable_step",
+            Some(trace),
+            None,
+            selection.step_reasons,
+        ));
+    }
     if binding.worker_kind == WorkerKind::Shell
         && !options
             .enabled_worker_kinds
@@ -187,15 +227,20 @@ pub(in crate::native_cli) fn run_step(
         &serde_json::to_value(&worker_report)?,
     )?;
 
-    let mut obstructions = missing_evidence_requirement_obstructions(&replay.case_space, step);
-    let existing_requirement_ids = existing_requirement_ids(&replay.case_space, step);
+    let mut obstructions = Vec::new();
+    let worker_succeeded = invocation.exit_status == Some(0) && !invocation.timed_out;
+    let relation_requirement_ids = if worker_succeeded {
+        existing_requirement_ids(&replay.case_space, step)
+    } else {
+        Vec::new()
+    };
     let evidence_morphism = evidence_morphism(
         &replay.case_space,
         &plan,
         step,
         &trace_identity,
         &worker_report,
-        &existing_requirement_ids,
+        &relation_requirement_ids,
     )?;
     let evidence_report = append_validated_morphism(
         &store_api,
@@ -214,22 +259,60 @@ pub(in crate::native_cli) fn run_step(
     let mut appended_entry_ids = vec![evidence_entry.entry_id.clone()];
     let mut result_revision_id = Some(evidence_entry.target_revision_id.clone());
     let mut transition_applied = false;
+    let post_evidence = store_api.replay_current_case_space(options.case_space_id)?;
+    let post_evaluation = evaluate_native_case(&post_evidence.case_space)?;
+    let unsatisfied_success_evidence_requirement_ids = unsatisfied_evidence_requirement_ids(
+        &post_evidence.case_space,
+        &step.work_cell_id,
+        &step.success_evidence_requirement_ids,
+    )?;
     let status;
 
-    if invocation.exit_status == Some(0) && !invocation.timed_out {
-        let post_evidence = store_api.replay_current_case_space(options.case_space_id)?;
-        let mut transition = transition_morphism(
+    if worker_succeeded {
+        let transition = transition_morphism(
             &post_evidence.case_space,
             &plan,
             step,
             &trace_identity,
             &evidence_cell_id,
         )?;
-        let permitted = step
+        let new_hard_obstruction_ids = new_hard_obstruction_ids(&evaluation, &post_evaluation);
+        if !unsatisfied_success_evidence_requirement_ids.is_empty()
+            || !new_hard_obstruction_ids.is_empty()
+        {
+            write_json(
+                &trace_identity.run_directory.join("proposed.morphism.json"),
+                &serde_json::to_value(&transition)?,
+            )?;
+            if !unsatisfied_success_evidence_requirement_ids.is_empty() {
+                obstructions.push(ExecutionObstruction {
+                    obstruction_type: "success_conditions_unsatisfied".to_owned(),
+                    summary: format!(
+                        "step {} success evidence requirements remain unsatisfied after worker execution",
+                        step.step_id
+                    ),
+                    witness_ids: unsatisfied_success_evidence_requirement_ids.clone(),
+                    blocking: true,
+                });
+            }
+            if !new_hard_obstruction_ids.is_empty() {
+                obstructions.push(ExecutionObstruction {
+                    obstruction_type: "invariant_regression".to_owned(),
+                    summary: format!(
+                        "step {} introduced new high or critical blocking obstructions",
+                        step.step_id
+                    ),
+                    witness_ids: new_hard_obstruction_ids,
+                    blocking: true,
+                });
+            }
+            status = "transition_not_authorized";
+        } else if step
             .allowed_transition_classes
             .iter()
-            .any(|allowed| transition_permitted(allowed, &transition, &post_evidence.case_space));
-        if permitted {
+            .any(|allowed| transition_permitted(allowed, &transition, &post_evidence.case_space))
+        {
+            let mut transition = transition;
             transition.review_status = ReviewStatus::Accepted;
             let transition_report = append_validated_morphism(
                 &store_api,
@@ -255,6 +338,7 @@ pub(in crate::native_cli) fn run_step(
                     plan.plan_id, step.step_id
                 ),
                 witness_ids: vec![plan.plan_id.clone(), step.step_id.clone()],
+                blocking: true,
             });
             status = "transition_not_authorized";
         }
@@ -266,6 +350,7 @@ pub(in crate::native_cli) fn run_step(
                 binding.binding_id, invocation.exit_status, invocation.timed_out
             ),
             witness_ids: vec![evidence_cell_id],
+            blocking: true,
         });
         status = "step_failed";
     }
@@ -282,9 +367,11 @@ pub(in crate::native_cli) fn run_step(
         work_cell_id: step.work_cell_id.clone(),
         binding_id: binding.binding_id,
         binding_content_hash,
+        operation_gate: gate,
         worker_report_id: worker_report.report_id.clone(),
         appended_entry_ids,
         transition_applied,
+        unsatisfied_success_evidence_requirement_ids,
         obstructions,
         information_loss: vec![ExecutionInformationLoss {
             description:
@@ -310,34 +397,11 @@ fn verify_accepted_plan(
     plan: &ExecutionPlan,
     case_space: &CaseSpace,
 ) -> Result<(), NativeCliError> {
-    if plan.review_status != ReviewStatus::Accepted {
+    let derived_status = verified_plan_review_status(plan, case_space)?;
+    if derived_status != ReviewStatus::Accepted {
         return Err(NativeCliError::invalid(format!(
-            "execution plan {} is not accepted",
-            plan.plan_id
-        )));
-    }
-    let recorded_hash = case_space
-        .morphism_log
-        .iter()
-        .rev()
-        .find_map(|entry| {
-            let metadata = &entry.morphism.metadata;
-            (metadata.get("target_kind").and_then(Value::as_str) == Some("plan")
-                && metadata.get("target_id").and_then(Value::as_str) == Some(plan.plan_id.as_str())
-                && metadata.get("action").and_then(Value::as_str) == Some("accept"))
-            .then(|| metadata.get("plan_content_hash").and_then(Value::as_str))
-            .flatten()
-        })
-        .ok_or_else(|| {
-            NativeCliError::invalid(format!(
-                "accepted plan {} has no acceptance morphism with a plan_content_hash",
-                plan.plan_id
-            ))
-        })?;
-    if !accepted_plan_content_hash_matches(plan, recorded_hash)? {
-        return Err(NativeCliError::invalid(format!(
-            "accepted plan {} checksum mismatch: stored plan content no longer matches {recorded_hash}",
-            plan.plan_id
+            "execution plan {} is not accepted by its latest plan review (derived status: {:?})",
+            plan.plan_id, derived_status
         )));
     }
     Ok(())
@@ -384,6 +448,7 @@ fn select_step(
                     step.step_id, step.step_id
                 ),
                 witness_ids: vec![step.step_id.clone()],
+                blocking: true,
             });
         }
         if !frontier.contains(&step.work_cell_id) {
@@ -554,6 +619,7 @@ struct PreDispatchTraceInput<'a> {
     base_revision_id: &'a Id,
     identity: &'a TraceIdentity,
     binding_content_hash: String,
+    operation_gate: &'a NativeOperationGate,
     started_at: String,
     obstruction: ExecutionObstruction,
 }
@@ -577,9 +643,11 @@ fn write_pre_dispatch_trace(
         work_cell_id: input.step.work_cell_id.clone(),
         binding_id: input.step.worker_binding_id.clone(),
         binding_content_hash: input.binding_content_hash,
+        operation_gate: input.operation_gate.clone(),
         worker_report_id: input.identity.worker_report_id.clone(),
         appended_entry_ids: Vec::new(),
         transition_applied: false,
+        unsatisfied_success_evidence_requirement_ids: Vec::new(),
         obstructions: vec![input.obstruction],
         information_loss: Vec::new(),
         started_at: input.started_at,
@@ -651,23 +719,28 @@ fn existing_requirement_ids(case_space: &CaseSpace, step: &ExecutionStep) -> Vec
         .collect()
 }
 
-fn missing_evidence_requirement_obstructions(
-    case_space: &CaseSpace,
-    step: &ExecutionStep,
-) -> Vec<ExecutionObstruction> {
-    let cell_ids = case_space
-        .case_cells
+fn new_hard_obstruction_ids(
+    before: &crate::native_eval::NativeCaseEvaluation,
+    after: &crate::native_eval::NativeCaseEvaluation,
+) -> Vec<Id> {
+    let before_ids = before
+        .obstructions
         .iter()
-        .map(|cell| &cell.id)
-        .collect::<BTreeSet<_>>();
-    step.success_evidence_requirement_ids
-        .iter()
-        .filter(|id| !cell_ids.contains(id))
-        .map(|id| ExecutionObstruction {
-            obstruction_type: "missing_evidence_requirement_cell".to_owned(),
-            summary: format!("success evidence requirement {id} is not a materialized case cell"),
-            witness_ids: vec![id.clone()],
+        .filter(|obstruction| {
+            obstruction.blocking
+                && matches!(obstruction.severity, Severity::High | Severity::Critical)
         })
+        .map(|obstruction| &obstruction.id)
+        .collect::<BTreeSet<_>>();
+    after
+        .obstructions
+        .iter()
+        .filter(|obstruction| {
+            obstruction.blocking
+                && matches!(obstruction.severity, Severity::High | Severity::Critical)
+                && !before_ids.contains(&obstruction.id)
+        })
+        .map(|obstruction| obstruction.id.clone())
         .collect()
 }
 
@@ -713,6 +786,10 @@ fn evidence_morphism(
                 "worker_report_id".to_owned(),
                 json!(worker_report.report_id),
             ),
+            (
+                "evidence_boundary".to_owned(),
+                Value::String("worker_output".to_owned()),
+            ),
             ("exit_status".to_owned(), json!(worker_report.exit_status)),
         ]),
     };
@@ -727,7 +804,7 @@ fn evidence_morphism(
                     index + 1
                 ))?,
                 relation_type: CaseRelationType::SatisfiesEvidenceRequirement,
-                relation_strength: RelationStrength::Hard,
+                relation_strength: RelationStrength::Diagnostic,
                 from_id: evidence_id.clone(),
                 to_id: requirement_id.clone(),
                 evidence_ids: vec![evidence_id.clone()],
@@ -767,7 +844,7 @@ fn evidence_morphism(
         retired_ids: Vec::new(),
         preserved_ids: requirement_ids.to_vec(),
         violated_invariant_ids: Vec::new(),
-        review_status: ReviewStatus::Accepted,
+        review_status: ReviewStatus::Unreviewed,
         evidence_ids: vec![evidence_id],
         source_ids: vec![worker_report.report_id.clone()],
         metadata,

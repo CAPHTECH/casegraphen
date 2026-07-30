@@ -10,12 +10,23 @@
   "work_cell_id": "work:review-native-contract",
   "binding_id": "worker_binding:native-contract-review",
   "binding_content_hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "operation_gate": {
+    "actor_id": "actor:native-executor",
+    "operation": "dispatch",
+    "operation_scope_id": "case_space:native-case-management-contract",
+    "audience": "audit",
+    "capability_ids": [
+      "capability:execute-native-contract-review"
+    ],
+    "source_boundary_id": "source_boundary:native-case-management-contract"
+  },
   "worker_report_id": "worker_report:example-run",
   "appended_entry_ids": [
     "morphism_log_entry:evidence-example-run",
     "morphism_log_entry:transition-example-run"
   ],
   "transition_applied": true,
+  "unsatisfied_success_evidence_requirement_ids": [],
   "obstructions": [],
   "information_loss": [
     {

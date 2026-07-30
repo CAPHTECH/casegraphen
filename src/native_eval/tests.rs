@@ -224,6 +224,41 @@ fn inferred_evidence_does_not_satisfy_requirement() {
 }
 
 #[test]
+fn evidence_without_explicit_boundary_does_not_satisfy_hard_requirement() {
+    let mut space = fixture_space();
+    space.case_cells.push(cell(
+        "work:needs-explicit-boundary",
+        CaseCellType::Work,
+        CaseCellLifecycle::Active,
+    ));
+    let mut evidence = cell(
+        "evidence:document-without-boundary",
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+    );
+    evidence.provenance = provenance(SourceKind::Document, ReviewStatus::Accepted);
+    space.case_cells.push(evidence);
+    space.case_relations.push(relation(
+        "relation:needs-explicit-boundary",
+        CaseRelationType::RequiresEvidence,
+        "work:needs-explicit-boundary",
+        "evidence:document-without-boundary",
+    ));
+    refresh_morphism(&mut space);
+
+    let evaluation = evaluate_native_case(&space).expect("evaluation");
+
+    assert!(evaluation
+        .readiness
+        .blocked_cell_ids
+        .contains(&id("work:needs-explicit-boundary")));
+    assert!(evaluation
+        .evidence_findings
+        .inference_record_ids
+        .contains(&id("evidence:document-without-boundary")));
+}
+
+#[test]
 fn review_promoted_evidence_requires_accepted_review() {
     let mut space = fixture_space();
     space.case_cells.push(cell(
