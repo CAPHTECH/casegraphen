@@ -10,6 +10,22 @@ pub(crate) enum EvidenceTrustBoundary {
     Contradicting,
 }
 
+impl EvidenceTrustBoundary {
+    /// The `metadata.evidence_boundary` spelling the native evaluator parses
+    /// back into this boundary. Writers that materialize evidence cells must
+    /// use this instead of spelling the strings themselves.
+    pub(crate) fn metadata_value(self) -> &'static str {
+        match self {
+            Self::SourceBacked => "source_backed",
+            Self::Inferred => "inferred",
+            Self::WorkerOutput => "worker_output",
+            Self::ReviewPromoted => "review_promoted",
+            Self::Rejected => "rejected",
+            Self::Contradicting => "contradicting",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EvidenceTrustInput {
     pub(crate) boundary: EvidenceTrustBoundary,
@@ -81,6 +97,23 @@ mod tests {
                 "unexpected result for {boundary:?}, cell={cell_review_status:?}, \
                  latest={latest_review_status:?}, has_source={has_source}"
             );
+        }
+    }
+
+    #[test]
+    fn metadata_values_round_trip_through_the_native_parser() {
+        use crate::native_model::EvidenceBoundary;
+        for boundary in [
+            EvidenceTrustBoundary::SourceBacked,
+            EvidenceTrustBoundary::Inferred,
+            EvidenceTrustBoundary::WorkerOutput,
+            EvidenceTrustBoundary::ReviewPromoted,
+            EvidenceTrustBoundary::Rejected,
+            EvidenceTrustBoundary::Contradicting,
+        ] {
+            let parsed: EvidenceTrustBoundary =
+                EvidenceBoundary::from_metadata_value(Some(boundary.metadata_value())).into();
+            assert_eq!(parsed, boundary, "metadata spelling does not round-trip");
         }
     }
 }

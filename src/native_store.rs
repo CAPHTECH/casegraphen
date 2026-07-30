@@ -30,6 +30,17 @@ impl NativeCaseStore {
         require_case_space_contract(&self.root, case_space)?;
         require_importable_materialized_log(&self.root, case_space)?;
         validate_materialized_log(&self.root, case_space)?;
+        // The evaluator's own contract, checked at the entry point rather than
+        // on every later read: its id index covers the revision, entry, and
+        // morphism ids that the store's reference checks do not, so a genesis
+        // whose cell collides with one of those imports cleanly and then makes
+        // every derived command fail permanently, with no repair path.
+        crate::native_eval::validate_native_case_space(case_space).map_err(|error| {
+            invalid_morphism(
+                &self.root,
+                format!("imported case space is not evaluable: {error:?}"),
+            )
+        })?;
         let latest = latest_entry(&case_space.morphism_log, &self.root)?;
         require_snapshot_checksum(&self.root, case_space, latest)?;
         let folded = fold_morphism_log(&self.root, &case_space.morphism_log)?;
@@ -71,7 +82,26 @@ impl NativeCaseStore {
             return Err(NativeStoreError::ExistingCase { path: case_dir });
         }
 
-        let snapshots_dir = case_dir.join("snapshots");
+        // Everything past the create_dir is rolled back on failure. Without
+        // this, a write error (a too-long snapshot name, ENOSPC, EACCES) leaves
+        // a case directory carrying no log: the case-space id is then burned —
+        // reimport is refused as already existing — and `space list` fails for
+        // every case space in the store.
+        let written = self.write_new_case_space(case_space, &log_path);
+        if written.is_err() {
+            let _ = fs::remove_dir_all(&case_dir);
+        }
+        written?;
+
+        self.inspect_case_space(&case_space.case_space_id)
+    }
+
+    fn write_new_case_space(
+        &self,
+        case_space: &CaseSpace,
+        log_path: &Path,
+    ) -> NativeStoreResult<()> {
+        let snapshots_dir = self.case_dir(&case_space.case_space_id).join("snapshots");
         fs::create_dir_all(&snapshots_dir).map_err(|source| NativeStoreError::Io {
             path: snapshots_dir.clone(),
             source,
@@ -85,20 +115,19 @@ impl NativeCaseStore {
                     &case_space.case_space_id,
                     &case_space.revision.revision_id,
                 ),
-                &log_path,
+                log_path,
             )?,
             &snapshot,
         )?;
 
-        fs::write(&log_path, "").map_err(|source| NativeStoreError::Io {
-            path: log_path.clone(),
+        fs::write(log_path, "").map_err(|source| NativeStoreError::Io {
+            path: log_path.to_path_buf(),
             source,
         })?;
         for entry in &case_space.morphism_log {
-            append_json_line(&log_path, entry)?;
+            append_json_line(log_path, entry)?;
         }
-
-        self.inspect_case_space(&case_space.case_space_id)
+        Ok(())
     }
 
     pub fn append_morphism(

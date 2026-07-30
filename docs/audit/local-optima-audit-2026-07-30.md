@@ -282,7 +282,15 @@ attack or failure before the fix and re-running it after.
 
 Convergence of the two model families (audit option C for candidate 1 — making
 the workflow graph a lift input and deriving its reports as projections) was
-**not** performed. The divergence defect is closed by unification, so the
-remaining duplication is structural rather than behavioural. That decision should
-be revisited before the workflow contract acquires external consumers, since the
-cost of converging only rises after publication.
+**not** performed at remediation time. The divergence defect is closed by
+unification, so the remaining duplication was structural rather than
+behavioural. The disposition noted it should be revisited before the workflow
+contract acquires external consumers, since the cost of converging only rises
+after publication.
+
+**Update (2026-07-30, later the same day):** option C was executed before first
+publication as ADR 0003. `lift workflow` now materializes the graph into a
+native case space, and the second evaluator, the workflow workspace/store, the
+`workflow *` and `cg workflow *` CLI surfaces, and the workflow report
+contracts were deleted (~6,700 lines). One decision rule, one evaluator, one
+store remain.

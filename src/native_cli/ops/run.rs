@@ -1158,7 +1158,11 @@ fn evidence_morphism(
             ("trace_id".to_owned(), json!(identity.trace_id)),
             (
                 "evidence_boundary".to_owned(),
-                Value::String("worker_output".to_owned()),
+                Value::String(
+                    crate::evidence_trust::EvidenceTrustBoundary::WorkerOutput
+                        .metadata_value()
+                        .to_owned(),
+                ),
             ),
             ("exit_status".to_owned(), json!(worker_report.exit_status)),
         ]),

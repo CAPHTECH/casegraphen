@@ -1,9 +1,12 @@
 use super::{
     io::{case_space_checksum, read_case_space},
     new_case_space, path_segment, report, retarget_latest_revision, source_boundary_value,
+    workflow_lift::materialize_workflow_graph,
     write_genesis_materialization, NativeCliError,
 };
-use crate::{native_model::CaseSpace, native_store::NativeCaseStore};
+use crate::{
+    native_model::CaseSpace, native_store::NativeCaseStore, workflow_model::WorkflowCaseGraph,
+};
 use higher_graphen_core::Id;
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -43,7 +46,14 @@ pub(in crate::native_cli) fn lift_structured_source(
     revision_id: &Id,
     adapter: &str,
 ) -> Result<Value, NativeCliError> {
-    let lift = read_lift_input(input, adapter)?;
+    // Read once. Two reads of the same path let a concurrent writer make the
+    // recorded source identity describe one document while the materialized
+    // cells come from another, with nothing in the audit record to show it.
+    let bytes = std::fs::read(input).map_err(|source| NativeCliError::Io {
+        path: input.to_path_buf(),
+        source,
+    })?;
+    let lift = read_lift_input(&bytes, adapter)?;
     let case_space_id = Id::new(format!("case_space:{}", path_segment(&lift.source_id)))?;
     let mut case_space = new_case_space(
         &case_space_id,
@@ -51,19 +61,46 @@ pub(in crate::native_cli) fn lift_structured_source(
         &format!("Lifted {}", lift.source_schema),
         revision_id,
     )?;
+    let mut information_loss = vec![json!({
+        "source_schema": lift.source_schema,
+        "input": input.display().to_string(),
+        "note": "The first lift adapter records source identity and boundary metadata; full cell/relation materialization is handled by later morphism reducers."
+    })];
+    // The workflow adapter materializes (ADR 0003): the graph's items,
+    // relations, and evidence replace the synthetic root cell, and the
+    // genesis payload below is rebuilt from them so the lifted space
+    // replays, rebuilds, and validates like any other.
+    if adapter == "workflow" {
+        let graph = parse_workflow_graph(&bytes)?;
+        let materialized = materialize_workflow_graph(&graph)?;
+        case_space.case_cells = materialized.cells;
+        case_space.case_relations = materialized.relations;
+        information_loss = vec![json!({
+            "source_schema": lift.source_schema,
+            "input": input.display().to_string(),
+            "note": "Work items, workflow relations, and evidence records were materialized as case cells and relations; the unmapped families are declared below."
+        })];
+        information_loss.extend(materialized.information_loss);
+    }
     let source_boundary = source_boundary_value(
         Id::new(format!("source_boundary:{}", path_segment(&case_space_id)))?,
         std::slice::from_ref(&lift.lift_source_id),
         &[adapter],
         "Structured source records are accepted as bounded lift input; generated records require review before they satisfy hard requirements.",
         "Lift adapters preserve source identifiers and declare unsupported source fields as information loss.",
-        vec![json!({
-            "source_schema": lift.source_schema,
-            "input": input.display().to_string(),
-            "note": "The first lift adapter records source identity and boundary metadata; full cell/relation materialization is handled by later morphism reducers."
-        })],
+        information_loss,
     );
-    annotate_lift_metadata(&mut case_space, &lift, adapter, input, source_boundary);
+    let input_content_hash = crate::native_hash::sha256_hex(&bytes);
+    let annotate_root_cell = adapter != "workflow";
+    annotate_lift_metadata(
+        &mut case_space,
+        &lift,
+        &input_content_hash,
+        adapter,
+        input,
+        source_boundary,
+        annotate_root_cell,
+    );
     refresh_lift_checksums(&mut case_space)?;
     let record = NativeCaseStore::new(store.to_path_buf()).import_case_space(&case_space)?;
     Ok(report(
@@ -87,12 +124,8 @@ struct LiftInput {
     lift_source_id: Id,
 }
 
-fn read_lift_input(input: &Path, adapter: &str) -> Result<LiftInput, NativeCliError> {
-    let raw = std::fs::read_to_string(input).map_err(|source| NativeCliError::Io {
-        path: input.to_path_buf(),
-        source,
-    })?;
-    let value: Value = serde_json::from_str(&raw)?;
+fn read_lift_input(bytes: &[u8], adapter: &str) -> Result<LiftInput, NativeCliError> {
+    let value: Value = serde_json::from_slice(bytes)?;
     let object = value
         .as_object()
         .ok_or_else(|| NativeCliError::invalid("lift input must be a JSON object"))?;
@@ -118,9 +151,11 @@ fn read_lift_input(input: &Path, adapter: &str) -> Result<LiftInput, NativeCliEr
 fn annotate_lift_metadata(
     case_space: &mut CaseSpace,
     lift: &LiftInput,
+    input_content_hash: &str,
     adapter: &str,
     input: &Path,
     source_boundary: Value,
+    annotate_root_cell: bool,
 ) {
     case_space
         .metadata
@@ -131,7 +166,8 @@ fn annotate_lift_metadata(
             "adapter": adapter,
             "source_schema": lift.source_schema,
             "source_id": lift.source_id,
-            "input": input.display().to_string()
+            "input": input.display().to_string(),
+            "input_content_hash": input_content_hash
         }),
     );
     if let Some(entry) = case_space.morphism_log.first_mut() {
@@ -153,13 +189,21 @@ fn annotate_lift_metadata(
             .morphism
             .metadata
             .insert("input".to_owned(), json!(input.display().to_string()));
+        entry
+            .morphism
+            .metadata
+            .insert("input_content_hash".to_owned(), json!(input_content_hash));
     }
-    if let Some(cell) = case_space.case_cells.first_mut() {
-        cell.source_ids = vec![lift.lift_source_id.clone()];
-        cell.metadata
-            .insert("lifted_from".to_owned(), json!(lift.source_id));
-        cell.metadata
-            .insert("source_schema".to_owned(), json!(lift.source_schema));
+    // A materializing lift's cells carry their own workflow-declared sources;
+    // only the shallow adapters stamp the synthetic root cell.
+    if annotate_root_cell {
+        if let Some(cell) = case_space.case_cells.first_mut() {
+            cell.source_ids = vec![lift.lift_source_id.clone()];
+            cell.metadata
+                .insert("lifted_from".to_owned(), json!(lift.source_id));
+            cell.metadata
+                .insert("source_schema".to_owned(), json!(lift.source_schema));
+        }
     }
     case_space.revision.source_ids = vec![lift.lift_source_id.clone()];
 }
@@ -177,6 +221,13 @@ fn refresh_lift_checksums(case_space: &mut CaseSpace) -> Result<(), NativeCliErr
         entry.replay_checksum = checksum;
     }
     Ok(())
+}
+
+fn parse_workflow_graph(bytes: &[u8]) -> Result<WorkflowCaseGraph, NativeCliError> {
+    let graph: WorkflowCaseGraph = serde_json::from_slice(bytes)?;
+    crate::workflow_model::validate_workflow_graph(&graph)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    Ok(graph)
 }
 
 fn source_id_for_lift(adapter: &str, object: &Map<String, Value>) -> Result<Id, NativeCliError> {

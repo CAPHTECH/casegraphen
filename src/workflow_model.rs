@@ -3,6 +3,12 @@ use higher_graphen_core::{Confidence, Id, ReviewStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+mod validation;
+pub use validation::{
+    validate_workflow_graph, WorkflowResult, WorkflowValidationCode, WorkflowValidationError,
+    WorkflowValidationViolation,
+};
+
 pub const WORKFLOW_GRAPH_SCHEMA: &str = "highergraphen.case.workflow.graph.v1";
 pub const WORKFLOW_GRAPH_SCHEMA_VERSION: u32 = 1;
 
@@ -445,15 +451,15 @@ mod tests {
     }
 
     #[test]
-    fn workflow_cli_reason_requires_explicit_input() {
+    fn removed_workflow_surface_names_the_lift_replacement() {
         let error = crate::cli::run([
             OsString::from("workflow"),
             OsString::from("reason"),
             OsString::from("--format"),
             OsString::from("json"),
         ])
-        .expect_err("workflow reasoning requires an input graph");
+        .expect_err("the workflow evaluator surface is gone");
 
-        assert!(error.to_string().contains("--input <path> is required"));
+        assert!(error.to_string().contains("lift workflow"));
     }
 }

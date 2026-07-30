@@ -33,6 +33,7 @@ mod lift;
 mod mutations;
 mod plan;
 mod run;
+mod workflow_lift;
 pub(super) use binding::binding_register;
 use io::{
     case_space_checksum, known_ids, proposal_path, proposal_value, provenance, read_morphism,

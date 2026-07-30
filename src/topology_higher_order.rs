@@ -1,6 +1,4 @@
-use crate::{
-    native_model, topology::TopologyReportOptions, workflow_workspace::WorkflowHistoryEntry,
-};
+use crate::{native_model, topology::TopologyReportOptions};
 use higher_graphen_core::{CoreError, Id};
 use higher_graphen_structure::space::{Dimension, InMemorySpaceStore};
 use higher_graphen_structure::topology::{
@@ -32,7 +30,6 @@ pub struct HigherOrderTopologyReport {
 #[serde(rename_all = "snake_case")]
 pub enum HigherOrderFiltrationSource {
     DeterministicCellOrder,
-    WorkflowHistory,
     NativeMorphismLog,
 }
 
@@ -81,7 +78,6 @@ pub struct HigherOrderIntervalSummary {
 #[derive(Clone, Copy)]
 pub(crate) enum HigherOrderFiltrationInput<'a> {
     Deterministic,
-    WorkflowHistory(&'a [WorkflowHistoryEntry]),
     NativeMorphismLog(&'a [native_model::MorphismLogEntry]),
 }
 
@@ -152,20 +148,6 @@ pub(crate) fn filtration_plan_from_input(
 ) -> Result<Option<HigherOrderFiltrationPlan>, TopologyReportError> {
     match input {
         HigherOrderFiltrationInput::Deterministic => Ok(None),
-        HigherOrderFiltrationInput::WorkflowHistory(history) => history_filtration_plan(
-            HigherOrderFiltrationSource::WorkflowHistory,
-            history.iter().map(|entry| {
-                (
-                    "workflow_revision",
-                    entry.revision_id.clone(),
-                    entry.changed_ids.added_ids.clone(),
-                )
-            }),
-            store,
-            complex,
-            source_mapping,
-            max_dimension,
-        ),
         HigherOrderFiltrationInput::NativeMorphismLog(history) => history_filtration_plan(
             HigherOrderFiltrationSource::NativeMorphismLog,
             history.iter().map(|entry| {

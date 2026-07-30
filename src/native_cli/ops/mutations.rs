@@ -2,6 +2,7 @@ use super::{
     append_validated_morphism, io::timestamp, require_current_revision, validated_mutation_gate,
     NativeMutationGateOptions, NativeReviewApplyOptions,
 };
+use crate::evidence_trust::EvidenceTrustBoundary;
 use crate::{
     native_model::{
         CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType, CaseRelation,
@@ -249,9 +250,12 @@ fn evidence_cell_from_bytes(bytes: &[u8]) -> Result<CaseCell, NativeCliError> {
             cell.id
         )));
     }
+    // Attached evidence is untrusted by construction: the caller does not get
+    // to name its boundary, and `inferred` is the spelling the shared trust
+    // rule reads as "needs an accepted review".
     cell.metadata.insert(
         "evidence_boundary".to_owned(),
-        Value::String("attached_unverified".to_owned()),
+        Value::String(EvidenceTrustBoundary::Inferred.metadata_value().to_owned()),
     );
     cell.metadata.insert(
         "content_hash".to_owned(),
@@ -396,9 +400,12 @@ mod tests {
             );
         let cell = evidence_cell_from_bytes(accepted_boundary.as_bytes())
             .expect("caller boundary is overwritten");
+        // The stored spelling must be one the shared trust rule actually reads
+        // as untrusted, not merely an unrecognized string that happens to fall
+        // through to `Inferred`.
         assert_eq!(
             cell.metadata["evidence_boundary"],
-            json!("attached_unverified")
+            json!(EvidenceTrustBoundary::Inferred.metadata_value())
         );
 
         let accepted_review = String::from_utf8(EVIDENCE_CELL.to_vec())

@@ -72,7 +72,8 @@ preferences.
 | Execution plan, transition authorization | `src/exec.rs` |
 | Worker adapter — the only place that spawns processes | `src/exec/worker.rs` |
 | CLI parsing and operations | `src/native_cli/` |
-| Workflow reasoning wire format (non-executing) | `src/workflow_*` |
+| Workflow graph wire format + validation (lift input only, ADR 0003) | `src/workflow_model.rs` |
+| Workflow lift materialization | `src/native_cli/ops/workflow_lift.rs` |
 | Contracts | `schemas/casegraphen/` |
 | Decisions, specs, security policy, audit | `docs/` |
 | End-to-end example of the whole control model | `docs/guides/release-decision-walkthrough.md` |

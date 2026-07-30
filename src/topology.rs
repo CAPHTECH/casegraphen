@@ -1,8 +1,6 @@
 //! Shared topology diagnostics for CaseGraphen data models.
 
-use crate::{
-    native_model, workflow_model::WorkflowCaseGraph, workflow_workspace::WorkflowHistoryEntry,
-};
+use crate::native_model;
 use higher_graphen_core::{CoreError, Id};
 use higher_graphen_structure::space::{Dimension, GraphAnalyticsReport};
 use higher_graphen_structure::topology::TopologySummary;
@@ -21,7 +19,7 @@ pub use self::topology_higher_order::{
 pub use self::topology_lift::{SkippedRelationMapping, SourceCellMapping, TopologyLiftSummary};
 
 use self::topology_higher_order::HigherOrderFiltrationInput;
-use self::topology_lift::{cell_id, native_lift_builder, workflow_lift_builder, LiftBuilder};
+use self::topology_lift::{cell_id, native_lift_builder, LiftBuilder};
 
 /// Topology report for a lifted CaseGraphen graph.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -150,75 +148,6 @@ pub struct OptionalDimensionDelta {
 
 /// Error returned while building or summarizing a topology report.
 pub type TopologyReportError = CoreError;
-
-/// Lifts a workflow case graph into a finite complex and summarizes it.
-pub fn workflow_topology(
-    graph: &WorkflowCaseGraph,
-) -> Result<CaseTopologyReport, TopologyReportError> {
-    workflow_topology_with_options(graph, TopologyReportOptions::baseline())
-}
-
-/// Lifts a workflow case graph into a finite complex and summarizes it.
-pub fn workflow_topology_with_options(
-    graph: &WorkflowCaseGraph,
-    options: TopologyReportOptions,
-) -> Result<CaseTopologyReport, TopologyReportError> {
-    let mut lift = LiftBuilder::new(
-        graph.space_id.clone(),
-        cell_id("complex", "workflow_graph", &graph.workflow_graph_id)?,
-        "CaseGraphen workflow topology",
-    )?;
-
-    for item in &graph.work_items {
-        lift.add_node("work_item", &item.id, &item.title)?;
-    }
-    for rule in &graph.readiness_rules {
-        lift.add_node("readiness_rule", &rule.id, "readiness rule")?;
-    }
-    for evidence in &graph.evidence_records {
-        lift.add_node("evidence_record", &evidence.id, &evidence.summary)?;
-    }
-    for review in &graph.completion_reviews {
-        lift.add_node("completion_review", &review.id, &review.reason)?;
-    }
-    for transition in &graph.transition_records {
-        lift.add_node("transition_record", &transition.id, "transition record")?;
-    }
-    for profile in &graph.projection_profiles {
-        lift.add_node("projection_profile", &profile.id, &profile.purpose)?;
-    }
-    for correspondence in &graph.correspondence_records {
-        lift.add_node(
-            "correspondence_record",
-            &correspondence.id,
-            "correspondence record",
-        )?;
-    }
-    for relation in &graph.workflow_relations {
-        lift.add_relation(
-            "workflow_relation",
-            &relation.id,
-            &format!("{:?}", relation.relation_type),
-            &relation.from_id,
-            &relation.to_id,
-        )?;
-    }
-
-    lift.finish(options)
-}
-
-/// Lifts a workflow case graph and uses workspace history as the higher-order filtration source.
-pub fn workflow_topology_with_history(
-    graph: &WorkflowCaseGraph,
-    history: &[WorkflowHistoryEntry],
-    options: TopologyReportOptions,
-) -> Result<CaseTopologyReport, TopologyReportError> {
-    let lift = workflow_lift_builder(graph)?;
-    lift.finish_with_filtration(
-        options,
-        HigherOrderFiltrationInput::WorkflowHistory(history),
-    )
-}
 
 /// Lifts a native case space into a finite complex and summarizes it.
 pub fn native_case_topology(
@@ -430,25 +359,8 @@ fn optional_dimension_delta(
 mod tests {
     use super::*;
 
-    const WORKFLOW_EXAMPLE: &str =
-        include_str!("../schemas/casegraphen/workflow.graph.example.json");
     const NATIVE_EXAMPLE: &str =
         include_str!("../schemas/casegraphen/native.case.space.example.json");
-
-    #[test]
-    fn workflow_topology_serializes_homology() {
-        let graph: WorkflowCaseGraph =
-            serde_json::from_str(WORKFLOW_EXAMPLE).expect("workflow graph example");
-        let report = workflow_topology(&graph).expect("workflow topology");
-
-        assert_eq!(report.space_id, graph.space_id);
-        assert!(report.topology.homology.betti_number(0) > 0);
-        assert_eq!(report.topology.homology.betti_number(1), 0);
-        assert!(!report.source_mapping.nodes.is_empty());
-        assert!(!report.source_mapping.relations.is_empty());
-
-        serde_json::to_value(&report).expect("serialize workflow topology");
-    }
 
     #[test]
     fn native_case_topology_serializes_homology() {

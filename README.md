@@ -98,9 +98,11 @@ casegraphen plan propose|check|accept|reject      # accept/reject are gated
 casegraphen run --step                            # gated; worker off by default
 casegraphen obstruction list | completion candidates | projection apply
 casegraphen equivalence check | invariant check|close-check
-casegraphen workflow reason|validate|readiness|obstructions|completions|evidence|project|correspond|evolution
-casegraphen cg workflow ...                       # store-backed workflow bridge
 ```
+
+The former `workflow *` and `cg workflow *` evaluator surface was removed
+(ADR 0003): `lift workflow` materializes a workflow graph into a case space,
+and the native derived commands answer what those commands answered.
 
 `casegraphen` with no arguments prints the full usage text.
 
@@ -122,9 +124,9 @@ See [`skills/README.md`](skills/README.md) for the other ways to install it.
 Wire formats live in [`schemas/casegraphen/`](schemas/casegraphen/) and are
 strict: unknown fields are rejected and breaking changes require a new schema
 id. The case space (`highergraphen.case.space.v1`) and workflow graph
-(`highergraphen.case.workflow.graph.v1`) are inputs; reports and the execution
-records (`execution_plan`, `worker_binding`, `worker_report`, `execution_trace`)
-are versioned alongside them.
+(`highergraphen.case.workflow.graph.v1`, a lift input since ADR 0003) are
+inputs; reports and the execution records (`execution_plan`, `worker_binding`,
+`worker_report`, `execution_trace`) are versioned alongside them.
 
 ## Relationship to HigherGraphen
 

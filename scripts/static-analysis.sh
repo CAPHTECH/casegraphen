@@ -60,7 +60,6 @@ envelope_only = {
     "case.report",
     "native-cli.report",
     "native.morphism-log-entry",
-    "workflow.operation.report",
 }
 
 problems = []

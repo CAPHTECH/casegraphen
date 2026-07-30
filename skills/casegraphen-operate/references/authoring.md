@@ -1,5 +1,16 @@
 # Authoring a case space
 
+## Lifting a workflow graph
+
+`lift workflow` materializes a `highergraphen.case.workflow.graph.v1` document
+into a case space (ADR 0003): work items become cells, workflow relations become
+relations, evidence records become evidence cells. Nothing the graph declares
+about trust survives — `case_ids` does not become `structure_ids`, the
+evaluator-consulted metadata keys are stripped, and every lifted evidence cell
+enters `unreviewed`. A lifted space carries no capability cells, so it is an
+analysis space: to execute workflow-originated work, author a native genesis
+with explicit capabilities.
+
 ## Use `lift native`, not `space new`
 
 `space new` creates a case space containing one `case:native-root` cell and no

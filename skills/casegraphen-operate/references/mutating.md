@@ -71,9 +71,9 @@ transition; go through `active`.
 ## Attaching evidence is not promoting it
 
 `evidence attach` takes an evidence cell document. The tool overwrites
-`metadata.evidence_boundary` with `attached_unverified` and sets
-`metadata.content_hash` from the input bytes, and it refuses input claiming
-`review_status: accepted`. `--satisfies <target-id>` adds a
+`metadata.evidence_boundary` with `inferred` — the spelling that means "needs an
+accepted review" — and sets `metadata.content_hash` from the input bytes, and it
+refuses input claiming `review_status: accepted`. `--satisfies <target-id>` adds a
 `satisfies_evidence_requirement` relation at `diagnostic` strength — which does
 not satisfy a hard requirement.
 

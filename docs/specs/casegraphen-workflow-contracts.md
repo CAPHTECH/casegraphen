@@ -1,6 +1,14 @@
 # casegraphen Workflow Contracts
 
-Status: implementable model and report contract for case
+> **Status (2026-07-30): partially superseded by
+> [ADR 0003](../adr/0003-workflow-convergence.md).** The workflow graph input
+> contract (`highergraphen.case.workflow.graph.v1`) remains normative as the
+> `lift workflow` input. Everything below about report contracts, the workflow
+> evaluator, and the `workflow *` / `cg workflow *` CLI surface describes
+> machinery that has been deleted; readiness and findings over a workflow graph
+> are now derived by lifting it into a native case space.
+
+Original status: implementable model and report contract for case
 `casegraphen-highergraphen-rewrite`, task
 `task_casegraphen_reasoning_contract`.
 

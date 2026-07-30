@@ -283,7 +283,7 @@ use review accept to promote evidence
 Downgrading the claim to `reviewed` lets it in, but not on its own terms:
 
 ```
-stored boundary: attached_unverified | declared: source_backed
+stored boundary: inferred | declared: source_backed
 content_hash: 29f2def847bebfbd…
 ```
 

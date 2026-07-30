@@ -1,4 +1,4 @@
-use crate::{native_model, topology::TopologyReportOptions, workflow_model::WorkflowCaseGraph};
+use crate::{native_model, topology::TopologyReportOptions};
 use higher_graphen_core::{CoreError, Id};
 use higher_graphen_structure::space::{
     Cell, ComplexType, GraphAnalyticsInput, InMemorySpaceStore, Incidence, IncidenceOrientation,
@@ -254,53 +254,6 @@ impl LiftBuilder {
                 reason: format!("identifier {} does not exist", self.complex_id),
             })
     }
-}
-
-pub(super) fn workflow_lift_builder(
-    graph: &WorkflowCaseGraph,
-) -> Result<LiftBuilder, TopologyReportError> {
-    let mut lift = LiftBuilder::new(
-        graph.space_id.clone(),
-        cell_id("complex", "workflow_graph", &graph.workflow_graph_id)?,
-        "CaseGraphen workflow topology",
-    )?;
-
-    for item in &graph.work_items {
-        lift.add_node("work_item", &item.id, &item.title)?;
-    }
-    for rule in &graph.readiness_rules {
-        lift.add_node("readiness_rule", &rule.id, "readiness rule")?;
-    }
-    for evidence in &graph.evidence_records {
-        lift.add_node("evidence_record", &evidence.id, &evidence.summary)?;
-    }
-    for review in &graph.completion_reviews {
-        lift.add_node("completion_review", &review.id, &review.reason)?;
-    }
-    for transition in &graph.transition_records {
-        lift.add_node("transition_record", &transition.id, "transition record")?;
-    }
-    for profile in &graph.projection_profiles {
-        lift.add_node("projection_profile", &profile.id, &profile.purpose)?;
-    }
-    for correspondence in &graph.correspondence_records {
-        lift.add_node(
-            "correspondence_record",
-            &correspondence.id,
-            "correspondence record",
-        )?;
-    }
-    for relation in &graph.workflow_relations {
-        lift.add_relation(
-            "workflow_relation",
-            &relation.id,
-            &format!("{:?}", relation.relation_type),
-            &relation.from_id,
-            &relation.to_id,
-        )?;
-    }
-
-    Ok(lift)
 }
 
 pub(super) fn native_lift_builder(

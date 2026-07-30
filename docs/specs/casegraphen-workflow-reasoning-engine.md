@@ -1,6 +1,13 @@
 # casegraphen Workflow Reasoning Engine
 
-Status: foundation contract for case `casegraphen-highergraphen-rewrite`.
+> **Status (2026-07-30): superseded by
+> [ADR 0003](../adr/0003-workflow-convergence.md).** The workflow reasoning
+> engine this document specifies has been deleted; the workflow graph survives
+> as a lift input, and the native case-space evaluator derives readiness,
+> obstructions, and evidence findings over the lifted result. This document is
+> retained as the historical design record of the deleted engine.
+
+Original status: foundation contract for case `casegraphen-highergraphen-rewrite`.
 
 This document defines the next stage of `casegraphen` inside the
 `higher-graphen` workspace. It does not target a direct rewrite of the external

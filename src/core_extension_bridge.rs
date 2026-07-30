@@ -1,13 +1,11 @@
 mod native;
 mod support;
 mod validation;
-mod workflow;
 
 pub use native::{
     native_close_check_extensions, native_close_check_result, native_morphism_check_extensions,
     native_morphism_check_result,
 };
-pub use workflow::workflow_reason_extensions;
 
 use higher_graphen_core::{
     Capability, Derivation, EquivalenceClaim, Policy, Scenario, SchemaMorphism, Valuation, Witness,

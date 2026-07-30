@@ -26,1188 +26,6 @@ fn version_command_reports_package_version() {
 }
 
 #[test]
-fn workflow_reason_emits_reasoning_report_for_workflow_fixture() {
-    let output = run_cli(&[
-        "workflow",
-        "reason",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stderr(&output).is_empty());
-
-    let value = stdout_json(&output);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.report.v1")
-    );
-    assert_eq!(value["report_type"], json!("case_workflow_reasoning"));
-    assert_eq!(
-        value["metadata"]["command"],
-        json!("casegraphen workflow reason")
-    );
-    assert_eq!(value["metadata"]["tool_package"], json!("casegraphen"));
-    assert_eq!(value["result"]["status"], json!("obstructions_detected"));
-    assert_eq!(
-        value["result"]["readiness"]["ready_item_ids"],
-        json!(["task:define-workflow-reasoning-contract"])
-    );
-    assert_eq!(
-        value["result"]["completion_candidates"][0]["review_status"],
-        json!("unreviewed")
-    );
-    assert_eq!(
-        value["projection"]["ai_view"]["audience"],
-        json!("ai_agent")
-    );
-    assert!(value["core_extensions"]["witnesses"]
-        .as_array()
-        .expect("workflow core witnesses")
-        .iter()
-        .any(|witness| witness["id"] == json!("witness:evidence:workflow-target-doc")));
-    assert!(value["core_extensions"]["policies"]
-        .as_array()
-        .expect("workflow core policies")
-        .iter()
-        .any(|policy| policy["policy_kind"] == json!("obligation")));
-}
-
-#[test]
-fn workflow_reason_uses_metadata_core_extensions_as_review_gate() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let input_path = directory.join("workflow.with-core-extension.json");
-    let mut workflow = json_file(workflow_fixture());
-    workflow["metadata"]["higher_graphen_extensions"] =
-        invalid_core_extensions("task:define-workflow-reasoning-contract");
-    fs::write(
-        &input_path,
-        serde_json::to_string_pretty(&workflow).expect("serialize workflow"),
-    )
-    .expect("write workflow");
-
-    let output = run_cli(&[
-        "workflow",
-        "reason",
-        "--input",
-        input_path.to_str().expect("workflow path"),
-        "--format",
-        "json",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    let value = stdout_json(&output);
-    assert_eq!(value["result"]["status"], json!("review_required"));
-    assert_eq!(
-        value["core_extensions"]["validation"]["blocked_count"],
-        json!(1)
-    );
-    assert_eq!(
-        value["core_extensions"]["validation"]["findings"][0]["object_id"],
-        json!("valuation:metadata-core-extension-block")
-    );
-}
-
-#[test]
-fn workflow_topology_emits_diagnostics_report() {
-    let output = run_cli(&[
-        "workflow",
-        "history",
-        "topology",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stderr(&output).is_empty());
-
-    let value = stdout_json(&output);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.topology.report.v1")
-    );
-    assert_eq!(value["report_type"], json!("case_workflow_topology"));
-    assert_eq!(
-        value["metadata"]["command"],
-        json!("casegraphen workflow history topology")
-    );
-    assert_eq!(
-        value["result"]["topology"]["homology"]["coefficient_field"],
-        json!("z2")
-    );
-    assert!(!value["result"]["source_mapping"]["nodes"]
-        .as_array()
-        .expect("topology nodes")
-        .is_empty());
-    assert!(value["result"].get("higher_order").is_none());
-
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let output_path = directory.join("workflow.topology.report.json");
-
-    let file_output = run_cli(&[
-        "workflow",
-        "history",
-        "topology",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-
-    assert!(
-        file_output.status.success(),
-        "stderr: {}",
-        stderr(&file_output)
-    );
-    assert!(stdout(&file_output).is_empty());
-    assert!(stderr(&file_output).is_empty());
-    assert_eq!(
-        json_file(output_path)["schema"],
-        json!("highergraphen.case.workflow.topology.report.v1")
-    );
-
-    let higher_order = run_cli(&[
-        "workflow",
-        "history",
-        "topology",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--higher-order",
-        "--min-persistence-stages",
-        "1",
-    ]);
-    assert!(
-        higher_order.status.success(),
-        "stderr: {}",
-        stderr(&higher_order)
-    );
-    let higher_order_json = stdout_json(&higher_order);
-    assert_eq!(
-        higher_order_json["result"]["higher_order"]["options"]["min_persistence_stages"],
-        json!(1)
-    );
-    assert!(
-        !higher_order_json["result"]["higher_order"]["persistence"]["stages"]
-            .as_array()
-            .expect("higher-order stages")
-            .is_empty()
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn workflow_topology_diff_command_reports_file_to_file_deltas() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let right_path = directory.join("right.workflow.graph.json");
-    let output_path = directory.join("workflow.topology.diff.report.json");
-    let mut workflow = json_file(workflow_fixture());
-
-    let mut added_item = workflow["work_items"][0].clone();
-    added_item["id"] = json!("task:topology-diff-added");
-    added_item["title"] = json!("Topology diff added workflow item");
-    added_item["state"] = json!("todo");
-    added_item["hard_dependency_ids"] = json!([]);
-    added_item["external_wait_ids"] = json!([]);
-    added_item["evidence_requirement_ids"] = json!([]);
-    added_item["proof_requirement_ids"] = json!([]);
-    workflow["work_items"]
-        .as_array_mut()
-        .expect("work items")
-        .push(added_item);
-
-    let mut added_relation = workflow["workflow_relations"][0].clone();
-    added_relation["id"] = json!("relation:topology-diff-added");
-    added_relation["relation_type"] = json!("relates_to");
-    added_relation["from_id"] = json!("task:topology-diff-added");
-    added_relation["to_id"] = json!("task:define-workflow-reasoning-contract");
-    added_relation["evidence_ids"] = json!([]);
-    workflow["workflow_relations"]
-        .as_array_mut()
-        .expect("workflow relations")
-        .push(added_relation);
-
-    fs::write(
-        &right_path,
-        serde_json::to_string_pretty(&workflow).expect("serialize right workflow"),
-    )
-    .expect("write right workflow");
-
-    let output = run_cli(&[
-        "workflow",
-        "history",
-        "topology",
-        "diff",
-        "--left",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--right",
-        right_path.to_str().expect("right workflow path"),
-        "--format",
-        "json",
-        "--higher-order",
-        "--max-dimension",
-        "1",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
-    let value = json_file(output_path);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.topology_diff.report.v1")
-    );
-    assert_eq!(value["report_type"], json!("case_workflow_topology_diff"));
-    assert_eq!(
-        value["metadata"]["command"],
-        json!("casegraphen workflow history topology diff")
-    );
-    assert_eq!(
-        value["result"]["scalar_deltas"]["vertex_count"]["delta"],
-        json!(1)
-    );
-    assert_eq!(
-        value["result"]["scalar_deltas"]["graph_edge_count"]["delta"],
-        json!(1)
-    );
-    assert_eq!(
-        value["result"]["source_mapping"]["added_source_node_ids"],
-        json!(["task:topology-diff-added"])
-    );
-    assert_eq!(
-        value["result"]["source_mapping"]["added_source_relation_ids"],
-        json!(["relation:topology-diff-added"])
-    );
-    assert!(value["result"].get("higher_order").is_some());
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn workflow_validate_reports_semantic_violations_as_json() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let bad_workflow_path = directory.join("bad.workflow.graph.json");
-    let mut workflow = json_file(workflow_fixture());
-    workflow["workflow_relations"][0]["from_id"] = json!("task:missing-work-item");
-    fs::write(
-        &bad_workflow_path,
-        serde_json::to_string_pretty(&workflow).expect("serialize bad workflow"),
-    )
-    .expect("write bad workflow");
-
-    let output = run_cli(&[
-        "workflow",
-        "validate",
-        "--input",
-        bad_workflow_path.to_str().expect("bad workflow path"),
-        "--format",
-        "json",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stderr(&output).is_empty());
-
-    let value = stdout_json(&output);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.validate.report.v1")
-    );
-    assert_eq!(value["report_type"], json!("case_workflow_validate"));
-    assert_eq!(value["result"]["valid"], json!(false));
-    assert!(value["result"]["violations"]
-        .as_array()
-        .expect("violations")
-        .iter()
-        .any(|violation| violation["code"] == json!("dangling_reference")));
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn workflow_reason_supports_output_file_without_stdout() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let output_path = directory.join("workflow.report.json");
-
-    let output = run_cli(&[
-        "workflow",
-        "reason",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
-
-    let value: Value =
-        serde_json::from_str(&fs::read_to_string(&output_path).expect("read report"))
-            .expect("report JSON");
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.report.v1")
-    );
-    assert_eq!(
-        value["input"]["workflow_graph_id"],
-        json!("workflow_graph:casegraphen-rewrite-contract")
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn workflow_readiness_supports_output_file_without_stdout() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let output_path = directory.join("workflow.readiness.report.json");
-
-    let output = run_cli(&[
-        "workflow",
-        "readiness",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
-
-    let value: Value =
-        serde_json::from_str(&fs::read_to_string(&output_path).expect("read report"))
-            .expect("report JSON");
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.readiness.report.v1")
-    );
-    assert_eq!(
-        value["result"]["ready_item_ids"],
-        json!(["task:define-workflow-reasoning-contract"])
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn focused_workflow_commands_emit_section_reports() {
-    let readiness = run_cli(&[
-        "workflow",
-        "readiness",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--projection",
-        projection_fixture().to_str().expect("projection path"),
-        "--format",
-        "json",
-    ]);
-    assert!(readiness.status.success(), "stderr: {}", stderr(&readiness));
-    let value = stdout_json(&readiness);
-    assert_eq!(value["report_type"], json!("case_workflow_readiness"));
-    assert_eq!(
-        value["input"]["projection"],
-        json!(projection_fixture().display().to_string())
-    );
-    assert_eq!(
-        value["projection"]["audit_trace"]["information_loss"],
-        json!(["Focused report contains the requested section; use workflow reason for the aggregate projection."])
-    );
-    assert_eq!(
-        value["result"]["not_ready_items"][0]["work_item_id"],
-        json!("proof:workflow-schema-parse-check")
-    );
-
-    let obstructions = stdout_json(&successful_workflow_command("obstructions"));
-    assert_eq!(
-        obstructions["schema"],
-        json!("highergraphen.case.workflow.obstructions.report.v1")
-    );
-    assert!(obstructions["result"]["obstructions"]
-        .as_array()
-        .expect("obstructions")
-        .iter()
-        .any(|record| record["obstruction_type"] == json!("missing_evidence")));
-
-    let completions = stdout_json(&successful_workflow_command("completions"));
-    assert!(completions["result"]["completion_candidates"]
-        .as_array()
-        .expect("completion candidates")
-        .iter()
-        .any(|record| record["candidate_type"] == json!("missing_proof")));
-
-    let evidence = stdout_json(&successful_workflow_command("evidence"));
-    assert_eq!(
-        evidence["result"]["inference_record_ids"],
-        json!(["evidence:workflow-gap-inference"])
-    );
-
-    let project = run_cli(&[
-        "workflow",
-        "project",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--projection",
-        projection_fixture().to_str().expect("projection path"),
-        "--format",
-        "json",
-    ]);
-    assert!(project.status.success(), "stderr: {}", stderr(&project));
-    assert_eq!(
-        stdout_json(&project)["result"]["projection_profile_id"],
-        json!("projection:workflow-ai-review")
-    );
-
-    let correspond = run_cli(&[
-        "workflow",
-        "correspond",
-        "--left",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--right",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-    ]);
-    assert!(
-        correspond.status.success(),
-        "stderr: {}",
-        stderr(&correspond)
-    );
-    assert_eq!(
-        stdout_json(&correspond)["result"]["combined_correspondence"][0]["correspondence_type"],
-        json!("similar_with_loss")
-    );
-
-    let evolution = stdout_json(&successful_workflow_command("evolution"));
-    assert_eq!(
-        evolution["result"]["transition_ids"],
-        json!(["transition:foundation-docs-to-workflow-contract"])
-    );
-}
-
-#[test]
-fn cg_bridge_workflow_workspace_commands_round_trip_store_history() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-
-    let import = run_cli(&[
-        "cg",
-        "workflow",
-        "import",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--revision-id",
-        "revision:bridge-import",
-        "--format",
-        "json",
-    ]);
-    assert!(import.status.success(), "stderr: {}", stderr(&import));
-    let imported = stdout_json(&import);
-    assert_eq!(
-        imported["schema"],
-        json!("highergraphen.case.workflow.workspace_import.report.v1")
-    );
-    assert_eq!(
-        imported["metadata"]["command"],
-        json!("casegraphen cg workflow import")
-    );
-    assert_eq!(
-        imported["result"]["current_revision_id"],
-        json!("revision:bridge-import")
-    );
-    assert!(directory
-        .join(
-            imported["result"]["current_graph_path"]
-                .as_str()
-                .expect("current graph path")
-        )
-        .exists());
-
-    let list = run_cli(&[
-        "cg",
-        "workflow",
-        "list",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--format",
-        "json",
-    ]);
-    assert!(list.status.success(), "stderr: {}", stderr(&list));
-    assert_eq!(
-        stdout_json(&list)["result"]["workflow_graph_count"],
-        json!(1)
-    );
-
-    let inspect = run_bridge_store_command(&directory, "inspect");
-    assert_eq!(
-        stdout_json(&inspect)["result"]["history_entry_count"],
-        json!(1)
-    );
-
-    let history = run_bridge_store_command(&directory, "history");
-    let history_json = stdout_json(&history);
-    assert_eq!(
-        history_json["result"]["entries"][0]["event_type"],
-        json!("imported")
-    );
-
-    let replay = run_bridge_store_command(&directory, "replay");
-    assert_eq!(
-        stdout_json(&replay)["result"]["graph"]["workflow_graph_id"],
-        json!("workflow_graph:casegraphen-rewrite-contract")
-    );
-
-    let output_path = directory.join("bridge.validate.report.json");
-    let validate = run_cli(&[
-        "cg",
-        "workflow",
-        "validate",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--format",
-        "json",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-    assert!(validate.status.success(), "stderr: {}", stderr(&validate));
-    assert!(stdout(&validate).is_empty());
-    let validation = json_file(output_path);
-    assert_eq!(validation["result"]["valid"], json!(true));
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_readiness_supports_file_and_stored_workflow_graphs() {
-    let file_based = run_cli(&[
-        "cg",
-        "workflow",
-        "readiness",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-    ]);
-    assert!(
-        file_based.status.success(),
-        "stderr: {}",
-        stderr(&file_based)
-    );
-    let file_json = stdout_json(&file_based);
-    assert_eq!(
-        file_json["metadata"]["command"],
-        json!("casegraphen cg workflow readiness")
-    );
-    assert_eq!(file_json["input"]["source"], json!("file"));
-    assert_eq!(
-        file_json["projection"]["audit_trace"]["information_loss"],
-        json!(["Focused report contains the requested section; use workflow reason for the aggregate projection."])
-    );
-    assert_eq!(
-        file_json["result"]["ready_item_ids"],
-        json!(["task:define-workflow-reasoning-contract"])
-    );
-
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-    let stored = run_cli(&[
-        "cg",
-        "workflow",
-        "readiness",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--format",
-        "json",
-    ]);
-    assert!(stored.status.success(), "stderr: {}", stderr(&stored));
-    let stored_json = stdout_json(&stored);
-    assert_eq!(stored_json["input"]["source"], json!("workspace_store"));
-    assert_eq!(
-        stored_json["projection"]["audit_trace"]["information_loss"],
-        json!(["Focused report contains the requested section; use workflow reason for the aggregate projection."])
-    );
-    assert_eq!(
-        stored_json["result"]["not_ready_items"][0]["work_item_id"],
-        json!("proof:workflow-schema-parse-check")
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_workflow_history_topology_uses_revision_filtration() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-
-    let output = run_cli(&[
-        "cg",
-        "workflow",
-        "history",
-        "topology",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--format",
-        "json",
-        "--higher-order",
-        "--max-dimension",
-        "1",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    let value = stdout_json(&output);
-    assert_eq!(
-        value["metadata"]["command"],
-        json!("casegraphen cg workflow history topology")
-    );
-    assert_eq!(
-        value["result"]["topology"]["higher_order"]["filtration_source"],
-        json!("workflow_history")
-    );
-    assert!(value["result"]["topology"]["higher_order"]["stage_sources"]
-        .as_array()
-        .expect("workflow stage sources")
-        .iter()
-        .any(|stage| stage["source_type"] == json!("workflow_revision")));
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_completion_accept_records_review_without_promoting_inference() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-
-    let output = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_evidence_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Reviewed the proposed evidence gap",
-        "--revision-id",
-        "revision:completion-accept",
-        "--evidence-id",
-        "evidence:workflow-target-doc",
-        "--format",
-        "json",
-    ]);
-
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    let value = stdout_json(&output);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.completion_accept.report.v1")
-    );
-    assert_eq!(
-        value["result"]["candidate_before_review"]["review_status"],
-        json!("unreviewed")
-    );
-    assert_eq!(
-        value["result"]["candidate_after_review"]["review_status"],
-        json!("accepted")
-    );
-    assert_eq!(
-        value["result"]["review_record"]["evidence_ids"],
-        json!(["evidence:workflow-target-doc"])
-    );
-    assert_eq!(
-        value["result"]["transition_record"]["transition_type"],
-        json!("review_transition")
-    );
-
-    let replay = run_bridge_store_command(&directory, "replay");
-    let graph = stdout_json(&replay)["result"]["graph"].clone();
-    assert_eq!(
-        graph["completion_reviews"][0]["candidate_snapshot"]["review_status"],
-        json!("unreviewed")
-    );
-    assert!(!graph["evidence_records"]
-        .as_array()
-        .expect("evidence records")
-        .iter()
-        .any(|record| record["id"] == json!("evidence:json-parse-check-output")));
-
-    let readiness = run_bridge_store_command(&directory, "readiness");
-    let readiness_json = stdout_json(&readiness);
-    assert!(readiness_json["result"]["not_ready_items"]
-        .as_array()
-        .expect("not ready items")
-        .iter()
-        .any(|item| item["obstruction_ids"]
-            .as_array()
-            .expect("obstruction ids")
-            .contains(&json!(
-                "obstruction:missing-evidence:proof-workflow-schema-parse-check:evidence-json-parse-check-output"
-            ))));
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_completion_reject_supports_output_file_and_invalid_target_errors() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-    let output_path = directory.join("completion.reject.report.json");
-
-    let reject = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "reject",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_proof_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Duplicate of existing proof task",
-        "--revision-id",
-        "revision:completion-reject",
-        "--format",
-        "json",
-        "--output",
-        output_path.to_str().expect("output path"),
-    ]);
-
-    assert!(reject.status.success(), "stderr: {}", stderr(&reject));
-    assert!(stdout(&reject).is_empty());
-    let value = json_file(output_path);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.completion_reject.report.v1")
-    );
-    assert_eq!(
-        value["result"]["candidate_after_review"]["review_status"],
-        json!("rejected")
-    );
-    assert_eq!(
-        value["result"]["review_record"]["outcome_review_status"],
-        json!("rejected")
-    );
-
-    let invalid = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        "candidate:does-not-exist",
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Invalid target smoke",
-        "--revision-id",
-        "revision:completion-invalid",
-        "--format",
-        "json",
-    ]);
-
-    assert!(!invalid.status.success());
-    assert!(stdout(&invalid).is_empty());
-    assert!(stderr(&invalid).contains("unknown completion candidate candidate:does-not-exist"));
-
-    let invalid_evidence = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_proof_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Invalid linked evidence smoke",
-        "--revision-id",
-        "revision:completion-invalid-evidence",
-        "--evidence-id",
-        "evidence:does-not-exist",
-        "--format",
-        "json",
-    ]);
-
-    assert!(!invalid_evidence.status.success());
-    assert!(stdout(&invalid_evidence).is_empty());
-    assert!(stderr(&invalid_evidence)
-        .contains("unknown linked evidence record evidence:does-not-exist"));
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_completion_reopen_restores_unreviewed_candidate_state() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-
-    let accept = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_evidence_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Reviewed the proposed evidence gap",
-        "--revision-id",
-        "revision:completion-accept",
-        "--evidence-id",
-        "evidence:workflow-target-doc",
-        "--format",
-        "json",
-    ]);
-    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
-
-    let reopen = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "reopen",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_evidence_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Reopen after missing implementation evidence",
-        "--revision-id",
-        "revision:completion-reopen",
-        "--format",
-        "json",
-    ]);
-
-    assert!(reopen.status.success(), "stderr: {}", stderr(&reopen));
-    let value = stdout_json(&reopen);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.completion_reopen.report.v1")
-    );
-    assert_eq!(value["result"]["action"], json!("reopen"));
-    assert_eq!(
-        value["result"]["candidate_before_review"]["review_status"],
-        json!("accepted")
-    );
-    assert_eq!(
-        value["result"]["candidate_after_review"]["review_status"],
-        json!("unreviewed")
-    );
-    assert_eq!(
-        value["result"]["review_record"]["outcome_review_status"],
-        json!("unreviewed")
-    );
-    assert_eq!(
-        value["result"]["workspace_record"]["history_entry_count"],
-        json!(3)
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_completion_patch_check_and_apply_reports_materialization_as_unsupported() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-
-    let accept = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_task_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Task candidate is a valid patch source",
-        "--revision-id",
-        "revision:patch-source-accepted",
-        "--format",
-        "json",
-    ]);
-    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
-
-    let patch = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "patch",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_task_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Convert accepted candidate into a reviewable patch transition",
-        "--revision-id",
-        "revision:completion-patch",
-        "--transition-id",
-        "transition:patch:test-missing-task",
-        "--format",
-        "json",
-    ]);
-    assert!(patch.status.success(), "stderr: {}", stderr(&patch));
-    let patch_json = stdout_json(&patch);
-    assert_eq!(
-        patch_json["schema"],
-        json!("highergraphen.case.workflow.completion_patch.report.v1")
-    );
-    assert_eq!(patch_json["result"]["applied"], json!(false));
-    assert_eq!(
-        patch_json["result"]["transition_record"]["provenance"]["review_status"],
-        json!("unreviewed")
-    );
-
-    let check = run_cli(&[
-        "cg",
-        "workflow",
-        "patch",
-        "check",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--transition-id",
-        "transition:patch:test-missing-task",
-        "--format",
-        "json",
-    ]);
-    assert!(check.status.success(), "stderr: {}", stderr(&check));
-    let check_json = stdout_json(&check);
-    assert_eq!(check_json["result"]["valid"], json!(true));
-    assert_eq!(check_json["result"]["applicable"], json!(true));
-
-    let apply = run_cli(&[
-        "cg",
-        "workflow",
-        "patch",
-        "apply",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--transition-id",
-        "transition:patch:test-missing-task",
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Apply reviewed patch transition",
-        "--revision-id",
-        "revision:patch-applied",
-        "--format",
-        "json",
-    ]);
-    assert!(!apply.status.success());
-    assert!(stdout(&apply).is_empty());
-    assert!(stderr(&apply).contains(
-        "workflow patch materialization is not implemented; use the native `morphism apply` path"
-    ));
-
-    let unchanged = run_cli(&[
-        "cg",
-        "workflow",
-        "patch",
-        "check",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--transition-id",
-        "transition:patch:test-missing-task",
-        "--format",
-        "json",
-    ]);
-    assert!(unchanged.status.success(), "stderr: {}", stderr(&unchanged));
-    assert_eq!(
-        stdout_json(&unchanged)["result"]["review_status"],
-        json!("unreviewed")
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn cg_bridge_patch_reject_records_review_without_materializing_patch() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    import_bridge_workflow(&directory);
-
-    let accept = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "accept",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_task_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Task candidate is a valid patch source",
-        "--revision-id",
-        "revision:patch-source-accepted",
-        "--format",
-        "json",
-    ]);
-    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
-
-    let patch = run_cli(&[
-        "cg",
-        "workflow",
-        "completion",
-        "patch",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--candidate-id",
-        missing_task_candidate_id(),
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Convert accepted candidate into a reviewable patch transition",
-        "--revision-id",
-        "revision:completion-patch",
-        "--transition-id",
-        "transition:patch:test-rejected-missing-task",
-        "--format",
-        "json",
-    ]);
-    assert!(patch.status.success(), "stderr: {}", stderr(&patch));
-
-    let reject = run_cli(&[
-        "cg",
-        "workflow",
-        "patch",
-        "reject",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--transition-id",
-        "transition:patch:test-rejected-missing-task",
-        "--reviewer-id",
-        "reviewer:workflow-lead",
-        "--reason",
-        "Reject patch until source proof is attached",
-        "--revision-id",
-        "revision:patch-rejected",
-        "--format",
-        "json",
-    ]);
-
-    assert!(reject.status.success(), "stderr: {}", stderr(&reject));
-    let value = stdout_json(&reject);
-    assert_eq!(
-        value["schema"],
-        json!("highergraphen.case.workflow.patch_reject.report.v1")
-    );
-    assert_eq!(value["result"]["action"], json!("reject"));
-    assert_eq!(value["result"]["materialized_record_count"], json!(0));
-    assert_eq!(
-        value["result"]["transition_before_review"]["provenance"]["review_status"],
-        json!("unreviewed")
-    );
-    assert_eq!(
-        value["result"]["transition_after_review"]["provenance"]["review_status"],
-        json!("rejected")
-    );
-
-    let check = run_cli(&[
-        "cg",
-        "workflow",
-        "patch",
-        "check",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--transition-id",
-        "transition:patch:test-rejected-missing-task",
-        "--format",
-        "json",
-    ]);
-    assert!(check.status.success(), "stderr: {}", stderr(&check));
-    let check_json = stdout_json(&check);
-    assert_eq!(check_json["result"]["valid"], json!(true));
-    assert_eq!(check_json["result"]["applicable"], json!(false));
-    assert_eq!(
-        check_json["result"]["reason"],
-        json!("Patch transition is rejected.")
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
 fn native_case_commands_create_import_list_inspect_history_and_replay() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -1514,52 +332,6 @@ fn generated_native_cli_report_validates_against_schema() {
     assert!(topology.status.success(), "stderr: {}", stderr(&topology));
     assert_jsonschema_valid(
         &repo_path("schemas/casegraphen/native-cli.report.schema.json"),
-        &topology_report_path,
-    );
-
-    fs::remove_dir_all(directory).expect("remove temp directory");
-}
-
-#[test]
-fn generated_workflow_operation_report_validates_against_schema() {
-    let directory = unique_temp_dir();
-    fs::create_dir_all(&directory).expect("create temp directory");
-    let report_path = directory.join("workflow.validate.report.json");
-
-    let output = run_cli(&[
-        "workflow",
-        "validate",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--output",
-        report_path.to_str().expect("report path"),
-    ]);
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert_jsonschema_valid(
-        &repo_path("schemas/casegraphen/workflow.operation.report.schema.json"),
-        &report_path,
-    );
-
-    let topology_report_path = directory.join("workflow.topology.report.json");
-    let topology = run_cli(&[
-        "workflow",
-        "history",
-        "topology",
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-        "--higher-order",
-        "--min-persistence-stages",
-        "1",
-        "--output",
-        topology_report_path.to_str().expect("report path"),
-    ]);
-    assert!(topology.status.success(), "stderr: {}", stderr(&topology));
-    assert_jsonschema_valid(
-        &repo_path("schemas/casegraphen/workflow.operation.report.schema.json"),
         &topology_report_path,
     );
 
@@ -3950,9 +2722,12 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
         attached_cell["provenance"]["review_status"],
         json!("unreviewed")
     );
+    // `inferred` is the shared trust rule's own spelling for "needs an
+    // accepted review"; the previous `attached_unverified` was an unrecognized
+    // string that only happened to fall through to the same treatment.
     assert_eq!(
         attached_cell["metadata"]["evidence_boundary"],
-        json!("attached_unverified")
+        json!("inferred")
     );
     let content_hash = attached_cell["metadata"]["content_hash"]
         .as_str()
@@ -4448,152 +3223,384 @@ fn native_cli_invalid_targets_exit_nonzero() {
 }
 
 #[test]
-fn reference_workflow_reasoning_matches_checked_in_report() {
+fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
     let output = run_cli(&[
+        "lift",
         "workflow",
-        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
         "--input",
-        reference_workflow_fixture()
+        repo_path("schemas/casegraphen/workflow.graph.example.json")
             .to_str()
-            .expect("reference workflow path"),
+            .expect("workflow example path"),
+        "--revision-id",
+        "revision:workflow-lift-genesis",
         "--format",
         "json",
     ]);
-
     assert!(output.status.success(), "stderr: {}", stderr(&output));
-    assert!(stderr(&output).is_empty());
+    let lifted = stdout_json(&output);
+    let case_space_id = lifted["result"]["record"]["case_space_id"]
+        .as_str()
+        .expect("lifted case space id")
+        .to_owned();
+    let cells = lifted["result"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("materialized cells");
 
-    let value = stdout_json(&output);
-    let reference = json_file(reference_workflow_report_fixture());
-    assert_eq!(value, reference);
+    // Work items became cells; the stored `blocked` state was discarded in
+    // favour of derivation and preserved as metadata.
+    let blocked_item = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("task:implement-workflow-engine"))
+        .expect("blocked work item cell");
+    assert_eq!(blocked_item["cell_type"], json!("work"));
+    assert_eq!(blocked_item["lifecycle"], json!("active"));
+    assert_eq!(blocked_item["metadata"]["workflow_state"], json!("blocked"));
 
+    // Evidence boundaries were normalized through the shared trust rule.
+    let inference = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("evidence:workflow-gap-inference"))
+        .expect("worker output evidence cell");
     assert_eq!(
-        value["result"]["readiness"]["ready_item_ids"],
+        inference["metadata"]["evidence_boundary"],
+        json!("worker_output")
+    );
+    assert_eq!(
+        inference["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+
+    // A requirement target that named no declared record became an
+    // unreviewed placeholder that cannot satisfy a hard requirement.
+    let placeholder = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("evidence:json-parse-check-output"))
+        .expect("placeholder evidence cell");
+    assert_eq!(placeholder["lifecycle"], json!("proposed"));
+    assert_eq!(
+        placeholder["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+    assert!(placeholder["metadata"]["evidence_boundary"].is_null());
+
+    // The one native evaluator derives readiness over the lifted graph:
+    // the stored-blocked item is re-blocked by its dependency relation.
+    let frontier = stdout_json(&run_cli(&[
+        "space",
+        "frontier",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]));
+    assert_eq!(
+        frontier["result"]["frontier_cell_ids"],
         json!(["task:define-workflow-reasoning-contract"])
     );
-    assert_eq!(
-        value["result"]["readiness"]["not_ready_items"][0]["work_item_id"],
-        json!("proof:workflow-schema-parse-check")
-    );
-
-    let obstructions = value["result"]["obstructions"]
-        .as_array()
-        .expect("obstructions");
-    assert!(obstructions
-        .iter()
-        .any(|record| record["obstruction_type"] == json!("missing_evidence")));
-    assert!(obstructions
-        .iter()
-        .any(|record| record["obstruction_type"] == json!("missing_proof")));
-    assert!(obstructions
-        .iter()
-        .any(|record| record["obstruction_type"] == json!("unresolved_dependency")));
-    assert!(obstructions
-        .iter()
-        .any(|record| record["obstruction_type"] == json!("review_required")));
-
-    let completion_candidates = value["result"]["completion_candidates"]
-        .as_array()
-        .expect("completion candidates");
-    assert!(completion_candidates
-        .iter()
-        .any(|record| record["candidate_type"] == json!("missing_evidence")));
-    assert!(completion_candidates
-        .iter()
-        .any(|record| record["candidate_type"] == json!("missing_proof")));
-    assert!(completion_candidates
-        .iter()
-        .any(|record| record["candidate_type"] == json!("missing_task")));
-
-    assert_eq!(
-        value["result"]["evidence_findings"]["accepted_evidence_ids"],
-        json!(["evidence:workflow-target-doc"])
-    );
-    assert_eq!(
-        value["result"]["evidence_findings"]["inference_record_ids"],
-        json!(["evidence:workflow-gap-inference"])
-    );
-    assert!(value["result"]["evidence_findings"]["findings"]
-        .as_array()
-        .expect("evidence findings")
-        .iter()
-        .any(|record| record["finding_type"] == json!("evidence_missing")));
-
-    assert_eq!(
-        value["result"]["projection"]["projection_profile_id"],
-        json!("projection:workflow-ai-review")
-    );
-    assert_eq!(
-        value["projection"]["ai_view"]["audience"],
-        json!("ai_agent")
-    );
-    assert_eq!(
-        value["projection"]["ai_view"]["information_loss"][0]["omitted_ids"],
-        json!(["docs/specs/intermediate-tools/casegraphen-workflow-reasoning-engine.md"])
-    );
-    let ai_records = value["projection"]["ai_view"]["records"]
-        .as_array()
-        .expect("ai records");
-    for record_type in [
-        "readiness",
+    let obstructions = stdout_json(&run_cli(&[
         "obstruction",
-        "completion_candidate",
-        "evidence_finding",
-        "projection",
-        "correspondence",
-        "evolution",
-    ] {
-        assert!(
-            ai_records
-                .iter()
-                .any(|record| record["record_type"] == json!(record_type)),
-            "missing AI projection record type {record_type}"
-        );
-    }
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]));
+    assert!(obstructions["result"]["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .iter()
+        .any(|obstruction| {
+            obstruction["obstruction_type"] == json!("unresolved_dependency")
+                && obstruction["affected_ids"] == json!(["task:implement-workflow-engine"])
+        }));
 
-    assert_eq!(
-        value["result"]["correspondence"][0]["correspondence_type"],
-        json!("similar_with_loss")
-    );
-    assert_eq!(
-        value["result"]["evolution"]["transition_ids"],
-        json!(["transition:foundation-docs-to-workflow-contract"])
-    );
-    assert_eq!(
-        value["result"]["evolution"]["persisted_shape_ids"],
-        json!([
-            "schemas/casegraphen/case.graph.schema.json",
-            "schemas/casegraphen/case.report.schema.json"
-        ])
-    );
+    // The lifted genesis is reconstructive like any other.
+    let validation = stdout_json(&run_cli(&[
+        "space",
+        "validate",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]));
+    assert_eq!(validation["result"]["validation"]["valid"], json!(true));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// A workflow graph with one task, one proof, and one extra work item the test
+/// supplies. The task hard-requires evidence that no record declares and a
+/// proof that the graph declares, so a clean lift always carries a
+/// `missing_evidence` and a `missing_proof` obstruction.
+fn workflow_attack_graph(graph_id: &str, extra_items: Vec<Value>) -> Value {
+    let provenance = json!({
+        "source": {"kind": "document"}, "confidence": 0.9, "review_status": "unreviewed"
+    });
+    let item = |id: &str, item_type: &str, extra: Value| {
+        let mut value = json!({
+            "id": id, "space_id": "space:attack", "item_type": item_type, "title": id,
+            "state": "todo", "case_ids": [], "hard_dependency_ids": [],
+            "external_wait_ids": [], "evidence_requirement_ids": [],
+            "proof_requirement_ids": [], "source_ids": ["source:s1"],
+            "provenance": provenance.clone(), "metadata": {}
+        });
+        for (key, extra_value) in extra.as_object().expect("extra object") {
+            value[key] = extra_value.clone();
+        }
+        value
+    };
+    let mut items = vec![
+        item(
+            "task:goal",
+            "task",
+            json!({
+                "evidence_requirement_ids": ["evidence:real-doc"],
+                "proof_requirement_ids": ["proof:needed"]
+            }),
+        ),
+        item("proof:needed", "proof", json!({})),
+    ];
+    items.extend(extra_items);
+    json!({
+        "schema": "highergraphen.case.workflow.graph.v1", "schema_version": 1,
+        "workflow_graph_id": graph_id, "case_graph_id": "case_graph:attack",
+        "space_id": "space:attack", "work_items": items, "workflow_relations": [],
+        "readiness_rules": [], "evidence_records": [], "transition_records": [],
+        "projection_profiles": [], "correspondence_records": [], "metadata": {}
+    })
+}
+
+fn lift_workflow_graph(directory: &Path, graph: &Value, name: &str) -> Output {
+    let input = directory.join(format!("{name}.workflow.graph.json"));
+    fs::write(
+        &input,
+        serde_json::to_string_pretty(graph).expect("serialize graph"),
+    )
+    .expect("write graph");
+    run_cli(&[
+        "lift",
+        "workflow",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        input.to_str().expect("input path"),
+        "--revision-id",
+        "revision:attack-genesis",
+        "--format",
+        "json",
+    ])
+}
+
+fn obstruction_types(directory: &Path, case_space_id: &str) -> Vec<String> {
+    let output = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    stdout_json(&output)["result"]["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .iter()
+        .map(|obstruction| {
+            obstruction["obstruction_type"]
+                .as_str()
+                .expect("obstruction type")
+                .to_owned()
+        })
+        .collect()
 }
 
 #[test]
-fn invalid_workflow_reference_errors_before_reasoning_report() {
+fn lift_workflow_refuses_a_cell_colliding_with_a_genesis_structural_id() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
-    let bad_workflow_path = directory.join("bad.workflow.graph.json");
-    let mut workflow = json_file(workflow_fixture());
-    workflow["workflow_relations"][0]["from_id"] = json!("task:missing-work-item");
-    fs::write(
-        &bad_workflow_path,
-        serde_json::to_string_pretty(&workflow).expect("serialize bad workflow"),
-    )
-    .expect("write bad workflow");
 
-    let output = run_cli(&[
+    // The genesis morphism id is derived from the graph's own
+    // workflow_graph_id, so a caller can name it exactly. The store's
+    // reference checks do not index morphism, entry, or revision ids; the
+    // evaluator's do, so importing such a space used to succeed and then make
+    // every derived read fail permanently with no repair path.
+    let graph = workflow_attack_graph(
+        "workflow_graph:collide",
+        vec![json!({
+            "id": "morphism:create:case_space~3aworkflow_graph~7e3acollide",
+            "space_id": "space:attack", "item_type": "task", "title": "collision",
+            "state": "todo", "case_ids": [], "hard_dependency_ids": [],
+            "external_wait_ids": [], "evidence_requirement_ids": [],
+            "proof_requirement_ids": [], "source_ids": ["source:s1"],
+            "provenance": {"source": {"kind": "document"}, "confidence": 0.9,
+                           "review_status": "unreviewed"},
+            "metadata": {}
+        })],
+    );
+    let output = lift_workflow_graph(&directory, &graph, "collide");
+
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("not evaluable"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    // Refused before any filesystem write, so the case-space id is not burned.
+    assert!(!directory.join("native_case_spaces").exists());
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn lift_workflow_refuses_caller_declared_evidence_trust_from_a_work_item() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+
+    let baseline = lift_workflow_graph(
+        &directory,
+        &workflow_attack_graph("workflow_graph:baseline", Vec::new()),
+        "baseline",
+    );
+    assert!(baseline.status.success(), "stderr: {}", stderr(&baseline));
+    let mut expected = obstruction_types(&directory, "case_space:workflow_graph~3abaseline");
+    expected.sort();
+    assert_eq!(expected, vec!["missing_evidence", "missing_proof"]);
+
+    // One evidence-typed work item claiming, in caller-supplied fields alone,
+    // both that it is source-backed and that it covers the requirement and the
+    // requiring cell. No evidence record, no relation, no review.
+    let graph = workflow_attack_graph(
+        "workflow_graph:selfdeclared",
+        vec![json!({
+            "id": "evidence:blank", "space_id": "space:attack", "item_type": "evidence",
+            "title": "self-declared", "state": "todo",
+            "case_ids": ["task:goal", "evidence:real-doc", "proof:needed"],
+            "hard_dependency_ids": [], "external_wait_ids": [],
+            "evidence_requirement_ids": [], "proof_requirement_ids": [],
+            "source_ids": ["source:s1"],
+            "provenance": {"source": {"kind": "document"}, "confidence": 0.9,
+                           "review_status": "accepted"},
+            "metadata": {"evidence_boundary": "source_backed"}
+        })],
+    );
+    let output = lift_workflow_graph(&directory, &graph, "selfdeclared");
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+
+    let mut actual = obstruction_types(&directory, "case_space:workflow_graph~3aselfdeclared");
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "caller-declared case_ids or evidence_boundary satisfied a hard requirement"
+    );
+    let cells = stdout_json(&output)["result"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("cells")
+        .clone();
+    let blank = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("evidence:blank"))
+        .expect("lifted evidence-typed item");
+    assert_eq!(blank["structure_ids"], json!([]));
+    assert_eq!(blank["metadata"]["evidence_boundary"], json!("inferred"));
+    assert_eq!(blank["provenance"]["review_status"], json!("unreviewed"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn lift_workflow_refuses_the_legacy_accepted_evidence_label_without_a_review() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+
+    // `accepted_evidence` normalizes to the review-promoted boundary, which the
+    // shared trust rule accepts when the cell's own review status is accepted —
+    // and on this path the caller declares that status too.
+    let mut graph = workflow_attack_graph("workflow_graph:legacylabel", Vec::new());
+    graph["work_items"][0]["evidence_requirement_ids"] = json!(["evidence:claim"]);
+    graph["evidence_records"] = json!([{
+        "id": "evidence:claim", "evidence_type": "ai_inference",
+        "evidence_boundary": "accepted_evidence", "summary": "a claim",
+        "supports_ids": [], "contradicts_ids": [], "source_ids": ["source:s1"],
+        "provenance": {"source": {"kind": "document"}, "confidence": 0.9,
+                       "review_status": "accepted"}
+    }]);
+    let output = lift_workflow_graph(&directory, &graph, "legacylabel");
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+
+    assert!(
+        obstruction_types(&directory, "case_space:workflow_graph~3alegacylabel")
+            .contains(&"missing_evidence".to_owned()),
+        "a caller-declared accepted review promoted its own evidence"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn a_failed_import_rolls_back_instead_of_burning_the_case_space_id() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let graph = workflow_attack_graph("workflow_graph:rollback", Vec::new());
+    let input = directory.join("rollback.workflow.graph.json");
+    fs::write(
+        &input,
+        serde_json::to_string_pretty(&graph).expect("serialize graph"),
+    )
+    .expect("write graph");
+
+    // A snapshot file name over NAME_MAX (255 on both APFS and ext4) fails the
+    // write after the case directory exists — the window that used to leave a
+    // logless directory behind.
+    let long_revision = format!("revision:{}", "a".repeat(250));
+    let failed = run_cli(&[
+        "lift",
         "workflow",
-        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
         "--input",
-        bad_workflow_path.to_str().expect("bad workflow path"),
+        input.to_str().expect("input path"),
+        "--revision-id",
+        &long_revision,
         "--format",
         "json",
     ]);
+    assert!(
+        !failed.status.success(),
+        "expected the over-long snapshot name to fail the write"
+    );
+    let case_dir = directory
+        .join("native_case_spaces")
+        .join("case_space~3aworkflow_graph~7e3arollback");
+    assert!(
+        !case_dir.exists(),
+        "a failed import left {} behind",
+        case_dir.display()
+    );
 
-    assert!(!output.status.success());
-    assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).contains("workflow validation failed"));
-    assert!(stderr(&output).contains("dangling_reference"));
+    // The id is still usable and the store is still listable.
+    let retry = lift_workflow_graph(&directory, &graph, "rollback-retry");
+    assert!(retry.status.success(), "stderr: {}", stderr(&retry));
+    let listed = run_cli(&[
+        "space",
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--format",
+        "json",
+    ]);
+    assert!(listed.status.success(), "stderr: {}", stderr(&listed));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -4659,52 +3666,6 @@ fn run_cli_with_mutation_gate(args: &[&str], actor_id: &str) -> Output {
         "source_boundary:native-case-management-contract",
     ]);
     run_cli(&gated_args)
-}
-
-fn successful_workflow_command(command: &str) -> Output {
-    let output = run_cli(&[
-        "workflow",
-        command,
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--format",
-        "json",
-    ]);
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    output
-}
-
-fn import_bridge_workflow(directory: &Path) {
-    let output = run_cli(&[
-        "cg",
-        "workflow",
-        "import",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--input",
-        workflow_fixture().to_str().expect("workflow fixture path"),
-        "--revision-id",
-        "revision:bridge-import",
-        "--format",
-        "json",
-    ]);
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-}
-
-fn run_bridge_store_command(directory: &Path, command: &str) -> Output {
-    let output = run_cli(&[
-        "cg",
-        "workflow",
-        command,
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--workflow-graph-id",
-        "workflow_graph:casegraphen-rewrite-contract",
-        "--format",
-        "json",
-    ]);
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
-    output
 }
 
 fn import_native_case_space(directory: &Path, revision_id: &str) -> Output {
@@ -5269,32 +4230,8 @@ fn projection_fixture() -> PathBuf {
     repo_path("schemas/casegraphen/projection.example.json")
 }
 
-fn workflow_fixture() -> PathBuf {
-    repo_path("schemas/casegraphen/workflow.graph.example.json")
-}
-
 fn native_case_fixture() -> PathBuf {
     repo_path("schemas/casegraphen/native.case.space.example.json")
-}
-
-fn reference_workflow_fixture() -> PathBuf {
-    repo_path("examples/casegraphen/reference/workflow.graph.json")
-}
-
-fn reference_workflow_report_fixture() -> PathBuf {
-    repo_path("examples/casegraphen/reference/reports/workflow.reason.report.json")
-}
-
-fn missing_evidence_candidate_id() -> &'static str {
-    "candidate:missing-evidence:obstruction-missing-evidence-proof-workflow-schema-parse-check-evidence-json-parse-check-output"
-}
-
-fn missing_proof_candidate_id() -> &'static str {
-    "candidate:missing-proof:obstruction-missing-proof-task-implement-workflow-engine-proof-workflow-schema-parse-check"
-}
-
-fn missing_task_candidate_id() -> &'static str {
-    "candidate:missing-task:obstruction-unresolved-dependency-task-implement-workflow-engine-task-define-workflow-reasoning-contract"
 }
 
 fn native_case_space_id() -> &'static str {
@@ -5311,7 +4248,6 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/coverage.policy.example.json",
         "schemas/casegraphen/projection.example.json",
         "schemas/casegraphen/workflow.graph.example.json",
-        "schemas/casegraphen/workflow.report.example.json",
         "schemas/casegraphen/native.case.space.example.json",
         "schemas/casegraphen/native.case.report.example.json",
         "schemas/casegraphen/execution.plan.example.json",
@@ -5324,8 +4260,6 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/projection.schema.json",
         "schemas/casegraphen/case.report.schema.json",
         "schemas/casegraphen/workflow.graph.schema.json",
-        "schemas/casegraphen/workflow.report.schema.json",
-        "schemas/casegraphen/workflow.operation.report.schema.json",
         "schemas/casegraphen/native.case.space.schema.json",
         "schemas/casegraphen/native.morphism-log-entry.schema.json",
         "schemas/casegraphen/native.case.report.schema.json",
@@ -5334,8 +4268,6 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/worker.report.schema.json",
         "schemas/casegraphen/execution.trace.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
-        "examples/casegraphen/reference/workflow.graph.json",
-        "examples/casegraphen/reference/reports/workflow.reason.report.json",
     ]
     .iter()
     .map(|path| repo_path(path))
