@@ -141,6 +141,9 @@ this tool live in [`docs/specs/`](docs/specs/).
   and their output
 - [Independence and execution control design](docs/design/independence-and-execution-control.md)
 - [ADR 0001: extraction and execution-control mandate](docs/adr/0001-extraction-from-higher-graphen.md)
+- [ADR 0002: positioning within graph engineering](docs/adr/0002-graph-engineering-positioning.md) —
+  CaseGraphen is the acceptance ledger of a graph-engineered system, not its
+  runtime
 - [Worker execution security and approval policy](docs/security/worker-execution-policy.md)
 
 ## License
