@@ -108,8 +108,14 @@ casegraphen cg workflow ...                       # store-backed workflow bridge
 
 [`skills/casegraphen-operate`](skills/) is an agent skill for operating a case
 space: the revision and gate discipline every mutating command needs, how to
-model readiness so it comes out right, and how to read the refusals. Copy it into
-your project's `.claude/skills/` — see [`skills/README.md`](skills/README.md).
+model readiness so it comes out right, and how to read the refusals.
+
+```sh
+cd /path/to/your/project
+sh /path/to/casegraphen/skills/install.sh          # or --user for ~/.claude/skills
+```
+
+See [`skills/README.md`](skills/README.md) for the other ways to install it.
 
 ## Contracts
 
