@@ -11,6 +11,14 @@ pub const WORKER_REPORT_TRUST_BOUNDARY: &str =
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ExecutionDispatchState {
+    Started,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkerOutputName {
     Stdout,
     Stderr,
@@ -82,6 +90,7 @@ pub struct ExecutionTrace {
     pub operation_gate: NativeOperationGate,
     pub worker_report_id: Id,
     pub appended_entry_ids: Vec<Id>,
+    pub dispatch_state: ExecutionDispatchState,
     pub transition_applied: bool,
     pub unsatisfied_success_evidence_requirement_ids: Vec<Id>,
     pub obstructions: Vec<ExecutionObstruction>,

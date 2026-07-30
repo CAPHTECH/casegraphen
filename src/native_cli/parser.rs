@@ -477,6 +477,14 @@ impl NativeCliCommand {
         if !options.run_step {
             return Err(NativeCliError::usage("run requires --step"));
         }
+        let actor_id = options.require_id("--actor-id")?;
+        if let Some(gate_actor_id) = &options.gate_actor_id {
+            if gate_actor_id != &actor_id {
+                return Err(NativeCliError::usage(
+                    "--gate-actor-id is a compatibility alias and must equal --actor-id",
+                ));
+            }
+        }
         Ok(Self::RunStep {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
@@ -485,13 +493,11 @@ impl NativeCliCommand {
                 .base_revision_id
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-            actor_id: options.require_id("--actor-id")?,
+            actor_id: actor_id.clone(),
             enabled_worker_kinds: options.enabled_worker_kinds,
             retry_step_id: options.retry_step_id,
             gate_options: NativeRunGateOptions {
-                actor_id: options.gate_actor_id.ok_or_else(|| {
-                    NativeCliError::usage("--gate-actor-id <id> is required for run --step")
-                })?,
+                actor_id,
                 capability_ids: options.capability_ids,
                 operation_scope_id: options.operation_scope_id.ok_or_else(|| {
                     NativeCliError::usage("--operation-scope-id <id> is required for run --step")

@@ -19,6 +19,7 @@
     "operation_gate",
     "worker_report_id",
     "appended_entry_ids",
+    "dispatch_state",
     "transition_applied",
     "unsatisfied_success_evidence_requirement_ids",
     "obstructions",
@@ -76,6 +77,13 @@
     },
     "appended_entry_ids": {
       "$ref": "#/$defs/id_array"
+    },
+    "dispatch_state": {
+      "enum": [
+        "started",
+        "completed",
+        "failed"
+      ]
     },
     "transition_applied": {
       "type": "boolean"

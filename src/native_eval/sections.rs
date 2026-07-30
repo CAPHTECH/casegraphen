@@ -1,5 +1,5 @@
 use super::*;
-use crate::native_model::{CaseMorphismType, EvidenceBoundary, ReviewAction};
+use crate::native_model::{EvidenceBoundary, ReviewAction};
 use serde_json::{json, Value};
 
 pub(super) fn completion_candidates(
@@ -540,28 +540,15 @@ fn latest_evidence_review_status(case_space: &CaseSpace, evidence_id: &Id) -> Op
                 .and_then(Value::as_str)
                 == Some(evidence_id.as_str())
     })?;
-    if entry.morphism.morphism_type != CaseMorphismType::Review
-        || entry.morphism.review_status != ReviewStatus::Accepted
-        || entry
-            .morphism
-            .metadata
-            .get("native_review_schema_version")
-            .and_then(Value::as_u64)
-            != Some(1)
+    let Some(review) = crate::native_review::canonical_review(&entry.morphism) else {
+        return Some(ReviewStatus::Rejected);
+    };
+    if review.target_kind != crate::native_review::NativeReviewTargetKind::Evidence
+        || review.target_id != *evidence_id
     {
         return Some(ReviewStatus::Rejected);
     }
-    let action: ReviewAction =
-        serde_json::from_value(entry.morphism.metadata.get("action")?.clone()).ok()?;
-    let outcome: ReviewStatus = serde_json::from_value(
-        entry
-            .morphism
-            .metadata
-            .get("outcome_review_status")?
-            .clone(),
-    )
-    .ok()?;
-    match (action, outcome) {
+    match (review.action, review.outcome) {
         (ReviewAction::Accept, ReviewStatus::Accepted) => Some(ReviewStatus::Accepted),
         (ReviewAction::Reject, ReviewStatus::Rejected) => Some(ReviewStatus::Rejected),
         _ => Some(ReviewStatus::Rejected),

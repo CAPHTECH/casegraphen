@@ -6,7 +6,7 @@
   "step_id": "step:review-native-contract",
   "case_space_id": "case_space:native-case-management-contract",
   "base_revision_id": "revision:accepted-plan",
-  "result_revision_id": "revision:worker-transition",
+  "result_revision_id": "revision:execution-trace-anchor:example-run",
   "work_cell_id": "work:review-native-contract",
   "binding_id": "worker_binding:native-contract-review",
   "binding_content_hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
@@ -23,8 +23,10 @@
   "worker_report_id": "worker_report:example-run",
   "appended_entry_ids": [
     "morphism_log_entry:evidence-example-run",
-    "morphism_log_entry:transition-example-run"
+    "morphism_log_entry:transition-example-run",
+    "morphism_log_entry:execution-trace-anchor-example-run"
   ],
+  "dispatch_state": "completed",
   "transition_applied": true,
   "unsatisfied_success_evidence_requirement_ids": [],
   "obstructions": [],
@@ -42,6 +44,7 @@
   "started_at": "unix:1770000000",
   "finished_at": "unix:1770000001",
   "metadata": {
+    "dispatch_status": "step_executed",
     "worker_invoked": true
   }
 }

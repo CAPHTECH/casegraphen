@@ -1970,9 +1970,15 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
         "revision:forged-plan-base",
         "revision:forged-plan-review",
         json!({
+            "native_review_schema_version": 1,
+            "review_id": "review:forged-plan-review",
             "target_kind": "plan",
             "target_id": "plan:forged-acceptance",
             "action": "accept",
+            "outcome_review_status": "accepted",
+            "reviewer_id": "reviewer:forged",
+            "reviewed_at": "2026-07-30T00:00:00Z",
+            "reason": "Generic morphisms must not forge canonical reviews.",
             "plan_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }),
     );
@@ -1989,7 +1995,7 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
         "json",
     ]);
     assert!(!forged_propose.status.success());
-    assert!(stderr(&forged_propose).contains("reserved plan-review metadata"));
+    assert!(stderr(&forged_propose).contains("reserved canonical review metadata"));
 
     let safe_morphism_path = directory.join("safe-before-apply-tamper.case_morphism.json");
     write_native_metadata_morphism(
@@ -2050,7 +2056,7 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
         "json",
     ]);
     assert!(!tampered_apply.status.success());
-    assert!(stderr(&tampered_apply).contains("reserved plan-review metadata"));
+    assert!(stderr(&tampered_apply).contains("reserved canonical review metadata"));
 
     let plan_input = directory.join("forged-acceptance.execution.plan.json");
     write_execution_plan(
@@ -2101,7 +2107,7 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
         "--actor-id",
         "actor:forged-run",
         "--gate-actor-id",
-        "actor:forged-run-gate",
+        "actor:forged-run",
         "--capability-id",
         "capability:dispatch",
         "--capability-id",
@@ -2365,7 +2371,7 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
         "json",
     ]);
     assert!(!fabricated_capability.status.success());
-    assert!(stderr(&fabricated_capability).contains("existing case cell id"));
+    assert!(stderr(&fabricated_capability).contains("existing case cell"));
 
     let unknown_path = directory.join("execution-plan.unknown-work.json");
     write_execution_plan(
@@ -2423,6 +2429,38 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
     assert!(!missing_requirement.status.success());
     assert!(stderr(&missing_requirement).contains("evidence:missing"));
     assert!(stderr(&missing_requirement).contains("not existing case cells"));
+
+    let empty_success_path = directory.join("execution-plan.empty-success.json");
+    write_execution_plan(
+        &empty_success_path,
+        "plan:empty-success",
+        "revision:plan-failure-base",
+        "work:review-native-contract",
+    );
+    let mut empty_success_plan = json_file(empty_success_path.clone());
+    empty_success_plan["steps"][0]["success_evidence_requirement_ids"] = json!([]);
+    fs::write(
+        &empty_success_path,
+        serde_json::to_string_pretty(&empty_success_plan)
+            .expect("serialize empty success requirement plan"),
+    )
+    .expect("write empty success requirement plan");
+    let empty_success = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        empty_success_path
+            .to_str()
+            .expect("empty success requirement plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!empty_success.status.success());
+    assert!(stderr(&empty_success).contains("success_evidence_requirement_ids must not be empty"));
 
     let history = run_native_case_store_command(&directory, "history");
     assert_eq!(
@@ -2635,7 +2673,7 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
             .as_array()
             .expect("appended entries")
             .len(),
-        2
+        3
     );
     let trace_path = only_run_file(&directory, "execution.trace.json");
     let report_path = only_run_file(&directory, "worker.report.json");
@@ -2819,13 +2857,143 @@ fn native_run_step_records_tampered_binding_as_domain_obstruction() {
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
     assert_eq!(
         replay["result"]["replay"]["current_revision_id"],
-        json!(fixture.accepted_revision_id)
+        value["result"]["trace"]["result_revision_id"]
     );
     assert_eq!(
         replayed_work_lifecycle(&replay),
         "active",
         "tampered binding must not dispatch or transition work"
     );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_detects_a_rewritten_anchored_trace() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        "trace-tamper",
+        "printf 'trace-anchor-output\\n'",
+    );
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    let trace_id = first_json["result"]["trace"]["trace_id"]
+        .as_str()
+        .expect("trace id")
+        .to_owned();
+    let result_revision_id = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("trace result revision")
+        .to_owned();
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    let mut trace = json_file(trace_path.clone());
+    trace["operation_gate"]["actor_id"] = json!("actor:rewritten-history");
+    fs::write(
+        &trace_path,
+        serde_json::to_string_pretty(&trace).expect("serialize rewritten trace"),
+    )
+    .expect("rewrite trace");
+
+    let second = run_native_step_with_base(&directory, &fixture, &result_revision_id, true, None);
+
+    assert!(!second.status.success());
+    let error = stderr(&second);
+    assert!(error.contains(&trace_id), "{error}");
+    assert!(error.contains("morphism-log content hash"), "{error}");
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_rejects_a_retargeted_command_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let command_link = directory.join("reviewed-command");
+    symlink("/bin/sh", &command_link).expect("create reviewed command symlink");
+    let fixture = setup_native_run_with_allowed_lifecycle_and_command(
+        &directory,
+        "retargeted-command",
+        "printf 'must-not-run\\n'",
+        "resolved",
+        &command_link,
+    );
+    fs::remove_file(&command_link).expect("remove reviewed command symlink");
+    let replacement = if Path::new("/bin/false").exists() {
+        Path::new("/bin/false")
+    } else {
+        Path::new("/usr/bin/false")
+    };
+    symlink(replacement, &command_link).expect("retarget command symlink");
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    assert_eq!(
+        value["result"]["trace"]["obstructions"][0]["obstruction_type"],
+        json!("binding_identity_mismatch")
+    );
+    assert!(!only_run_file(&directory, "execution.trace.json")
+        .parent()
+        .expect("run directory")
+        .join("stdout")
+        .exists());
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_spawn_error_still_leaves_an_anchored_failure_trace() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let command = directory.join("non-executable-worker");
+    fs::write(&command, b"#!/bin/sh\nprintf 'must-not-run\\n'\n").expect("write worker file");
+    let mut permissions = fs::metadata(&command)
+        .expect("worker metadata")
+        .permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&command, permissions).expect("make worker non-executable");
+    let fixture = setup_native_run_with_allowed_lifecycle_and_command(
+        &directory,
+        "spawn-error",
+        "",
+        "resolved",
+        &command,
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(!output.status.success());
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    let trace = json_file(trace_path.clone());
+    assert_eq!(trace["dispatch_state"], json!("failed"));
+    assert_eq!(
+        trace["obstructions"][0]["obstruction_type"],
+        json!("dispatch_failed")
+    );
+    assert_eq!(trace["metadata"]["worker_invoked"], json!(false));
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/execution.trace.schema.json"),
+        &trace_path,
+    );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert!(replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .any(|entry| {
+            entry["morphism"]["metadata"]["trace_id"] == trace["trace_id"]
+                && entry["morphism"]["metadata"]["trace_content_hash"]
+                    .as_str()
+                    .is_some_and(|hash| hash.len() == 64)
+        }));
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -2857,14 +3025,16 @@ fn native_run_step_rejects_fabricated_and_incomplete_dispatch_capabilities() {
         json!("no_dispatchable_step")
     );
     assert_eq!(
-        fabricated_json["result"]["obstructions"][0]["obstruction_type"],
+        fabricated_json["result"]["trace"]["obstructions"][0]["obstruction_type"],
         json!("operation_gate_rejected")
     );
-    assert!(fabricated_json["result"]["obstructions"][0]["summary"]
-        .as_str()
-        .expect("gate summary")
-        .contains("existing case cell id"));
-    assert!(!fabricated_directory.join("runs").exists());
+    assert!(
+        fabricated_json["result"]["trace"]["obstructions"][0]["summary"]
+            .as_str()
+            .expect("gate summary")
+            .contains("existing case cell")
+    );
+    assert!(only_run_file(&fabricated_directory, "execution.trace.json").is_file());
     fs::remove_dir_all(fabricated_directory).expect("remove fabricated temp directory");
 
     let incomplete_directory = unique_temp_dir();
@@ -2939,7 +3109,7 @@ fn native_run_step_records_failed_worker_evidence_without_transition() {
             .as_array()
             .expect("appended entries")
             .len(),
-        1
+        2
     );
     let run_directory = only_run_file(&directory, "execution.trace.json")
         .parent()
@@ -3606,6 +3776,10 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
         attached_cell["provenance"]["review_status"],
         json!("unreviewed")
     );
+    assert_eq!(
+        attached_cell["metadata"]["evidence_boundary"],
+        json!("attached_unverified")
+    );
     let content_hash = attached_cell["metadata"]["content_hash"]
         .as_str()
         .expect("content hash");
@@ -3617,7 +3791,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
         &json!({
             "id": "relation:evidence:evidence~3aattached-cli:1",
             "relation_type": "satisfies_evidence_requirement",
-            "relation_strength": "hard",
+            "relation_strength": "diagnostic",
             "from_id": "evidence:attached-cli",
             "to_id": "goal:native-case-contract",
             "evidence_ids": ["evidence:attached-cli"],
@@ -3646,7 +3820,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
 
     let reason = run_native_case_store_command(&directory, "reason");
     assert!(
-        stdout_json(&reason)["result"]["evaluation"]["evidence_findings"]
+        !stdout_json(&reason)["result"]["evaluation"]["evidence_findings"]
             ["source_backed_evidence_ids"]
             .as_array()
             .expect("reason evidence ids")
@@ -3654,7 +3828,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
     );
     let evidence = run_native_case_store_command(&directory, "evidence");
     assert!(
-        stdout_json(&evidence)["result"]["evidence_findings"]["source_backed_evidence_ids"]
+        !stdout_json(&evidence)["result"]["evidence_findings"]["source_backed_evidence_ids"]
             .as_array()
             .expect("evidence ids")
             .contains(&json!("evidence:attached-cli"))
@@ -4394,26 +4568,29 @@ fn write_native_metadata_morphism_with_metadata(
 
 fn write_execution_plan(path: &Path, plan_id: &str, base_revision_id: &str, work_cell_id: &str) {
     let store = path.parent().expect("execution plan store directory");
-    let binding_directory = store.join("bindings");
-    fs::create_dir_all(&binding_directory).expect("create binding directory");
-    let binding = json!({
-        "schema": "highergraphen.case.workflow.worker_binding.v1",
-        "schema_version": 1,
-        "binding_id": "worker_binding:native-integration",
-        "worker_kind": "shell",
-        "command": "/bin/sh",
-        "args": ["-c", "printf 'native integration worker\\n'"],
-        "working_directory": store,
-        "env_allowlist": [],
-        "timeout_ms": 5000,
-        "capability_ids": ["capability:native-integration-worker"],
-        "metadata": {}
-    });
-    fs::write(
-        binding_directory.join("worker_binding~3anative-integration.worker.binding.json"),
-        serde_json::to_string_pretty(&binding).expect("serialize worker binding"),
-    )
-    .expect("write worker binding");
+    let registered_binding = store
+        .join("bindings")
+        .join("worker_binding~3anative-integration.worker.binding.json");
+    if !registered_binding.exists() {
+        let binding_input = store.join("native-integration.worker.binding.input.json");
+        write_worker_binding(
+            &binding_input,
+            "worker_binding:native-integration",
+            store,
+            "printf 'native integration worker\\n'",
+        );
+        let register = run_cli(&[
+            "binding",
+            "register",
+            "--store",
+            store.to_str().expect("store path"),
+            "--input",
+            binding_input.to_str().expect("binding input path"),
+            "--format",
+            "json",
+        ]);
+        assert!(register.status.success(), "stderr: {}", stderr(&register));
+    }
     let plan = json!({
         "schema": "highergraphen.case.workflow.execution_plan.v1",
         "schema_version": 1,
@@ -4472,6 +4649,22 @@ fn setup_native_run_with_allowed_lifecycle(
     script: &str,
     allowed_lifecycle: &str,
 ) -> NativeRunFixture {
+    setup_native_run_with_allowed_lifecycle_and_command(
+        directory,
+        suffix,
+        script,
+        allowed_lifecycle,
+        Path::new("/bin/sh"),
+    )
+}
+
+fn setup_native_run_with_allowed_lifecycle_and_command(
+    directory: &Path,
+    suffix: &str,
+    script: &str,
+    allowed_lifecycle: &str,
+    command: &Path,
+) -> NativeRunFixture {
     let import_revision = format!("revision:run-{suffix}-import");
     import_native_case_space(directory, &import_revision);
     let activate = run_cli(&[
@@ -4500,7 +4693,7 @@ fn setup_native_run_with_allowed_lifecycle(
 
     let binding_id = format!("worker_binding:run-{suffix}");
     let binding_input = directory.join(format!("{suffix}.worker.binding.input.json"));
-    write_worker_binding(&binding_input, &binding_id, directory, script);
+    write_worker_binding_with_command(&binding_input, &binding_id, directory, command, script);
     let register = run_cli(&[
         "binding",
         "register",
@@ -4586,14 +4779,33 @@ fn setup_native_run_with_allowed_lifecycle(
 }
 
 fn write_worker_binding(path: &Path, binding_id: &str, working_directory: &Path, script: &str) {
+    write_worker_binding_with_command(
+        path,
+        binding_id,
+        working_directory,
+        Path::new("/bin/sh"),
+        script,
+    );
+}
+
+fn write_worker_binding_with_command(
+    path: &Path,
+    binding_id: &str,
+    working_directory: &Path,
+    command: &Path,
+    script: &str,
+) {
     let binding = json!({
         "schema": "highergraphen.case.workflow.worker_binding.v1",
         "schema_version": 1,
         "binding_id": binding_id,
         "worker_kind": "shell",
-        "command": "/bin/sh",
+        "command": command,
         "args": ["-c", script],
         "working_directory": working_directory,
+        "resolved_command_path": "/caller/value/is/overwritten",
+        "resolved_working_directory": "/caller/value/is/overwritten",
+        "command_content_hash": "0000000000000000000000000000000000000000000000000000000000000000",
         "env_allowlist": [],
         "timeout_ms": 5000,
         "capability_ids": ["capability:native-run-worker"],
@@ -4726,7 +4938,7 @@ fn run_native_step_with_gate_capabilities(
         "--actor-id".to_owned(),
         "actor:native-run".to_owned(),
         "--gate-actor-id".to_owned(),
-        "actor:native-run-gate".to_owned(),
+        "actor:native-run".to_owned(),
         "--operation-scope-id".to_owned(),
         native_case_space_id().to_owned(),
         "--audience".to_owned(),

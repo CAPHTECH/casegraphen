@@ -82,6 +82,115 @@ fn append_metadata_only_morphism_advances_history_and_replay() {
 }
 
 #[test]
+fn append_rejects_reused_revision_without_corrupting_the_store() {
+    let root = temp_root("reused-revision");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second revision");
+
+    let first_revision_id = case_space.revision.revision_id.clone();
+    let first_snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &first_revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("first snapshot path");
+    let first_snapshot_before =
+        fs::read(&first_snapshot_path).expect("read first snapshot before rejected append");
+    let replay = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay second revision");
+    let mut entry = replay.history[1].clone();
+    entry.sequence = 3;
+    entry.entry_id = id("morphism_log_entry:reused-revision");
+    entry.morphism_id = id("morphism:reused-revision");
+    entry.source_revision_id = Some(replay.current_revision_id.clone());
+    entry.target_revision_id = first_revision_id.clone();
+    entry.morphism.morphism_id = entry.morphism_id.clone();
+    entry.morphism.source_revision_id = entry.source_revision_id.clone();
+    entry.morphism.target_revision_id = entry.target_revision_id.clone();
+    entry.previous_entry_hash = Some(
+        crate::native_hash::morphism_log_entry_hash(
+            replay.history.last().expect("current morphism log entry"),
+        )
+        .expect("current entry hash"),
+    );
+    entry.replay_checksum.clear();
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("reusing an earlier revision must fail");
+
+    assert!(matches!(error, NativeStoreError::InvalidMorphism { .. }));
+    assert!(error.to_string().contains(&format!(
+        "target_revision_id {first_revision_id} already exists in the morphism log"
+    )));
+    assert_eq!(
+        fs::read(&first_snapshot_path).expect("read first snapshot after rejected append"),
+        first_snapshot_before
+    );
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("store remains valid after rejected revision reuse")
+            .valid
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn append_rejects_an_existing_target_snapshot_without_replacing_it() {
+    let root = temp_root("existing-target-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let entry = metadata_entry(&case_space);
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &entry.target_revision_id),
+            &store.log_path(&case_space.case_space_id),
+        )
+        .expect("target snapshot path");
+    let snapshot_before = b"pre-existing snapshot sentinel\n";
+    fs::write(&snapshot_path, snapshot_before).expect("create pre-existing target snapshot");
+    let log_path = store.log_path(&case_space.case_space_id);
+    let log_before = fs::read(&log_path).expect("read log before rejected append");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry.clone())
+        .expect_err("an existing target snapshot must reject the append");
+
+    assert!(matches!(error, NativeStoreError::InvalidMorphism { .. }));
+    assert!(error
+        .to_string()
+        .contains(entry.target_revision_id.as_str()));
+    assert_eq!(
+        fs::read(&snapshot_path).expect("read pre-existing target snapshot"),
+        snapshot_before
+    );
+    assert_eq!(
+        fs::read(&log_path).expect("read log after rejected append"),
+        log_before
+    );
+    assert!(
+        store
+            .validate_case_space(&case_space.case_space_id)
+            .expect("store remains valid after snapshot collision")
+            .valid
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn tampered_snapshot_checksum_fails_replay_and_validation() {
     let root = temp_root("tampered-snapshot");
     let store = NativeCaseStore::new(root.clone());
@@ -260,6 +369,29 @@ fn append_breaks_stale_case_lock() {
         2
     );
     assert!(!lock_path.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn lock_guard_drop_does_not_delete_a_successor_lock() {
+    let root = temp_root("successor-lock");
+    fs::create_dir_all(&root).expect("create lock directory");
+    let guard = CaseLockGuard::acquire(&root).expect("acquire original lock");
+    let lock_path = root.join(".lock");
+    let successor_token = "token=foreign-successor\n";
+    fs::remove_file(&lock_path).expect("simulate stale-lock removal");
+    fs::write(&lock_path, successor_token).expect("install successor lock token");
+
+    drop(guard);
+
+    assert_eq!(
+        fs::read_to_string(&lock_path).expect("successor lock must remain"),
+        successor_token
+    );
+    assert!(matches!(
+        CaseLockGuard::acquire(&root),
+        Err(NativeStoreError::LockUnavailable { .. })
+    ));
     let _ = fs::remove_dir_all(root);
 }
 

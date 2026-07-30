@@ -569,7 +569,7 @@ mod tests {
     }
 
     fn binding(directory: &Path, script: &str, timeout_ms: u64) -> WorkerBinding {
-        let binding = WorkerBinding {
+        let mut binding = WorkerBinding {
             schema: WORKER_BINDING_SCHEMA.to_owned(),
             schema_version: WORKER_BINDING_SCHEMA_VERSION,
             binding_id: Id::new("worker_binding:shell-worker-test").expect("binding id"),
@@ -577,11 +577,19 @@ mod tests {
             command: "/bin/sh".to_owned(),
             args: vec!["-c".to_owned(), script.to_owned()],
             working_directory: directory.display().to_string(),
+            resolved_command_path: "/bin/sh".to_owned(),
+            resolved_working_directory: directory.display().to_string(),
+            command_content_hash: "0".repeat(64),
             env_allowlist: Vec::new(),
             timeout_ms,
             capability_ids: vec![Id::new("capability:shell-worker-test").expect("capability id")],
             metadata: Map::new(),
         };
+        let identity = crate::exec::binding::resolve_worker_binding_identity(&binding)
+            .expect("binding identity");
+        binding.resolved_command_path = identity.resolved_command_path;
+        binding.resolved_working_directory = identity.resolved_working_directory;
+        binding.command_content_hash = identity.command_content_hash;
         validate_worker_binding(&binding).expect("valid binding");
         binding
     }

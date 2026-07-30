@@ -40,10 +40,10 @@ workers persistently; enabling is a per-invocation, auditable decision.
 Every dispatch requires an operation gate (`check_operation_gate`, operation
 `dispatch`): named actor, non-empty capability ids, scope bound to the case
 space, audit/system audience, and a source-boundary match. Plan acceptance
-requires the same gate with operation `plan-review`. Capability ids named in a
-gate MUST correspond to grants recorded as cells or policy metadata in the
-case space; a gate that names capabilities nobody recorded is reviewable in
-the log and attributable to its actor.
+requires the same gate with operation `plan-review`. Every capability id must
+resolve to an active/accepted `custom:capability` cell with accepted
+provenance, and that cell's `metadata.actor_ids` must name the acting actor.
+`run --step` uses the same actor for the gate and appended log entries.
 
 Capability ↔ OS permission mapping (operator duty, not enforced by the tool):
 
@@ -66,6 +66,10 @@ workers under a dedicated OS user or container is the operator's control.
 - Binding content hashes are recorded into the plan at propose time
   (`plan.metadata.worker_binding_hashes`); editing a binding after acceptance
   yields a `binding_hash_mismatch` obstruction and no dispatch.
+- Binding registration stores the canonical command and working-directory
+  paths plus the command file's SHA-256. Dispatch re-resolves and re-hashes
+  them before spawning from the pinned canonical paths; symlink retargeting
+  yields `binding_identity_mismatch`.
 - Auto-application of a worker-driven transition happens only when the
   transition falls inside the plan's `allowed_transition_classes`
   (morphism type × cell types × lifecycles). Anything outside is stored as an
@@ -74,8 +78,8 @@ workers under a dedicated OS user or container is the operator's control.
 ### 2.4 Worker containment
 
 - Environment is cleared; only `env_allowlist` variables pass through.
-  `PATH`, loader-injection variables, and the reserved `CASEGRAPHEN_*`
-  namespace are rejected even if listed.
+  `PATH`, every `LD_*`/`DYLD_*` loader namespace variable, and the reserved
+  `CASEGRAPHEN_*` namespace are rejected even if listed.
 - `command` and `working_directory` must be absolute. Both are canonicalized
   immediately before spawn; the command must resolve to a file and the working
   directory must resolve to a directory.
@@ -106,8 +110,11 @@ satisfied + invariants pass) remain distinct judgments.
 
 Every step writes an `execution_trace` (plan/step/binding hashes, worker
 report id, appended entry ids, obstructions, information loss) under `runs/`,
-and every state change is an entry in the hash-chained morphism log. Replay
-wins over any cache or snapshot. The audit path for an incident is:
+and appends that trace's content hash to the hash-chained morphism log. Run
+directories are atomically reserved and a `started` trace exists before worker
+spawn, so concurrent dispatch cannot reuse an in-progress attempt and failures
+after reservation retain a trace. Replay wins over any cache or snapshot. The
+audit path for an incident is:
 trace → worker report + raw output hashes → log entries → revision replay.
 
 ## 3. Approval policy — what always needs a human

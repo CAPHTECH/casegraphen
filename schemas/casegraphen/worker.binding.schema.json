@@ -12,6 +12,9 @@
     "command",
     "args",
     "working_directory",
+    "resolved_command_path",
+    "resolved_working_directory",
+    "command_content_hash",
     "env_allowlist",
     "timeout_ms",
     "capability_ids",
@@ -49,6 +52,20 @@
       "minLength": 1,
       "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
     },
+    "resolved_command_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+    },
+    "resolved_working_directory": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+    },
+    "command_content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "env_allowlist": {
       "type": "array",
       "items": {
@@ -57,12 +74,13 @@
           {
             "not": {
               "enum": [
-                "PATH",
-                "LD_PRELOAD",
-                "LD_LIBRARY_PATH",
-                "DYLD_INSERT_LIBRARIES",
-                "DYLD_LIBRARY_PATH"
+                "PATH"
               ]
+            }
+          },
+          {
+            "not": {
+              "pattern": "^(?:LD_|DYLD_)"
             }
           },
           {

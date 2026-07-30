@@ -9,6 +9,9 @@
     "printf 'casegraphen worker output\\n'"
   ],
   "working_directory": "/tmp",
+  "resolved_command_path": "/bin/sh",
+  "resolved_working_directory": "/tmp",
+  "command_content_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "env_allowlist": [],
   "timeout_ms": 5000,
   "capability_ids": [

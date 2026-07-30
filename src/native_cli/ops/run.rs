@@ -8,20 +8,23 @@ use super::{
 };
 use crate::{
     exec::{
-        binding::{validate_worker_binding, WorkerBinding, WorkerKind},
+        binding::{
+            resolve_worker_binding_identity, validate_worker_binding, WorkerBinding, WorkerKind,
+        },
         records::{
-            ExecutionInformationLoss, ExecutionObstruction, ExecutionTrace, WorkerOutput,
-            WorkerOutputName, WorkerReport, EXECUTION_RECORD_SCHEMA_VERSION,
+            ExecutionDispatchState, ExecutionInformationLoss, ExecutionObstruction, ExecutionTrace,
+            WorkerOutput, WorkerOutputName, WorkerReport, EXECUTION_RECORD_SCHEMA_VERSION,
             EXECUTION_TRACE_SCHEMA, WORKER_REPORT_SCHEMA, WORKER_REPORT_TRUST_BOUNDARY,
         },
         transition_permitted,
         worker::{execute_worker, WorkerContext},
         ExecutionPlan, ExecutionStep,
     },
-    native_eval::{evaluate_native_case, unsatisfied_evidence_requirement_ids},
+    native_eval::evaluate_native_case,
     native_model::{
-        CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType, CaseRelation,
-        CaseRelationType, CaseSpace, MorphismLogEntry, MorphismPayload, RelationStrength,
+        apply_morphism, CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType,
+        CaseRelation, CaseRelationType, CaseSpace, MorphismLogEntry, MorphismPayload,
+        RelationStrength,
     },
     native_review::{check_operation_gate, NativeOperationGate},
     native_store::NativeCaseStore,
@@ -50,27 +53,15 @@ pub(in crate::native_cli) fn run_step(
     verify_accepted_plan(&plan, &replay.case_space)?;
 
     let gate = NativeOperationGate {
-        actor_id: options.gate_options.actor_id.clone(),
+        actor_id: options.actor_id.clone(),
         operation: "dispatch".to_owned(),
         operation_scope_id: options.gate_options.operation_scope_id.clone(),
         audience: options.gate_options.audience,
         capability_ids: options.gate_options.capability_ids.clone(),
         source_boundary_id: options.gate_options.source_boundary_id.clone(),
     };
-    if let Err(error) = check_operation_gate(&replay.case_space, &gate, "dispatch") {
-        return Ok(no_dispatchable_report(
-            vec![ExecutionObstruction {
-                obstruction_type: "operation_gate_rejected".to_owned(),
-                summary: error.to_string(),
-                witness_ids: vec![gate.actor_id],
-                blocking: true,
-            }],
-            Vec::new(),
-        ));
-    }
-
     let evaluation = evaluate_native_case(&replay.case_space)?;
-    let traces = read_execution_traces(store)?;
+    let traces = read_execution_traces(store, &replay.case_space)?;
     let selection = select_step(
         &plan,
         &replay.case_space,
@@ -85,10 +76,45 @@ pub(in crate::native_cli) fn run_step(
         ));
     };
     let step = &plan.steps[step_index];
-    let trace_identity = trace_identity(store, &plan, step, &traces)?;
+    let trace_identity = reserve_trace_identity(store, &plan, step, &traces)?;
     let trace_started_at = timestamp();
-
     let expected_binding_hash = expected_binding_hash(&plan, &step.worker_binding_id);
+    let mut trace_guard = TraceGuard::start(
+        store,
+        options.case_space_id,
+        options.actor_id,
+        &replay.case_space,
+        &plan,
+        step,
+        options.base_revision_id,
+        &trace_identity,
+        expected_binding_hash
+            .clone()
+            .unwrap_or_else(empty_content_hash),
+        &gate,
+        &trace_started_at,
+    )?;
+
+    if let Err(error) = check_operation_gate(&replay.case_space, &gate, "dispatch") {
+        let trace = trace_guard.finish(
+            &replay.case_space,
+            ExecutionDispatchState::Failed,
+            "operation_gate_rejected",
+            vec![ExecutionObstruction {
+                obstruction_type: "operation_gate_rejected".to_owned(),
+                summary: error.to_string(),
+                witness_ids: vec![gate.actor_id.clone()],
+                blocking: true,
+            }],
+        )?;
+        return Ok(run_report(
+            "no_dispatchable_step",
+            Some(trace),
+            None,
+            selection.step_reasons,
+        ));
+    }
+
     let binding_path = binding_path(store, &step.worker_binding_id);
     let verified_binding = match read_verified_worker_binding_snapshot(
         &binding_path,
@@ -107,16 +133,12 @@ pub(in crate::native_cli) fn run_step(
             let trace_binding_hash = actual_binding_hash
                 .or_else(|| expected_binding_hash.clone())
                 .unwrap_or_else(empty_content_hash);
-            let trace = write_pre_dispatch_trace(PreDispatchTraceInput {
-                case_space: &replay.case_space,
-                plan: &plan,
-                step,
-                base_revision_id: options.base_revision_id,
-                identity: &trace_identity,
-                binding_content_hash: trace_binding_hash,
-                operation_gate: &gate,
-                started_at: trace_started_at,
-                obstruction: ExecutionObstruction {
+            trace_guard.trace.binding_content_hash = trace_binding_hash;
+            let trace = trace_guard.finish(
+                &replay.case_space,
+                ExecutionDispatchState::Failed,
+                obstruction_type,
+                vec![ExecutionObstruction {
                     obstruction_type: obstruction_type.to_owned(),
                     summary: format!(
                         "worker binding {} content hash does not match the hash accepted with plan {}",
@@ -124,8 +146,8 @@ pub(in crate::native_cli) fn run_step(
                     ),
                     witness_ids: vec![step.worker_binding_id.clone()],
                     blocking: true,
-                },
-            })?;
+                }],
+            )?;
             return Ok(run_report(
                 "no_dispatchable_step",
                 Some(trace),
@@ -135,9 +157,10 @@ pub(in crate::native_cli) fn run_step(
         }
     };
     let VerifiedWorkerBinding {
-        binding,
+        mut binding,
         content_hash: binding_content_hash,
     } = *verified_binding;
+    trace_guard.trace.binding_content_hash = binding_content_hash.clone();
     let missing_binding_capability_ids = binding
         .capability_ids
         .iter()
@@ -145,16 +168,11 @@ pub(in crate::native_cli) fn run_step(
         .cloned()
         .collect::<Vec<_>>();
     if !missing_binding_capability_ids.is_empty() {
-        let trace = write_pre_dispatch_trace(PreDispatchTraceInput {
-            case_space: &replay.case_space,
-            plan: &plan,
-            step,
-            base_revision_id: options.base_revision_id,
-            identity: &trace_identity,
-            binding_content_hash,
-            operation_gate: &gate,
-            started_at: trace_started_at,
-            obstruction: ExecutionObstruction {
+        let trace = trace_guard.finish(
+            &replay.case_space,
+            ExecutionDispatchState::Failed,
+            "operation_gate_rejected",
+            vec![ExecutionObstruction {
                 obstruction_type: "operation_gate_rejected".to_owned(),
                 summary: format!(
                     "dispatch operation gate does not cover worker binding {} capability_ids: {}",
@@ -167,8 +185,8 @@ pub(in crate::native_cli) fn run_step(
                 ),
                 witness_ids: missing_binding_capability_ids,
                 blocking: true,
-            },
-        })?;
+            }],
+        )?;
         return Ok(run_report(
             "no_dispatchable_step",
             Some(trace),
@@ -176,6 +194,65 @@ pub(in crate::native_cli) fn run_step(
             selection.step_reasons,
         ));
     }
+    let resolved_identity = match resolve_worker_binding_identity(&binding) {
+        Ok(identity)
+            if identity.resolved_command_path == binding.resolved_command_path
+                && identity.resolved_working_directory == binding.resolved_working_directory
+                && identity.command_content_hash == binding.command_content_hash =>
+        {
+            identity
+        }
+        Ok(identity) => {
+            let trace = trace_guard.finish(
+                &replay.case_space,
+                ExecutionDispatchState::Failed,
+                "binding_identity_mismatch",
+                vec![ExecutionObstruction {
+                    obstruction_type: "binding_identity_mismatch".to_owned(),
+                    summary: format!(
+                        "worker binding {} resolved identity no longer matches registration \
+                         (command {}, working directory {}, command hash {})",
+                        binding.binding_id,
+                        identity.resolved_command_path,
+                        identity.resolved_working_directory,
+                        identity.command_content_hash
+                    ),
+                    witness_ids: vec![binding.binding_id.clone()],
+                    blocking: true,
+                }],
+            )?;
+            return Ok(run_report(
+                "no_dispatchable_step",
+                Some(trace),
+                None,
+                selection.step_reasons,
+            ));
+        }
+        Err(error) => {
+            let trace = trace_guard.finish(
+                &replay.case_space,
+                ExecutionDispatchState::Failed,
+                "binding_identity_mismatch",
+                vec![ExecutionObstruction {
+                    obstruction_type: "binding_identity_mismatch".to_owned(),
+                    summary: format!(
+                        "worker binding {} identity could not be re-verified: {error}",
+                        binding.binding_id
+                    ),
+                    witness_ids: vec![binding.binding_id.clone()],
+                    blocking: true,
+                }],
+            )?;
+            return Ok(run_report(
+                "no_dispatchable_step",
+                Some(trace),
+                None,
+                selection.step_reasons,
+            ));
+        }
+    };
+    binding.command = resolved_identity.resolved_command_path;
+    binding.working_directory = resolved_identity.resolved_working_directory;
     if binding.worker_kind == WorkerKind::Shell
         && !options
             .enabled_worker_kinds
@@ -187,10 +264,6 @@ pub(in crate::native_cli) fn run_step(
         ));
     }
 
-    fs::create_dir_all(&trace_identity.run_directory).map_err(|source| NativeCliError::Io {
-        path: trace_identity.run_directory.clone(),
-        source,
-    })?;
     let input_report_path = trace_identity.run_directory.join("input.report.json");
     let input_report = case_reason(store, options.case_space_id, NativeReasonSection::Reason)?;
     write_json(&input_report_path, &input_report)?;
@@ -206,6 +279,10 @@ pub(in crate::native_cli) fn run_step(
             work_cell_id: step.work_cell_id.clone(),
         },
     )?;
+    trace_guard
+        .trace
+        .metadata
+        .insert("worker_invoked".to_owned(), Value::Bool(true));
     write_bytes(
         &trace_identity.run_directory.join("stdout"),
         &invocation.stdout,
@@ -258,14 +335,17 @@ pub(in crate::native_cli) fn run_step(
         .ok_or_else(|| NativeCliError::invalid("worker evidence morphism has no evidence id"))?;
     let mut appended_entry_ids = vec![evidence_entry.entry_id.clone()];
     let mut result_revision_id = Some(evidence_entry.target_revision_id.clone());
+    trace_guard.trace.appended_entry_ids = appended_entry_ids.clone();
+    trace_guard.trace.result_revision_id = result_revision_id.clone();
     let mut transition_applied = false;
     let post_evidence = store_api.replay_current_case_space(options.case_space_id)?;
     let post_evaluation = evaluate_native_case(&post_evidence.case_space)?;
-    let unsatisfied_success_evidence_requirement_ids = unsatisfied_evidence_requirement_ids(
+    let unsatisfied_success_evidence_requirement_ids = run_scoped_unsatisfied_requirement_ids(
         &post_evidence.case_space,
-        &step.work_cell_id,
         &step.success_evidence_requirement_ids,
-    )?;
+        &evidence_cell_id,
+        &trace_identity.trace_id,
+    );
     let status;
 
     if worker_succeeded {
@@ -276,7 +356,12 @@ pub(in crate::native_cli) fn run_step(
             &trace_identity,
             &evidence_cell_id,
         )?;
-        let new_hard_obstruction_ids = new_hard_obstruction_ids(&evaluation, &post_evaluation);
+        let mut candidate = post_evidence.case_space.clone();
+        apply_morphism(&mut candidate, &transition)
+            .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+        let candidate_evaluation = evaluate_native_case(&candidate)?;
+        let new_hard_obstruction_ids =
+            new_hard_obstruction_ids(&post_evaluation, &candidate_evaluation);
         if !unsatisfied_success_evidence_requirement_ids.is_empty()
             || !new_hard_obstruction_ids.is_empty()
         {
@@ -324,6 +409,9 @@ pub(in crate::native_cli) fn run_step(
             let transition_entry = report_entry(&transition_report)?;
             appended_entry_ids.push(transition_entry.entry_id);
             result_revision_id = Some(transition_entry.target_revision_id);
+            trace_guard.trace.appended_entry_ids = appended_entry_ids.clone();
+            trace_guard.trace.result_revision_id = result_revision_id.clone();
+            trace_guard.trace.transition_applied = true;
             transition_applied = true;
             status = "step_executed";
         } else {
@@ -355,21 +443,22 @@ pub(in crate::native_cli) fn run_step(
         status = "step_failed";
     }
 
-    let trace = ExecutionTrace {
+    trace_guard.trace = ExecutionTrace {
         schema: EXECUTION_TRACE_SCHEMA.to_owned(),
         schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
-        trace_id: trace_identity.trace_id,
-        plan_id: plan.plan_id,
+        trace_id: trace_identity.trace_id.clone(),
+        plan_id: plan.plan_id.clone(),
         step_id: step.step_id.clone(),
         case_space_id: options.case_space_id.clone(),
         base_revision_id: options.base_revision_id.clone(),
         result_revision_id,
         work_cell_id: step.work_cell_id.clone(),
-        binding_id: binding.binding_id,
+        binding_id: binding.binding_id.clone(),
         binding_content_hash,
-        operation_gate: gate,
+        operation_gate: gate.clone(),
         worker_report_id: worker_report.report_id.clone(),
         appended_entry_ids,
+        dispatch_state: ExecutionDispatchState::Started,
         transition_applied,
         unsatisfied_success_evidence_requirement_ids,
         obstructions,
@@ -384,7 +473,13 @@ pub(in crate::native_cli) fn run_step(
         finished_at: timestamp(),
         metadata: Map::from_iter([("worker_invoked".to_owned(), Value::Bool(true))]),
     };
-    write_trace(&trace_identity.run_directory, &trace)?;
+    let final_replay = store_api.replay_current_case_space(options.case_space_id)?;
+    let dispatch_state = if status == "step_executed" {
+        ExecutionDispatchState::Completed
+    } else {
+        ExecutionDispatchState::Failed
+    };
+    let trace = trace_guard.finish(&final_replay.case_space, dispatch_state, status, Vec::new())?;
     Ok(run_report(
         status,
         Some(trace),
@@ -426,6 +521,11 @@ fn select_step(
     let mut obstructions = Vec::new();
     for (index, step) in plan.steps.iter().enumerate() {
         let mut reasons = Vec::new();
+        let prior_started = traces.iter().any(|trace| {
+            trace.plan_id == plan.plan_id
+                && trace.step_id == step.step_id
+                && trace.dispatch_state == ExecutionDispatchState::Started
+        });
         let prior_applied = traces.iter().any(|trace| {
             trace.plan_id == plan.plan_id
                 && trace.step_id == step.step_id
@@ -434,8 +534,17 @@ fn select_step(
         let prior_failed = traces.iter().any(|trace| {
             trace.plan_id == plan.plan_id
                 && trace.step_id == step.step_id
-                && !trace.transition_applied
+                && trace.dispatch_state == ExecutionDispatchState::Failed
         });
+        if prior_started {
+            reasons.push("dispatch_in_progress");
+            obstructions.push(ExecutionObstruction {
+                obstruction_type: "dispatch_in_progress".to_owned(),
+                summary: format!("step {} already has a dispatch in progress", step.step_id),
+                witness_ids: vec![step.step_id.clone()],
+                blocking: true,
+            });
+        }
         if prior_applied {
             reasons.push("already_executed");
         }
@@ -483,7 +592,11 @@ fn select_step(
     }
 }
 
-fn read_execution_traces(store: &Path) -> Result<Vec<ExecutionTrace>, NativeCliError> {
+fn read_execution_traces(
+    store: &Path,
+    case_space: &CaseSpace,
+) -> Result<Vec<ExecutionTrace>, NativeCliError> {
+    verify_recorded_trace_anchors(store, case_space)?;
     let root = store.join(RUN_DIRECTORY);
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
@@ -509,40 +622,175 @@ fn read_execution_traces(store: &Path) -> Result<Vec<ExecutionTrace>, NativeCliE
                 path: path.clone(),
                 source,
             })?;
-            serde_json::from_slice(&bytes).map_err(NativeCliError::from)
+            let trace: ExecutionTrace = serde_json::from_slice(&bytes).map_err(|error| {
+                NativeCliError::invalid(format!(
+                    "execution trace {} could not be read: {error}",
+                    path.display()
+                ))
+            })?;
+            let expected_run_directory_name = path_segment(&trace.trace_id);
+            if path.parent().and_then(Path::file_name).and_then(|name| name.to_str())
+                != Some(expected_run_directory_name.as_str())
+            {
+                return Err(NativeCliError::invalid(format!(
+                    "execution trace {} is stored under a run directory that does not match its trace id",
+                    trace.trace_id
+                )));
+            }
+            if let Some(recorded_hash) = recorded_trace_hash(case_space, &trace.trace_id) {
+                let actual_hash = crate::native_hash::sha256_hex(&bytes);
+                if actual_hash != recorded_hash {
+                    return Err(NativeCliError::invalid(format!(
+                        "execution trace {} at {} does not match its morphism-log content hash; \
+                         the trace may have been rewritten",
+                        trace.trace_id,
+                        path.display()
+                    )));
+                }
+            }
+            Ok(trace)
         })
         .collect()
 }
 
+fn verify_recorded_trace_anchors(
+    store: &Path,
+    case_space: &CaseSpace,
+) -> Result<(), NativeCliError> {
+    for entry in &case_space.morphism_log {
+        if entry.morphism.morphism_type
+            != CaseMorphismType::Custom("execution_trace_anchor".to_owned())
+            || entry.morphism.review_status != ReviewStatus::Accepted
+        {
+            continue;
+        }
+        let Some(trace_id) = entry
+            .morphism
+            .metadata
+            .get("trace_id")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(recorded_hash) = entry
+            .morphism
+            .metadata
+            .get("trace_content_hash")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let Some(relative_path) = entry
+            .morphism
+            .metadata
+            .get("trace_path")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let trace_path = store.join(relative_path);
+        let bytes = fs::read(&trace_path).map_err(|error| {
+            NativeCliError::invalid(format!(
+                "execution trace {trace_id} at {} cannot be verified against its morphism-log content hash: {error}",
+                trace_path.display()
+            ))
+        })?;
+        if crate::native_hash::sha256_hex(&bytes) != recorded_hash {
+            return Err(NativeCliError::invalid(format!(
+                "execution trace {trace_id} at {} does not match its morphism-log content hash; \
+                 the trace may have been rewritten",
+                trace_path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn recorded_trace_hash<'a>(case_space: &'a CaseSpace, trace_id: &Id) -> Option<&'a str> {
+    case_space.morphism_log.iter().rev().find_map(|entry| {
+        if entry.morphism.morphism_type
+            != CaseMorphismType::Custom("execution_trace_anchor".to_owned())
+            || entry.morphism.review_status != ReviewStatus::Accepted
+        {
+            return None;
+        }
+        let metadata = &entry.morphism.metadata;
+        (metadata.get("trace_id").and_then(Value::as_str) == Some(trace_id.as_str()))
+            .then(|| metadata.get("trace_content_hash").and_then(Value::as_str))
+            .flatten()
+    })
+}
+
+#[derive(Debug)]
 struct TraceIdentity {
     trace_id: Id,
     worker_report_id: Id,
     run_directory: PathBuf,
 }
 
-fn trace_identity(
+fn reserve_trace_identity(
     store: &Path,
     plan: &ExecutionPlan,
     step: &ExecutionStep,
     traces: &[ExecutionTrace],
 ) -> Result<TraceIdentity, NativeCliError> {
-    let attempt = traces
+    let mut attempt = traces
         .iter()
         .filter(|trace| trace.plan_id == plan.plan_id && trace.step_id == step.step_id)
         .count()
         + 1;
-    let trace_id = Id::new(format!(
-        "execution_trace:{}:{}:{attempt}",
-        path_segment(&plan.plan_id),
-        path_segment(&step.step_id)
-    ))?;
-    let worker_report_id = Id::new(format!("worker_report:{}", path_segment(&trace_id)))?;
-    let run_directory = store.join(RUN_DIRECTORY).join(path_segment(&trace_id));
-    Ok(TraceIdentity {
-        trace_id,
-        worker_report_id,
-        run_directory,
-    })
+    let run_root = store.join(RUN_DIRECTORY);
+    fs::create_dir_all(&run_root).map_err(|source| NativeCliError::Io {
+        path: run_root.clone(),
+        source,
+    })?;
+    loop {
+        let trace_id = Id::new(format!(
+            "execution_trace:{}:{}:{attempt}",
+            path_segment(&plan.plan_id),
+            path_segment(&step.step_id)
+        ))?;
+        let worker_report_id = Id::new(format!("worker_report:{}", path_segment(&trace_id)))?;
+        let run_directory = run_root.join(path_segment(&trace_id));
+        match fs::create_dir(&run_directory) {
+            Ok(()) => {
+                return Ok(TraceIdentity {
+                    trace_id,
+                    worker_report_id,
+                    run_directory,
+                })
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                let trace_path = run_directory.join("execution.trace.json");
+                match fs::read(&trace_path)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<ExecutionTrace>(&bytes).ok())
+                {
+                    Some(trace) if trace.dispatch_state != ExecutionDispatchState::Started => {
+                        attempt += 1;
+                    }
+                    Some(trace) => {
+                        return Err(NativeCliError::invalid(format!(
+                            "execution trace {} already has a dispatch in progress",
+                            trace.trace_id
+                        )));
+                    }
+                    None => {
+                        return Err(NativeCliError::invalid(format!(
+                            "run directory {} is already reserved by a dispatch in progress",
+                            run_directory.display()
+                        )));
+                    }
+                }
+            }
+            Err(source) => {
+                return Err(NativeCliError::Io {
+                    path: run_directory,
+                    source,
+                })
+            }
+        }
+    }
 }
 
 fn expected_binding_hash(plan: &ExecutionPlan, binding_id: &Id) -> Option<String> {
@@ -612,50 +860,137 @@ fn empty_content_hash() -> String {
     crate::native_hash::sha256_hex(&[])
 }
 
-struct PreDispatchTraceInput<'a> {
-    case_space: &'a CaseSpace,
-    plan: &'a ExecutionPlan,
-    step: &'a ExecutionStep,
-    base_revision_id: &'a Id,
-    identity: &'a TraceIdentity,
-    binding_content_hash: String,
-    operation_gate: &'a NativeOperationGate,
-    started_at: String,
-    obstruction: ExecutionObstruction,
+struct TraceGuard {
+    store: PathBuf,
+    actor_id: Id,
+    run_directory: PathBuf,
+    trace: ExecutionTrace,
+    finished: bool,
 }
 
-fn write_pre_dispatch_trace(
-    input: PreDispatchTraceInput<'_>,
-) -> Result<ExecutionTrace, NativeCliError> {
-    fs::create_dir_all(&input.identity.run_directory).map_err(|source| NativeCliError::Io {
-        path: input.identity.run_directory.clone(),
-        source,
-    })?;
-    let trace = ExecutionTrace {
-        schema: EXECUTION_TRACE_SCHEMA.to_owned(),
-        schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
-        trace_id: input.identity.trace_id.clone(),
-        plan_id: input.plan.plan_id.clone(),
-        step_id: input.step.step_id.clone(),
-        case_space_id: input.case_space.case_space_id.clone(),
-        base_revision_id: input.base_revision_id.clone(),
-        result_revision_id: None,
-        work_cell_id: input.step.work_cell_id.clone(),
-        binding_id: input.step.worker_binding_id.clone(),
-        binding_content_hash: input.binding_content_hash,
-        operation_gate: input.operation_gate.clone(),
-        worker_report_id: input.identity.worker_report_id.clone(),
-        appended_entry_ids: Vec::new(),
-        transition_applied: false,
-        unsatisfied_success_evidence_requirement_ids: Vec::new(),
-        obstructions: vec![input.obstruction],
-        information_loss: Vec::new(),
-        started_at: input.started_at,
-        finished_at: timestamp(),
-        metadata: Map::from_iter([("worker_invoked".to_owned(), Value::Bool(false))]),
-    };
-    write_trace(&input.identity.run_directory, &trace)?;
-    Ok(trace)
+impl TraceGuard {
+    #[allow(clippy::too_many_arguments)]
+    fn start(
+        store: &Path,
+        case_space_id: &Id,
+        actor_id: &Id,
+        case_space: &CaseSpace,
+        plan: &ExecutionPlan,
+        step: &ExecutionStep,
+        base_revision_id: &Id,
+        identity: &TraceIdentity,
+        binding_content_hash: String,
+        operation_gate: &NativeOperationGate,
+        started_at: &str,
+    ) -> Result<Self, NativeCliError> {
+        let trace = ExecutionTrace {
+            schema: EXECUTION_TRACE_SCHEMA.to_owned(),
+            schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
+            trace_id: identity.trace_id.clone(),
+            plan_id: plan.plan_id.clone(),
+            step_id: step.step_id.clone(),
+            case_space_id: case_space_id.clone(),
+            base_revision_id: base_revision_id.clone(),
+            result_revision_id: None,
+            work_cell_id: step.work_cell_id.clone(),
+            binding_id: step.worker_binding_id.clone(),
+            binding_content_hash,
+            operation_gate: operation_gate.clone(),
+            worker_report_id: identity.worker_report_id.clone(),
+            appended_entry_ids: Vec::new(),
+            dispatch_state: ExecutionDispatchState::Started,
+            transition_applied: false,
+            unsatisfied_success_evidence_requirement_ids: Vec::new(),
+            obstructions: Vec::new(),
+            information_loss: Vec::new(),
+            started_at: started_at.to_owned(),
+            finished_at: started_at.to_owned(),
+            metadata: Map::from_iter([
+                (
+                    "dispatch_status".to_owned(),
+                    Value::String("started".to_owned()),
+                ),
+                ("worker_invoked".to_owned(), Value::Bool(false)),
+                (
+                    "reserved_base_revision_id".to_owned(),
+                    json!(case_space.revision.revision_id),
+                ),
+            ]),
+        };
+        write_trace(&identity.run_directory, &trace)?;
+        Ok(Self {
+            store: store.to_path_buf(),
+            actor_id: actor_id.clone(),
+            run_directory: identity.run_directory.clone(),
+            trace,
+            finished: false,
+        })
+    }
+
+    fn finish(
+        mut self,
+        case_space: &CaseSpace,
+        dispatch_state: ExecutionDispatchState,
+        status: &str,
+        mut obstructions: Vec<ExecutionObstruction>,
+    ) -> Result<ExecutionTrace, NativeCliError> {
+        self.trace.dispatch_state = dispatch_state;
+        self.trace.finished_at = timestamp();
+        self.trace.obstructions.append(&mut obstructions);
+        self.trace.metadata.insert(
+            "dispatch_status".to_owned(),
+            Value::String(status.to_owned()),
+        );
+        self.finished = true;
+        write_and_anchor_trace(
+            &self.store,
+            &self.actor_id,
+            case_space,
+            &self.run_directory,
+            self.trace.clone(),
+        )
+    }
+}
+
+impl Drop for TraceGuard {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.trace.dispatch_state = ExecutionDispatchState::Failed;
+        self.trace.transition_applied = false;
+        self.trace.finished_at = timestamp();
+        self.trace.metadata.insert(
+            "dispatch_status".to_owned(),
+            Value::String("dispatch_failed".to_owned()),
+        );
+        self.trace.obstructions.push(ExecutionObstruction {
+            obstruction_type: "dispatch_failed".to_owned(),
+            summary: format!(
+                "dispatch {} failed after its run directory was reserved",
+                self.trace.trace_id
+            ),
+            witness_ids: vec![self.trace.trace_id.clone()],
+            blocking: true,
+        });
+        let store_api = NativeCaseStore::new(self.store.clone());
+        let anchored = store_api
+            .replay_current_case_space(&self.trace.case_space_id)
+            .ok()
+            .and_then(|replay| {
+                write_and_anchor_trace(
+                    &self.store,
+                    &self.actor_id,
+                    &replay.case_space,
+                    &self.run_directory,
+                    self.trace.clone(),
+                )
+                .ok()
+            });
+        if anchored.is_none() {
+            let _ = write_trace(&self.run_directory, &self.trace);
+        }
+    }
 }
 
 fn worker_report(
@@ -707,14 +1042,41 @@ fn worker_report(
 }
 
 fn existing_requirement_ids(case_space: &CaseSpace, step: &ExecutionStep) -> Vec<Id> {
-    let cell_ids = case_space
+    let evidence_cell_ids = case_space
         .case_cells
         .iter()
+        .filter(|cell| cell.cell_type == CaseCellType::Evidence)
         .map(|cell| &cell.id)
         .collect::<BTreeSet<_>>();
     step.success_evidence_requirement_ids
         .iter()
-        .filter(|id| cell_ids.contains(id))
+        .filter(|id| evidence_cell_ids.contains(id))
+        .cloned()
+        .collect()
+}
+
+fn run_scoped_unsatisfied_requirement_ids(
+    case_space: &CaseSpace,
+    requirement_ids: &[Id],
+    evidence_cell_id: &Id,
+    trace_id: &Id,
+) -> Vec<Id> {
+    let evidence_from_this_run = case_space.case_cells.iter().any(|cell| {
+        cell.id == *evidence_cell_id
+            && cell.cell_type == CaseCellType::Evidence
+            && cell.metadata.get("trace_id").and_then(Value::as_str) == Some(trace_id.as_str())
+    });
+    requirement_ids
+        .iter()
+        .filter(|requirement_id| {
+            !evidence_from_this_run
+                || !case_space.case_relations.iter().any(|relation| {
+                    relation.relation_type == CaseRelationType::SatisfiesEvidenceRequirement
+                        && relation.from_id == *evidence_cell_id
+                        && relation.to_id == **requirement_id
+                        && relation.evidence_ids.contains(evidence_cell_id)
+                })
+        })
         .cloned()
         .collect()
 }
@@ -786,6 +1148,7 @@ fn evidence_morphism(
                 "worker_report_id".to_owned(),
                 json!(worker_report.report_id),
             ),
+            ("trace_id".to_owned(), json!(identity.trace_id)),
             (
                 "evidence_boundary".to_owned(),
                 Value::String("worker_output".to_owned()),
@@ -922,6 +1285,80 @@ fn write_trace(run_directory: &Path, trace: &ExecutionTrace) -> Result<(), Nativ
     )
 }
 
+fn write_and_anchor_trace(
+    store: &Path,
+    actor_id: &Id,
+    case_space: &CaseSpace,
+    run_directory: &Path,
+    mut trace: ExecutionTrace,
+) -> Result<ExecutionTrace, NativeCliError> {
+    let morphism_id = Id::new(format!(
+        "morphism:execution-trace-anchor:{}",
+        path_segment(&trace.trace_id)
+    ))?;
+    let anchor_entry_id = Id::new(format!(
+        "morphism_log_entry:{}:{}",
+        path_segment(&morphism_id),
+        case_space.morphism_log.len() + 1
+    ))?;
+    let target_revision_id = Id::new(format!(
+        "revision:execution-trace-anchor:{}",
+        path_segment(&trace.trace_id)
+    ))?;
+    trace.result_revision_id = Some(target_revision_id.clone());
+    trace.appended_entry_ids.push(anchor_entry_id.clone());
+    write_trace(run_directory, &trace)?;
+    let trace_path = run_directory.join("execution.trace.json");
+    let trace_bytes = fs::read(&trace_path).map_err(|source| NativeCliError::Io {
+        path: trace_path.clone(),
+        source,
+    })?;
+    let trace_content_hash = crate::native_hash::sha256_hex(&trace_bytes);
+    let relative_trace_path = trace_path
+        .strip_prefix(store)
+        .unwrap_or(&trace_path)
+        .display()
+        .to_string();
+    let anchor = CaseMorphism {
+        morphism_id,
+        morphism_type: CaseMorphismType::Custom("execution_trace_anchor".to_owned()),
+        source_revision_id: Some(case_space.revision.revision_id.clone()),
+        target_revision_id: target_revision_id.clone(),
+        added_ids: Vec::new(),
+        updated_ids: Vec::new(),
+        retired_ids: Vec::new(),
+        preserved_ids: Vec::new(),
+        violated_invariant_ids: Vec::new(),
+        review_status: ReviewStatus::Accepted,
+        evidence_ids: Vec::new(),
+        source_ids: vec![trace.trace_id.clone()],
+        metadata: Map::from_iter([
+            ("trace_id".to_owned(), json!(trace.trace_id)),
+            (
+                "trace_content_hash".to_owned(),
+                Value::String(trace_content_hash),
+            ),
+            ("trace_path".to_owned(), Value::String(relative_trace_path)),
+        ]),
+    };
+    let store_api = NativeCaseStore::new(store.to_path_buf());
+    let report = append_validated_morphism(
+        &store_api,
+        case_space,
+        anchor,
+        Some(actor_id.clone()),
+        "casegraphen run --step trace anchor",
+    )?;
+    let entry = report_entry(&report)?;
+    if entry.entry_id != anchor_entry_id || entry.target_revision_id != target_revision_id {
+        return Err(NativeCliError::invalid(format!(
+            "execution trace {} anchor entry identity did not match the trace",
+            trace.trace_id
+        )));
+    }
+    Ok(trace)
+}
+
 fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), NativeCliError> {
     fs::write(path, bytes).map_err(|source| NativeCliError::Io {
         path: path.to_owned(),
@@ -1034,5 +1471,47 @@ mod tests {
             verified.binding
         );
         fs::remove_dir_all(directory).expect("remove snapshot test directory");
+    }
+
+    #[test]
+    fn concurrent_run_directory_reservation_is_rejected() {
+        let directory = std::env::temp_dir().join(format!(
+            "casegraphen-run-reservation-{}-{}",
+            std::process::id(),
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let plan: ExecutionPlan = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.plan.example.json"
+        ))
+        .expect("execution plan example");
+        let step = &plan.steps[0];
+
+        let first =
+            reserve_trace_identity(&directory, &plan, step, &[]).expect("first reservation");
+        let error = reserve_trace_identity(&directory, &plan, step, &[])
+            .expect_err("concurrent reservation must fail");
+
+        assert!(first.run_directory.is_dir());
+        assert!(error.to_string().contains("dispatch in progress"));
+        fs::remove_dir_all(directory).expect("remove reservation test directory");
+    }
+
+    #[test]
+    fn preexisting_evidence_does_not_satisfy_a_run_scoped_success_requirement() {
+        let case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .expect("native case space example");
+        let evidence_id = Id::new("evidence:native-schema-json-valid").expect("evidence id");
+        let trace_id = Id::new("execution_trace:run-scoped-test").expect("trace id");
+
+        let unsatisfied = run_scoped_unsatisfied_requirement_ids(
+            &case_space,
+            std::slice::from_ref(&evidence_id),
+            &evidence_id,
+            &trace_id,
+        );
+
+        assert_eq!(unsatisfied, vec![evidence_id]);
     }
 }

@@ -1,7 +1,7 @@
 use higher_graphen_core::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{fmt, path::Path};
+use std::{fmt, fs, path::Path};
 
 pub const WORKER_BINDING_SCHEMA: &str = "highergraphen.case.workflow.worker_binding.v1";
 pub const WORKER_BINDING_SCHEMA_VERSION: u32 = 1;
@@ -22,6 +22,9 @@ pub struct WorkerBinding {
     pub command: String,
     pub args: Vec<String>,
     pub working_directory: String,
+    pub resolved_command_path: String,
+    pub resolved_working_directory: String,
+    pub command_content_hash: String,
     pub env_allowlist: Vec<String>,
     pub timeout_ms: u64,
     pub capability_ids: Vec<Id>,
@@ -31,6 +34,13 @@ pub struct WorkerBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkerBindingValidationError {
     message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerBindingIdentity {
+    pub resolved_command_path: String,
+    pub resolved_working_directory: String,
+    pub command_content_hash: String,
 }
 
 impl WorkerBindingValidationError {
@@ -89,6 +99,29 @@ pub fn validate_worker_binding(
             "worker binding working_directory must be an absolute path",
         ));
     }
+    for (label, path) in [
+        ("resolved_command_path", &binding.resolved_command_path),
+        (
+            "resolved_working_directory",
+            &binding.resolved_working_directory,
+        ),
+    ] {
+        if path.trim().is_empty() || !Path::new(path).is_absolute() {
+            return Err(WorkerBindingValidationError::new(format!(
+                "worker binding {label} must be a non-empty absolute path"
+            )));
+        }
+    }
+    if binding.command_content_hash.len() != 64
+        || !binding
+            .command_content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(WorkerBindingValidationError::new(
+            "worker binding command_content_hash must be a lowercase SHA-256 hex digest",
+        ));
+    }
     for (index, name) in binding.env_allowlist.iter().enumerate() {
         if forbidden_environment_name(name) {
             return Err(WorkerBindingValidationError::new(format!(
@@ -117,10 +150,66 @@ pub fn validate_worker_binding(
 }
 
 fn forbidden_environment_name(name: &str) -> bool {
-    matches!(
-        name,
-        "PATH" | "LD_PRELOAD" | "LD_LIBRARY_PATH" | "DYLD_INSERT_LIBRARIES" | "DYLD_LIBRARY_PATH"
-    ) || name.starts_with("CASEGRAPHEN_")
+    name == "PATH"
+        || name.starts_with("LD_")
+        || name.starts_with("DYLD_")
+        || name.starts_with("CASEGRAPHEN_")
+}
+
+pub fn resolve_worker_binding_identity(
+    binding: &WorkerBinding,
+) -> Result<WorkerBindingIdentity, WorkerBindingValidationError> {
+    let command_path = fs::canonicalize(&binding.command).map_err(|error| {
+        WorkerBindingValidationError::new(format!(
+            "worker binding command {} could not be canonicalized: {error}",
+            binding.command
+        ))
+    })?;
+    if !command_path.is_file() {
+        return Err(WorkerBindingValidationError::new(format!(
+            "worker binding canonical command {} is not a file",
+            command_path.display()
+        )));
+    }
+    let working_directory = fs::canonicalize(&binding.working_directory).map_err(|error| {
+        WorkerBindingValidationError::new(format!(
+            "worker binding working_directory {} could not be canonicalized: {error}",
+            binding.working_directory
+        ))
+    })?;
+    if !working_directory.is_dir() {
+        return Err(WorkerBindingValidationError::new(format!(
+            "worker binding canonical working_directory {} is not a directory",
+            working_directory.display()
+        )));
+    }
+    let command_bytes = fs::read(&command_path).map_err(|error| {
+        WorkerBindingValidationError::new(format!(
+            "worker binding canonical command {} could not be read: {error}",
+            command_path.display()
+        ))
+    })?;
+    let resolved_command_path = command_path
+        .to_str()
+        .ok_or_else(|| {
+            WorkerBindingValidationError::new(
+                "worker binding canonical command path is not valid UTF-8",
+            )
+        })?
+        .to_owned();
+    let resolved_working_directory = working_directory
+        .to_str()
+        .ok_or_else(|| {
+            WorkerBindingValidationError::new(
+                "worker binding canonical working directory is not valid UTF-8",
+            )
+        })?
+        .to_owned();
+    Ok(WorkerBindingIdentity {
+        resolved_command_path,
+        resolved_working_directory,
+        command_content_hash: crate::native_hash::sha256_hex(&command_bytes),
+    })
 }
 
 pub fn worker_binding_content_hash(binding: &WorkerBinding) -> Result<String, serde_json::Error> {
@@ -187,6 +276,10 @@ mod tests {
             "LD_LIBRARY_PATH",
             "DYLD_INSERT_LIBRARIES",
             "DYLD_LIBRARY_PATH",
+            "LD_AUDIT",
+            "LD_ARBITRARY",
+            "DYLD_FRAMEWORK_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH",
             "CASEGRAPHEN_ATTACKER_VALUE",
         ] {
             let mut binding = example_binding();

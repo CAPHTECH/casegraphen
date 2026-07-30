@@ -658,12 +658,20 @@ fn validate_candidate_morphism(
 }
 
 fn validate_generic_morphism_metadata(morphism: &CaseMorphism) -> Result<(), NativeCliError> {
-    if morphism.metadata.get("target_kind").and_then(Value::as_str) == Some("plan")
-        || morphism.metadata.contains_key("operation_gate")
+    let reserved_review_keys = [
+        "native_review_schema_version",
+        "target_kind",
+        "outcome_review_status",
+        "operation_gate",
+    ];
+    if reserved_review_keys
+        .iter()
+        .any(|key| morphism.metadata.contains_key(*key))
     {
         return Err(NativeCliError::invalid(
-            "generic morphism propose/apply cannot use reserved plan-review metadata: \
-             target_kind=\"plan\" and operation_gate are reserved for casegraphen plan accept/reject",
+            "generic morphism propose/apply cannot use reserved canonical review metadata: \
+             native_review_schema_version, target_kind, outcome_review_status, and operation_gate \
+             are reserved for casegraphen review and plan review commands",
         ));
     }
     Ok(())

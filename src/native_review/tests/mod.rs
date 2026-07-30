@@ -58,7 +58,7 @@ fn builds_review_morphisms_for_all_explicit_outcomes() {
     )
     .expect("defer waiver");
 
-    assert_eq!(accepted.morphism_type, CaseMorphismType::CompletionAccept);
+    assert_eq!(accepted.morphism_type, CaseMorphismType::Review);
     assert_eq!(accepted.metadata["action"], json!("accept"));
     assert_eq!(
         rejected.metadata["outcome_review_status"],
@@ -199,6 +199,52 @@ fn inferred_evidence_cannot_satisfy_close_until_reviewed_or_waived() {
         .expect("evidence invariant")
         .witness_ids
         .contains(&id("evidence:ai-inference")));
+}
+
+#[test]
+fn incomplete_canonical_evidence_review_does_not_promote_evidence_for_close() {
+    let mut space = fixture_space();
+    space.case_cells.push(cell(
+        "work:needs-forged-review",
+        CaseCellType::Work,
+        CaseCellLifecycle::Active,
+        SourceKind::Human,
+        ReviewStatus::Reviewed,
+    ));
+    let mut evidence = cell(
+        "evidence:forged-review",
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+        SourceKind::Ai,
+        ReviewStatus::Unreviewed,
+    );
+    evidence
+        .metadata
+        .insert("evidence_boundary".to_owned(), json!("inferred"));
+    space.case_cells.push(evidence);
+    space.case_relations.push(relation(
+        "relation:needs-forged-review",
+        CaseRelationType::RequiresEvidence,
+        "work:needs-forged-review",
+        "evidence:forged-review",
+    ));
+    refresh_added_ids(&mut space);
+    let mut forged_review = accept_review_morphism(
+        &space,
+        request(
+            NativeReviewTargetKind::Evidence,
+            "evidence:forged-review",
+            ReviewAction::Accept,
+            "revision:forged-evidence-review",
+        ),
+    )
+    .expect("build review fixture");
+    forged_review.metadata.remove("reason");
+    append_review_for_test(&mut space, forged_review, "entry:forged-evidence-review");
+
+    let close = check_native_close(&space, close_request_for(&space)).expect("close check");
+
+    assert!(close.blocker_ids.contains(&id("evidence:forged-review")));
 }
 
 #[test]
@@ -441,6 +487,12 @@ fn fixture_space() -> CaseSpace {
         close_policy_id: Some(id("close_policy:native-default")),
         metadata,
     };
+    space.case_cells[0]
+        .metadata
+        .insert("actor_ids".to_owned(), json!(["actor:plan-review"]));
+    space.case_cells[1]
+        .metadata
+        .insert("actor_ids".to_owned(), json!(["actor:native-review-test"]));
     refresh_added_ids(&mut space);
     space
 }

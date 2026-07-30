@@ -2,7 +2,10 @@ use super::{
     io::{read_json, write_json},
     relative_store_path, report, NativeCliError,
 };
-use crate::exec::binding::{validate_worker_binding, worker_binding_content_hash, WorkerBinding};
+use crate::exec::binding::{
+    resolve_worker_binding_identity, validate_worker_binding, worker_binding_content_hash,
+    WorkerBinding,
+};
 use higher_graphen_core::Id;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -15,7 +18,14 @@ pub(in crate::native_cli) fn binding_register(
     store: &Path,
     input: &Path,
 ) -> Result<Value, NativeCliError> {
-    let binding = read_worker_binding_file(input)?;
+    let mut binding: WorkerBinding = serde_json::from_value(read_json(input)?)?;
+    let identity = resolve_worker_binding_identity(&binding)
+        .map_err(|error| NativeCliError::invalid(format!("{}: {error}", input.display())))?;
+    binding.resolved_command_path = identity.resolved_command_path;
+    binding.resolved_working_directory = identity.resolved_working_directory;
+    binding.command_content_hash = identity.command_content_hash;
+    validate_worker_binding(&binding)
+        .map_err(|error| NativeCliError::invalid(format!("{}: {error}", input.display())))?;
     let path = binding_path(store, &binding.binding_id);
     if path.exists() {
         return Err(NativeCliError::invalid(format!(

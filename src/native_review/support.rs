@@ -2,8 +2,8 @@ use super::{NativeReviewError, NativeReviewTargetKind, REVIEW_SCHEMA_VERSION};
 use crate::{
     native_eval::{NativeCloseInvariantResult, NativeCompletionCandidate, NativeObstruction},
     native_model::{
-        CaseCell, CaseCellType, CaseMorphismType, CaseRelationType, CaseSpace, EvidenceBoundary,
-        ReviewAction,
+        CaseCell, CaseCellType, CaseMorphism, CaseMorphismType, CaseRelationType, CaseSpace,
+        EvidenceBoundary, ReviewAction,
     },
 };
 use higher_graphen_core::{Id, ReviewStatus, Severity};
@@ -40,29 +40,72 @@ pub(super) fn review_metadata(
 pub(super) fn explicit_reviews(case_space: &CaseSpace) -> BTreeMap<Id, Vec<ExplicitReview>> {
     let mut reviews = BTreeMap::<Id, Vec<ExplicitReview>>::new();
     for morphism in case_space.morphism_log.iter().map(|entry| &entry.morphism) {
-        if !morphism.review_status.has_review_action() {
-            continue;
-        }
-        let Some(target_id) = metadata_id(&morphism.metadata, "target_id") else {
-            continue;
-        };
-        let Some(action) = metadata_review_action(&morphism.metadata, "action") else {
-            continue;
-        };
-        let Some(_target_kind) = metadata_target_kind(&morphism.metadata, "target_kind") else {
+        let Some(review) = canonical_review(morphism) else {
             continue;
         };
         reviews
-            .entry(target_id.clone())
+            .entry(review.target_id.clone())
             .or_default()
             .push(ExplicitReview {
-                target_id,
-                action,
-                outcome: metadata_review_status(&morphism.metadata, "outcome_review_status")
-                    .unwrap_or_else(|| outcome_status(action)),
+                target_id: review.target_id,
+                action: review.action,
+                outcome: review.outcome,
             });
     }
     reviews
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CanonicalReview {
+    pub(crate) target_kind: NativeReviewTargetKind,
+    pub(crate) target_id: Id,
+    pub(crate) action: ReviewAction,
+    pub(crate) outcome: ReviewStatus,
+}
+
+pub(crate) fn canonical_review(morphism: &CaseMorphism) -> Option<CanonicalReview> {
+    if morphism.morphism_type != CaseMorphismType::Review
+        || morphism.review_status != ReviewStatus::Accepted
+        || morphism
+            .metadata
+            .get("native_review_schema_version")
+            .and_then(Value::as_u64)
+            != Some(u64::from(REVIEW_SCHEMA_VERSION))
+    {
+        return None;
+    }
+    for field in ["review_id", "target_id", "reviewer_id"] {
+        let value = morphism.metadata.get(field)?.as_str()?;
+        if !Id::is_valid_value(value) {
+            return None;
+        }
+    }
+    for field in ["reviewed_at", "reason"] {
+        if !morphism
+            .metadata
+            .get(field)?
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return None;
+        }
+    }
+    let target_kind: NativeReviewTargetKind =
+        serde_json::from_value(morphism.metadata.get("target_kind")?.clone()).ok()?;
+    let target_id = Id::new(morphism.metadata.get("target_id")?.as_str()?).ok()?;
+    let action: ReviewAction =
+        serde_json::from_value(morphism.metadata.get("action")?.clone()).ok()?;
+    let outcome: ReviewStatus =
+        serde_json::from_value(morphism.metadata.get("outcome_review_status")?.clone()).ok()?;
+    if outcome != outcome_status(action) {
+        return None;
+    }
+    Some(CanonicalReview {
+        target_kind,
+        target_id,
+        action,
+        outcome,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -193,28 +236,6 @@ fn latest_review_for<'a>(
         .find(|review| review.target_id == *target_id)
 }
 
-fn metadata_id(metadata: &Map<String, Value>, key: &str) -> Option<Id> {
-    metadata
-        .get(key)?
-        .as_str()
-        .and_then(|value| Id::new(value).ok())
-}
-
-fn metadata_review_action(metadata: &Map<String, Value>, key: &str) -> Option<ReviewAction> {
-    serde_json::from_value(metadata.get(key)?.clone()).ok()
-}
-
-fn metadata_target_kind(
-    metadata: &Map<String, Value>,
-    key: &str,
-) -> Option<NativeReviewTargetKind> {
-    serde_json::from_value(metadata.get(key)?.clone()).ok()
-}
-
-fn metadata_review_status(metadata: &Map<String, Value>, key: &str) -> Option<ReviewStatus> {
-    serde_json::from_value(metadata.get(key)?.clone()).ok()
-}
-
 pub(super) fn close_invariant(
     invariant_id: &str,
     witness_ids: Vec<Id>,
@@ -317,16 +338,8 @@ pub(super) fn error(message: impl Into<String>) -> NativeReviewError {
 }
 
 pub(super) fn morphism_type_for_review(
-    target_kind: NativeReviewTargetKind,
-    action: ReviewAction,
+    _target_kind: NativeReviewTargetKind,
+    _action: ReviewAction,
 ) -> CaseMorphismType {
-    match (target_kind, action) {
-        (NativeReviewTargetKind::Completion, ReviewAction::Accept) => {
-            CaseMorphismType::CompletionAccept
-        }
-        (NativeReviewTargetKind::Completion, ReviewAction::Reject) => {
-            CaseMorphismType::CompletionReject
-        }
-        _ => CaseMorphismType::Review,
-    }
+    CaseMorphismType::Review
 }

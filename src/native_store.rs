@@ -64,7 +64,7 @@ impl NativeCaseStore {
 
         let mut snapshot = case_space.clone();
         snapshot.morphism_log = case_space.morphism_log.clone();
-        write_json(
+        write_json_create_new(
             &self.resolve_snapshot_path(
                 &self.relative_snapshot_path(
                     &case_space.case_space_id,
@@ -121,10 +121,39 @@ impl NativeCaseStore {
 
         let snapshot_path = self.resolve_snapshot_path(
             &self.relative_snapshot_path(&next.case_space_id, &next.revision.revision_id),
-            &self.log_path(case_space_id),
+            &log_path,
         )?;
-        write_json(&snapshot_path, &next)?;
-        append_json_line(&self.log_path(case_space_id), &entry)?;
+        require_snapshot_absent(&log_path, &snapshot_path, &entry.target_revision_id)?;
+        if let Err(error) = write_json_create_new(&snapshot_path, &next) {
+            if matches!(
+                &error,
+                NativeStoreError::Io { source, .. }
+                    if source.kind() == std::io::ErrorKind::AlreadyExists
+            ) {
+                return Err(snapshot_already_exists(
+                    &log_path,
+                    &snapshot_path,
+                    &entry.target_revision_id,
+                ));
+            }
+            return Err(error);
+        }
+        if let Err(error) = append_json_line(&log_path, &entry) {
+            match fs::remove_file(&snapshot_path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(NativeStoreError::ReplayMismatch {
+                        path: log_path,
+                        reason: format!(
+                            "failed to append morphism log entry ({error}); failed to roll back snapshot {}: {source}",
+                            snapshot_path.display()
+                        ),
+                    });
+                }
+            }
+            return Err(error);
+        }
         self.inspect_case_space(case_space_id)
     }
 
@@ -357,10 +386,16 @@ fn validate_append(
             ),
         });
     }
-    if entry.target_revision_id == current.revision.revision_id {
+    if existing_entries
+        .iter()
+        .any(|existing| existing.target_revision_id == entry.target_revision_id)
+    {
         return Err(invalid_morphism(
             path,
-            "entry target_revision_id must advance the revision",
+            format!(
+                "target_revision_id {} already exists in the morphism log",
+                entry.target_revision_id
+            ),
         ));
     }
     if existing_entries
@@ -382,6 +417,39 @@ fn validate_append(
         ));
     }
     Ok(())
+}
+
+fn require_snapshot_absent(
+    log_path: &Path,
+    snapshot_path: &Path,
+    revision_id: &Id,
+) -> NativeStoreResult<()> {
+    match fs::metadata(snapshot_path) {
+        Ok(_) => Err(snapshot_already_exists(
+            log_path,
+            snapshot_path,
+            revision_id,
+        )),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(NativeStoreError::Io {
+            path: snapshot_path.to_owned(),
+            source,
+        }),
+    }
+}
+
+fn snapshot_already_exists(
+    log_path: &Path,
+    snapshot_path: &Path,
+    revision_id: &Id,
+) -> NativeStoreError {
+    invalid_morphism(
+        log_path,
+        format!(
+            "snapshot for target_revision_id {revision_id} already exists at {}",
+            snapshot_path.display()
+        ),
+    )
 }
 
 fn validate_log_entries(

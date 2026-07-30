@@ -146,7 +146,16 @@
         "confidence": 1.0,
         "review_status": "accepted"
       },
-      "metadata": {}
+      "metadata": {
+        "actor_ids": [
+          "actor:plan-review",
+          "actor:plan-accept",
+          "actor:plan-reject",
+          "actor:run-plan-review",
+          "actor:unsatisfied-plan",
+          "actor:run-plan-reject"
+        ]
+      }
     },
     {
       "id": "capability:dispatch",
@@ -166,7 +175,11 @@
         "confidence": 1.0,
         "review_status": "accepted"
       },
-      "metadata": {}
+      "metadata": {
+        "actor_ids": [
+          "actor:native-run"
+        ]
+      }
     },
     {
       "id": "capability:native-run-worker",
@@ -186,7 +199,11 @@
         "confidence": 1.0,
         "review_status": "accepted"
       },
-      "metadata": {}
+      "metadata": {
+        "actor_ids": [
+          "actor:native-run"
+        ]
+      }
     },
     {
       "id": "capability:native-integration-worker",
@@ -206,7 +223,11 @@
         "confidence": 1.0,
         "review_status": "accepted"
       },
-      "metadata": {}
+      "metadata": {
+        "actor_ids": [
+          "actor:native-integration"
+        ]
+      }
     },
     {
       "id": "capability:casegraphen-cli:close-check",

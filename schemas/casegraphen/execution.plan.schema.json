@@ -210,7 +210,11 @@
           ]
         },
         "success_evidence_requirement_ids": {
-          "$ref": "#/$defs/id_array"
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
         },
         "allowed_transition_classes": {
           "type": "array",

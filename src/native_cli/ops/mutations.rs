@@ -99,7 +99,7 @@ pub(in crate::native_cli) fn evidence_attach(
                     index + 1
                 ))?,
                 relation_type: CaseRelationType::SatisfiesEvidenceRequirement,
-                relation_strength: RelationStrength::Hard,
+                relation_strength: RelationStrength::Diagnostic,
                 from_id: cell.id.clone(),
                 to_id: target_id.clone(),
                 evidence_ids: vec![cell.id.clone()],
@@ -216,23 +216,16 @@ fn evidence_cell_from_bytes(bytes: &[u8]) -> Result<CaseCell, NativeCliError> {
             cell.id, cell.cell_type
         )));
     }
-    if cell
-        .metadata
-        .get("evidence_boundary")
-        .and_then(Value::as_str)
-        == Some("accepted_evidence")
-    {
-        return Err(NativeCliError::invalid(format!(
-            "evidence attach input cell {} cannot claim evidence_boundary \"accepted_evidence\"; use review accept to promote evidence",
-            cell.id
-        )));
-    }
     if cell.provenance.review_status == ReviewStatus::Accepted {
         return Err(NativeCliError::invalid(format!(
             "evidence attach input cell {} cannot claim accepted provenance; use review accept to promote evidence",
             cell.id
         )));
     }
+    cell.metadata.insert(
+        "evidence_boundary".to_owned(),
+        Value::String("attached_unverified".to_owned()),
+    );
     cell.metadata.insert(
         "content_hash".to_owned(),
         Value::String(crate::native_hash::sha256_hex(bytes)),
@@ -367,16 +360,19 @@ mod tests {
     }
 
     #[test]
-    fn evidence_cell_validation_rejects_caller_claimed_acceptance() {
+    fn evidence_cell_validation_overwrites_caller_claimed_boundary_and_rejects_provenance() {
         let accepted_boundary = String::from_utf8(EVIDENCE_CELL.to_vec())
             .expect("UTF-8 fixture")
             .replace(
                 "\"metadata\": {}",
                 "\"metadata\": {\"evidence_boundary\":\"accepted_evidence\"}",
             );
-        let boundary_error = evidence_cell_from_bytes(accepted_boundary.as_bytes())
-            .expect_err("accepted boundary must require review");
-        assert!(boundary_error.to_string().contains("review accept"));
+        let cell = evidence_cell_from_bytes(accepted_boundary.as_bytes())
+            .expect("caller boundary is overwritten");
+        assert_eq!(
+            cell.metadata["evidence_boundary"],
+            json!("attached_unverified")
+        );
 
         let accepted_review = String::from_utf8(EVIDENCE_CELL.to_vec())
             .expect("UTF-8 fixture")

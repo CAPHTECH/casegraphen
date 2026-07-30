@@ -5,6 +5,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,34 +14,69 @@ const LOCK_RETRY_ATTEMPTS: u32 = 8;
 const LOCK_INITIAL_BACKOFF: Duration = Duration::from_millis(5);
 const LOCK_MAX_BACKOFF: Duration = Duration::from_millis(40);
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(60);
+static LOCK_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(super) struct CaseLockGuard {
     path: PathBuf,
+    lock_contents: String,
 }
 
 impl CaseLockGuard {
     pub(super) fn acquire(case_directory: &Path) -> NativeStoreResult<Self> {
         let path = case_directory.join(".lock");
-        for attempt in 0..=LOCK_RETRY_ATTEMPTS {
+        let ownership_token = lock_ownership_token();
+        let lock_contents = format!("token={ownership_token}\n");
+        let mut attempt = 0;
+        loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(mut file) => {
-                    let guard = Self { path: path.clone() };
-                    writeln!(
-                        file,
-                        "pid={} acquired_unix_seconds={}",
-                        std::process::id(),
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs()
-                    )
-                    .map_err(|source| NativeStoreError::Io {
-                        path: path.clone(),
-                        source,
-                    })?;
-                    return Ok(guard);
+                    if let Err(source) = file
+                        .write_all(lock_contents.as_bytes())
+                        .and_then(|()| file.flush())
+                    {
+                        drop(file);
+                        let _ = fs::remove_file(&path);
+                        return Err(NativeStoreError::Io {
+                            path: path.clone(),
+                            source,
+                        });
+                    }
+                    drop(file);
+                    match fs::read_to_string(&path) {
+                        Ok(actual) if actual == lock_contents => {
+                            return Ok(Self {
+                                path,
+                                lock_contents,
+                            });
+                        }
+                        Ok(_) => {
+                            return Err(NativeStoreError::LockUnavailable {
+                                path,
+                                reason:
+                                    "native case-space lock ownership changed during acquisition"
+                                        .to_owned(),
+                            });
+                        }
+                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(source) => {
+                            return Err(NativeStoreError::Io {
+                                path: path.clone(),
+                                source,
+                            });
+                        }
+                    }
                 }
                 Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let observed_token = match fs::read_to_string(&path) {
+                        Ok(token) => token,
+                        Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+                        Err(source) => {
+                            return Err(NativeStoreError::Io {
+                                path: path.clone(),
+                                source,
+                            });
+                        }
+                    };
                     let metadata = match fs::metadata(&path) {
                         Ok(metadata) => metadata,
                         Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
@@ -57,16 +93,16 @@ impl CaseLockGuard {
                         .and_then(|modified| SystemTime::now().duration_since(modified).ok())
                         .is_some_and(|age| age >= LOCK_STALE_AFTER);
                     if stale {
-                        eprintln!(
-                            "{}: breaking stale native case-space lock older than {} seconds",
-                            path.display(),
-                            LOCK_STALE_AFTER.as_secs()
-                        );
-                        match fs::remove_file(&path) {
-                            Ok(()) => continue,
-                            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                                continue
+                        match remove_lock_if_owned(&path, &observed_token) {
+                            Ok(true) => {
+                                eprintln!(
+                                    "{}: broke stale native case-space lock older than {} seconds",
+                                    path.display(),
+                                    LOCK_STALE_AFTER.as_secs()
+                                );
+                                continue;
                             }
+                            Ok(false) => {}
                             Err(source) => {
                                 return Err(NativeStoreError::Io {
                                     path: path.clone(),
@@ -90,6 +126,7 @@ impl CaseLockGuard {
                             .saturating_mul(multiplier)
                             .min(LOCK_MAX_BACKOFF),
                     );
+                    attempt += 1;
                 }
                 Err(source) => {
                     return Err(NativeStoreError::Io {
@@ -99,20 +136,45 @@ impl CaseLockGuard {
                 }
             }
         }
-        unreachable!("bounded lock acquisition loop returns on every terminal branch")
     }
 }
 
 impl Drop for CaseLockGuard {
     fn drop(&mut self) {
-        if let Err(source) = fs::remove_file(&self.path) {
-            if source.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "{}: failed to remove native case-space lock: {source}",
-                    self.path.display()
-                );
-            }
+        if let Err(source) = remove_lock_if_owned(&self.path, &self.lock_contents) {
+            eprintln!(
+                "{}: failed to inspect or remove native case-space lock: {source}",
+                self.path.display()
+            );
         }
+    }
+}
+
+fn lock_ownership_token() -> String {
+    let counter = LOCK_TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let unix_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!(
+        "pid={}-counter={counter}-unix_nanos={unix_nanos}",
+        std::process::id()
+    )
+}
+
+fn remove_lock_if_owned(path: &Path, ownership_token: &str) -> std::io::Result<bool> {
+    let actual = match fs::read_to_string(path) {
+        Ok(actual) => actual,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => return Err(source),
+    };
+    if actual != ownership_token {
+        return Ok(false);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(source),
     }
 }
 
@@ -145,13 +207,28 @@ pub(super) fn append_json_line(path: &Path, value: &impl Serialize) -> NativeSto
             path: path.to_owned(),
             source,
         })?;
-    writeln!(file, "{text}").map_err(|source| NativeStoreError::Io {
-        path: path.to_owned(),
-        source,
-    })
+    let previous_len = file
+        .metadata()
+        .map_err(|source| NativeStoreError::Io {
+            path: path.to_owned(),
+            source,
+        })?
+        .len();
+    if let Err(source) = file.write_all(format!("{text}\n").as_bytes()) {
+        file.set_len(previous_len)
+            .map_err(|rollback_source| NativeStoreError::Io {
+                path: path.to_owned(),
+                source: rollback_source,
+            })?;
+        return Err(NativeStoreError::Io {
+            path: path.to_owned(),
+            source,
+        });
+    }
+    Ok(())
 }
 
-pub(super) fn write_json(path: &Path, value: &impl Serialize) -> NativeStoreResult<()> {
+pub(super) fn write_json_create_new(path: &Path, value: &impl Serialize) -> NativeStoreResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| NativeStoreError::Io {
             path: parent.to_owned(),
@@ -162,10 +239,23 @@ pub(super) fn write_json(path: &Path, value: &impl Serialize) -> NativeStoreResu
         path: path.to_owned(),
         source,
     })?;
-    fs::write(path, format!("{text}\n")).map_err(|source| NativeStoreError::Io {
-        path: path.to_owned(),
-        source,
-    })
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|source| NativeStoreError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+    if let Err(source) = writeln!(file, "{text}") {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(NativeStoreError::Io {
+            path: path.to_owned(),
+            source,
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn latest_entry<'a>(

@@ -3,7 +3,9 @@ use crate::{
         evaluate_native_case, NativeCaseEvaluation, NativeCloseInvariantResult, NativeEvalError,
         NativeReviewGapType,
     },
-    native_model::{CaseCellType, CaseMorphism, CaseSpace, ProjectionAudience, ReviewAction},
+    native_model::{
+        CaseCellLifecycle, CaseCellType, CaseMorphism, CaseSpace, ProjectionAudience, ReviewAction,
+    },
 };
 use higher_graphen_core::{Id, ReviewStatus};
 use serde::{Deserialize, Serialize};
@@ -11,6 +13,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod support;
+pub(crate) use support::canonical_review;
 use support::*;
 
 const REVIEW_SCHEMA_VERSION: u32 = 1;
@@ -232,115 +235,134 @@ pub fn check_operation_gate(
     gate: &NativeOperationGate,
     expected_operation: &str,
 ) -> Result<(), NativeOperationGateError> {
-    let violations = operation_gate_violations(case_space, gate, expected_operation);
-    if violations.is_empty() {
+    let failures = operation_gate_failures(case_space, gate, expected_operation);
+    if failures.is_empty() {
         return Ok(());
     }
-    let witness_ids = violations
+    let witness_ids = failures
         .iter()
-        .flat_map(|violation| operation_gate_violation_witnesses(case_space, gate, *violation))
+        .flat_map(|failure| failure.witness_ids.iter().cloned())
         .collect();
-    let labels = violations
+    let labels = failures
         .iter()
-        .map(|violation| violation.label())
+        .map(|failure| failure.message.as_str())
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("; ");
     Err(NativeOperationGateError {
         message: format!("operation gate for {expected_operation:?} violates: {labels}"),
         witness_ids,
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OperationGateViolation {
-    Operation,
-    Scope,
-    Audience,
-    Capabilities,
-    SourceBoundary,
+struct OperationGateFailure {
+    message: String,
+    witness_ids: Vec<Id>,
 }
 
-impl OperationGateViolation {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Operation => "operation",
-            Self::Scope => "operation_scope_id",
-            Self::Audience => "audience",
-            Self::Capabilities => {
-                "capability_ids (each capability id must equal an existing case cell id)"
-            }
-            Self::SourceBoundary => "source_boundary_id",
-        }
-    }
-}
-
-fn operation_gate_violations(
+fn operation_gate_failures(
     case_space: &CaseSpace,
     gate: &NativeOperationGate,
     expected_operation: &str,
-) -> Vec<OperationGateViolation> {
-    let mut violations = Vec::new();
+) -> Vec<OperationGateFailure> {
+    let mut failures = Vec::new();
     if gate.operation != expected_operation {
-        violations.push(OperationGateViolation::Operation);
+        failures.push(OperationGateFailure {
+            message: "operation".to_owned(),
+            witness_ids: vec![gate.actor_id.clone()],
+        });
     }
     if gate.operation_scope_id != case_space.case_space_id {
-        violations.push(OperationGateViolation::Scope);
+        failures.push(OperationGateFailure {
+            message: "operation_scope_id".to_owned(),
+            witness_ids: vec![
+                gate.operation_scope_id.clone(),
+                case_space.case_space_id.clone(),
+            ],
+        });
     }
     if !matches!(
         gate.audience,
         ProjectionAudience::Audit | ProjectionAudience::System
     ) {
-        violations.push(OperationGateViolation::Audience);
+        failures.push(OperationGateFailure {
+            message: "audience".to_owned(),
+            witness_ids: vec![gate.actor_id.clone()],
+        });
     }
-    if gate.capability_ids.is_empty()
-        || gate.capability_ids.iter().any(|capability_id| {
-            !case_space
-                .case_cells
-                .iter()
-                .any(|cell| cell.id == *capability_id)
-        })
-    {
-        violations.push(OperationGateViolation::Capabilities);
+    if gate.capability_ids.is_empty() {
+        failures.push(OperationGateFailure {
+            message: "capability_ids must not be empty".to_owned(),
+            witness_ids: vec![gate.actor_id.clone()],
+        });
+    }
+    for capability_id in &gate.capability_ids {
+        let Some(capability) = case_space
+            .case_cells
+            .iter()
+            .find(|cell| cell.id == *capability_id)
+        else {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} does not resolve to an existing case cell"
+                ),
+                witness_ids: vec![capability_id.clone()],
+            });
+            continue;
+        };
+        if capability.cell_type != CaseCellType::Custom("capability".to_owned()) {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} must have cell_type custom:capability"
+                ),
+                witness_ids: vec![capability_id.clone()],
+            });
+        }
+        if !matches!(
+            capability.lifecycle,
+            CaseCellLifecycle::Active | CaseCellLifecycle::Accepted
+        ) {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} must have lifecycle active or accepted"
+                ),
+                witness_ids: vec![capability_id.clone()],
+            });
+        }
+        if capability.provenance.review_status != ReviewStatus::Accepted {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} must have provenance.review_status accepted"
+                ),
+                witness_ids: vec![capability_id.clone()],
+            });
+        }
+        let grants_actor = capability
+            .metadata
+            .get("actor_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|actor_ids| {
+                actor_ids
+                    .iter()
+                    .any(|actor_id| actor_id.as_str() == Some(gate.actor_id.as_str()))
+            });
+        if !grants_actor {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} does not grant acting actor {}; \
+                     metadata.actor_ids must contain the gate actor id",
+                    gate.actor_id
+                ),
+                witness_ids: vec![capability_id.clone(), gate.actor_id.clone()],
+            });
+        }
     }
     if declared_source_boundary_id(case_space).as_ref() != Some(&gate.source_boundary_id) {
-        violations.push(OperationGateViolation::SourceBoundary);
+        failures.push(OperationGateFailure {
+            message: "source_boundary_id".to_owned(),
+            witness_ids: vec![gate.source_boundary_id.clone()],
+        });
     }
-    violations
-}
-
-fn operation_gate_violation_witnesses(
-    case_space: &CaseSpace,
-    gate: &NativeOperationGate,
-    violation: OperationGateViolation,
-) -> Vec<Id> {
-    match violation {
-        OperationGateViolation::Operation | OperationGateViolation::Audience => {
-            vec![gate.actor_id.clone()]
-        }
-        OperationGateViolation::Capabilities => {
-            let unresolved = gate
-                .capability_ids
-                .iter()
-                .filter(|capability_id| {
-                    !case_space
-                        .case_cells
-                        .iter()
-                        .any(|cell| cell.id == **capability_id)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if unresolved.is_empty() {
-                vec![gate.actor_id.clone()]
-            } else {
-                unresolved
-            }
-        }
-        OperationGateViolation::Scope => vec![
-            gate.operation_scope_id.clone(),
-            case_space.case_space_id.clone(),
-        ],
-        OperationGateViolation::SourceBoundary => vec![gate.source_boundary_id.clone()],
-    }
+    failures
 }
 
 fn close_invariants(

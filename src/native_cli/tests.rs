@@ -318,3 +318,42 @@ fn parses_native_mutation_command_families() {
         NativeCliCommand::CellTransition { lifecycle, .. } if lifecycle == "resolved"
     ));
 }
+
+#[test]
+fn run_gate_actor_alias_must_equal_the_log_actor() {
+    let error = NativeCliCommand::parse(
+        "run",
+        args(&[
+            "--step",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--plan-id",
+            "plan:demo",
+            "--base-revision-id",
+            "revision:demo",
+            "--actor-id",
+            "actor:log",
+            "--gate-actor-id",
+            "actor:gate",
+            "--capability-id",
+            "capability:dispatch",
+            "--operation-scope-id",
+            "case_space:demo",
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:demo",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect_err("split actor identity must be rejected");
+
+    assert!(matches!(
+        error,
+        NativeCliError::Usage(message)
+            if message.contains("must equal --actor-id")
+    ));
+}

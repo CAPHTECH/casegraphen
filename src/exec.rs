@@ -113,6 +113,11 @@ pub fn validate_execution_plan(plan: &ExecutionPlan) -> Result<(), ExecutionPlan
                 input_projection_id,
             )?;
         }
+        if step.success_evidence_requirement_ids.is_empty() {
+            return Err(ExecutionPlanValidationError::new(format!(
+                "steps[{index}].success_evidence_requirement_ids must not be empty"
+            )));
+        }
         for (evidence_index, evidence_id) in
             step.success_evidence_requirement_ids.iter().enumerate()
         {

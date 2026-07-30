@@ -89,7 +89,57 @@ fn generalized_operation_gate_rejects_fabricated_capability_id() {
     let error =
         check_operation_gate(&space, &gate, "plan-review").expect_err("fabricated capability");
 
-    assert!(error.to_string().contains("existing case cell id"));
+    assert!(error.to_string().contains("existing case cell"));
+}
+
+#[test]
+fn generalized_operation_gate_rejects_wrong_type_retired_and_ungranted_capabilities() {
+    let base = fixture_space();
+    let valid_gate = NativeOperationGate {
+        actor_id: id("actor:plan-review"),
+        operation: "plan-review".to_owned(),
+        operation_scope_id: base.case_space_id.clone(),
+        audience: ProjectionAudience::Audit,
+        capability_ids: vec![id("capability:plan-review")],
+        source_boundary_id: id("source_boundary:review-fixture"),
+    };
+    let cases = [
+        (
+            "cell_type custom:capability",
+            CaseCellType::Goal,
+            CaseCellLifecycle::Accepted,
+            json!(["actor:plan-review"]),
+        ),
+        (
+            "lifecycle active or accepted",
+            CaseCellType::Custom("capability".to_owned()),
+            CaseCellLifecycle::Retired,
+            json!(["actor:plan-review"]),
+        ),
+        (
+            "does not grant acting actor",
+            CaseCellType::Custom("capability".to_owned()),
+            CaseCellLifecycle::Accepted,
+            json!(["actor:someone-else"]),
+        ),
+    ];
+
+    for (expected, cell_type, lifecycle, actor_ids) in cases {
+        let mut space = base.clone();
+        let capability = space
+            .case_cells
+            .iter_mut()
+            .find(|cell| cell.id == id("capability:plan-review"))
+            .expect("capability fixture");
+        capability.cell_type = cell_type;
+        capability.lifecycle = lifecycle;
+        capability
+            .metadata
+            .insert("actor_ids".to_owned(), actor_ids);
+
+        let error = check_operation_gate(&space, &valid_gate, "plan-review").expect_err(expected);
+        assert!(error.to_string().contains(expected), "{error}");
+    }
 }
 
 #[test]
