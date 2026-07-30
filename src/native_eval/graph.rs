@@ -1,106 +1,83 @@
-use super::util::dedupe_ids;
-use crate::native_model::{CaseRelationType, CaseSpace, RelationStrength};
-use higher_graphen_core::Id;
-use higher_graphen_structure::space::{
-    Cell, CellPattern, InMemorySpaceStore, Incidence, IncidenceOrientation, PathPattern,
-    PathPatternSegment, Space,
-};
-use std::collections::BTreeSet;
+use crate::native_model::{CaseRelation, CaseRelationType, CaseSpace, RelationStrength};
+use higher_graphen_core::{Id, ReviewStatus};
+use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) struct NativeCaseTraversal {
-    store: InMemorySpaceStore,
-    space_id: Id,
+pub(super) struct NativeCaseIndex<'a> {
+    relations_by_from: BTreeMap<&'a str, Vec<&'a CaseRelation>>,
+    relations_by_to: BTreeMap<&'a str, Vec<&'a CaseRelation>>,
+    completed_targets: BTreeSet<Id>,
+    latest_evidence_review_statuses: BTreeMap<&'a str, ReviewStatus>,
 }
 
-impl NativeCaseTraversal {
-    pub(super) fn from_case_space(case_space: &CaseSpace) -> Self {
-        let mut store = InMemorySpaceStore::new();
-        store
-            .insert_space(space_for(case_space))
-            .expect("validated native case space should build traversal space");
-        for cell in &case_space.case_cells {
-            store
-                .insert_cell(
-                    Cell::new(
-                        cell.id.clone(),
-                        case_space.space_id.clone(),
-                        0,
-                        cell.cell_type.serialized_value(),
-                    )
-                    .with_label(cell.title.clone())
-                    .with_provenance(cell.provenance.clone()),
+impl<'a> NativeCaseIndex<'a> {
+    pub(super) fn from_case_space(case_space: &'a CaseSpace) -> Self {
+        let mut relations_by_from = BTreeMap::<&str, Vec<&CaseRelation>>::new();
+        let mut relations_by_to = BTreeMap::<&str, Vec<&CaseRelation>>::new();
+        let mut completed_targets = BTreeSet::new();
+
+        for relation in &case_space.case_relations {
+            relations_by_from
+                .entry(relation.from_id.as_str())
+                .or_default()
+                .push(relation);
+            relations_by_to
+                .entry(relation.to_id.as_str())
+                .or_default()
+                .push(relation);
+            if relation.relation_strength == RelationStrength::Hard
+                && matches!(
+                    relation.relation_type,
+                    CaseRelationType::Completes | CaseRelationType::Supersedes
                 )
-                .expect("validated native case cell should build traversal cell");
+            {
+                completed_targets.insert(relation.to_id.clone());
+            }
         }
-        for relation in hard_relations(case_space) {
-            store
-                .insert_incidence(
-                    Incidence::new(
-                        relation.id.clone(),
-                        case_space.space_id.clone(),
-                        relation.from_id.clone(),
-                        relation.to_id.clone(),
-                        relation.relation_type.serialized_value(),
-                        IncidenceOrientation::Directed,
-                    )
-                    .with_provenance(relation.provenance.clone()),
-                )
-                .expect("validated native relation should build traversal incidence");
-        }
+
         Self {
-            store,
-            space_id: case_space.space_id.clone(),
+            relations_by_from,
+            relations_by_to,
+            completed_targets,
+            latest_evidence_review_statuses: super::sections::latest_evidence_review_statuses(
+                case_space,
+            ),
         }
     }
 
     pub(super) fn direct_targets(&self, cell_id: &Id, relation_type: CaseRelationType) -> Vec<Id> {
-        let pattern = PathPattern::new(self.space_id.clone(), CellPattern::by_id(cell_id.clone()))
-            .then(segment(relation_type, CellPattern::any()));
-        self.target_ids(pattern)
-    }
-
-    pub(super) fn completed_targets(&self) -> BTreeSet<Id> {
-        self.targets_for_relation(CaseRelationType::Completes)
+        self.relations_from(cell_id)
+            .iter()
+            .filter(|relation| {
+                relation.relation_strength == RelationStrength::Hard
+                    && relation.relation_type == relation_type
+            })
+            .map(|relation| relation.to_id.clone())
+            .collect::<BTreeSet<_>>()
             .into_iter()
-            .chain(self.targets_for_relation(CaseRelationType::Supersedes))
             .collect()
     }
 
-    fn targets_for_relation(&self, relation_type: CaseRelationType) -> Vec<Id> {
-        let pattern = PathPattern::new(self.space_id.clone(), CellPattern::any())
-            .then(segment(relation_type, CellPattern::any()));
-        self.target_ids(pattern)
+    pub(super) fn relations_from(&self, id: &Id) -> &[&'a CaseRelation] {
+        self.relations_by_from
+            .get(id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
-    fn target_ids(&self, pattern: PathPattern) -> Vec<Id> {
-        let targets = self
-            .store
-            .matches_path_pattern(&pattern)
-            .expect("validated native traversal pattern should run")
-            .into_iter()
-            .filter_map(|record| record.matched_cell_ids.last().cloned())
-            .collect();
-        dedupe_ids(targets)
+    pub(super) fn relations_to(&self, id: &Id) -> &[&'a CaseRelation] {
+        self.relations_by_to
+            .get(id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
-}
 
-fn space_for(case_space: &CaseSpace) -> Space {
-    Space::new(
-        case_space.space_id.clone(),
-        format!("CaseGraphen {}", case_space.case_space_id),
-    )
-    .with_description("Native CaseGraphen traversal view")
-}
+    pub(super) fn completed_targets(&self) -> &BTreeSet<Id> {
+        &self.completed_targets
+    }
 
-fn hard_relations(
-    case_space: &CaseSpace,
-) -> impl Iterator<Item = &crate::native_model::CaseRelation> {
-    case_space
-        .case_relations
-        .iter()
-        .filter(|relation| relation.relation_strength == RelationStrength::Hard)
-}
-
-fn segment(relation_type: CaseRelationType, target: CellPattern) -> PathPatternSegment {
-    PathPatternSegment::new(target).with_relation_type(relation_type.serialized_value())
+    pub(super) fn latest_evidence_review_status(&self, evidence_id: &Id) -> Option<ReviewStatus> {
+        self.latest_evidence_review_statuses
+            .get(evidence_id.as_str())
+            .copied()
+    }
 }

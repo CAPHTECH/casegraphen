@@ -16,10 +16,12 @@ mod validation;
 pub use types::*;
 pub use validation::validate_native_case_space;
 
-use graph::NativeCaseTraversal;
+use graph::NativeCaseIndex;
+#[cfg(test)]
+use sections::evidence_trust_input;
 use sections::{
     close_check_skeleton, completion_candidates, correspondence_summaries, evidence_findings,
-    evidence_trust_input, evolution_summary, projection_loss, review_gaps,
+    evidence_trust_input_with_status, evolution_summary, projection_loss, review_gaps,
 };
 use util::*;
 
@@ -42,7 +44,7 @@ pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCa
         &completion_candidates,
         &review_gaps,
     );
-    let frontier_cell_ids = frontier_cell_ids(case_space, &readiness, &context.traversal);
+    let frontier_cell_ids = frontier_cell_ids(&readiness, &context);
     let status = reasoning_status(case_space, &readiness, &obstructions, &review_gaps);
 
     Ok(NativeCaseEvaluation {
@@ -76,9 +78,10 @@ pub fn unsatisfied_evidence_requirement_ids(
 
 struct NativeEvaluationContext<'a> {
     case_space: &'a CaseSpace,
-    traversal: NativeCaseTraversal,
+    index: NativeCaseIndex<'a>,
     cells: BTreeMap<&'a str, &'a CaseCell>,
-    hard_relations: Vec<&'a CaseRelation>,
+    trusted_evidence_ids: BTreeSet<&'a str>,
+    trusted_evidence_structure_ids: BTreeSet<&'a str>,
 }
 
 struct CellEvaluation {
@@ -99,17 +102,29 @@ impl<'a> NativeEvaluationContext<'a> {
             .iter()
             .map(|cell| (cell.id.as_str(), cell))
             .collect();
-        let hard_relations = case_space
-            .case_relations
+        let index = NativeCaseIndex::from_case_space(case_space);
+        let mut trusted_evidence_ids = BTreeSet::new();
+        let mut trusted_evidence_structure_ids = BTreeSet::new();
+        for cell in case_space
+            .case_cells
             .iter()
-            .filter(|relation| relation.relation_strength == RelationStrength::Hard)
-            .collect();
-        let traversal = NativeCaseTraversal::from_case_space(case_space);
+            .filter(|cell| cell.cell_type == CaseCellType::Evidence)
+        {
+            let trust_input = evidence_trust_input_with_status(
+                cell,
+                index.latest_evidence_review_status(&cell.id),
+            );
+            if evidence_is_acceptable(trust_input) {
+                trusted_evidence_ids.insert(cell.id.as_str());
+                trusted_evidence_structure_ids.extend(cell.structure_ids.iter().map(Id::as_str));
+            }
+        }
         Self {
             case_space,
-            traversal,
+            index,
             cells,
-            hard_relations,
+            trusted_evidence_ids,
+            trusted_evidence_structure_ids,
         }
     }
 
@@ -321,7 +336,7 @@ impl<'a> NativeEvaluationContext<'a> {
     }
 
     fn requirement_ids(&self, cell: &CaseCell, relation_type: CaseRelationType) -> Vec<Id> {
-        self.traversal.direct_targets(&cell.id, relation_type)
+        self.index.direct_targets(&cell.id, relation_type)
     }
 
     fn lifecycle_obstruction(&self, cell: &CaseCell) -> Option<NativeObstruction> {
@@ -365,87 +380,96 @@ impl<'a> NativeEvaluationContext<'a> {
     }
 
     fn wait_satisfied(&self, wait_id: &Id) -> bool {
-        self.complete_cell(wait_id) || self.trusted_evidence_for(wait_id, wait_id).next().is_some()
+        self.complete_cell(wait_id) || self.trusted_evidence_exists(wait_id, wait_id)
     }
 
     fn evidence_requirement_satisfied(&self, cell_id: &Id, requirement_id: &Id) -> bool {
-        self.trusted_evidence_for(requirement_id, cell_id)
-            .next()
-            .is_some()
+        self.trusted_evidence_exists(requirement_id, cell_id)
     }
 
     fn proof_requirement_satisfied(&self, cell_id: &Id, proof_id: &Id) -> bool {
         self.cells.get(proof_id.as_str()).is_some_and(|cell| {
             cell.cell_type == CaseCellType::Proof && self.complete_cell(proof_id)
-        }) || self
-            .trusted_evidence_for(proof_id, cell_id)
-            .next()
-            .is_some()
+        }) || self.trusted_evidence_exists(proof_id, cell_id)
     }
 
-    fn trusted_evidence_for(
-        &'a self,
-        requirement_id: &'a Id,
-        cell_id: &'a Id,
-    ) -> impl Iterator<Item = &'a CaseCell> + 'a {
-        self.case_space.case_cells.iter().filter(move |cell| {
-            cell.cell_type == CaseCellType::Evidence
-                && evidence_is_acceptable(evidence_trust_input(self.case_space, cell))
-                && (cell.id == *requirement_id
-                    || cell.structure_ids.contains(requirement_id)
-                    || cell.structure_ids.contains(cell_id)
-                    || self.case_space.case_relations.iter().any(|relation| {
-                        matches!(
-                            relation.relation_type,
-                            CaseRelationType::SatisfiesEvidenceRequirement
-                                | CaseRelationType::Verifies
-                                | CaseRelationType::Accepts
-                        ) && relation.from_id == cell.id
-                            && (relation.to_id == *requirement_id || relation.to_id == *cell_id)
-                    })
-                    || self.case_space.case_relations.iter().any(|relation| {
-                        relation.evidence_ids.contains(&cell.id)
-                            && relation.from_id == *cell_id
-                            && (relation.to_id == *requirement_id
-                                || matches!(
-                                    relation.relation_type,
-                                    CaseRelationType::RequiresEvidence
-                                        | CaseRelationType::RequiresProof
-                                ))
-                    }))
+    fn trusted_evidence_exists(&self, requirement_id: &Id, cell_id: &Id) -> bool {
+        self.trusted_evidence_ids.contains(requirement_id.as_str())
+            || self
+                .trusted_evidence_structure_ids
+                .contains(requirement_id.as_str())
+            || self
+                .trusted_evidence_structure_ids
+                .contains(cell_id.as_str())
+            || self.trusted_evidence_relation_targets(requirement_id)
+            || self.trusted_evidence_relation_targets(cell_id)
+            || self.index.relations_from(cell_id).iter().any(|relation| {
+                (relation.to_id == *requirement_id
+                    || matches!(
+                        relation.relation_type,
+                        CaseRelationType::RequiresEvidence | CaseRelationType::RequiresProof
+                    ))
+                    && relation
+                        .evidence_ids
+                        .iter()
+                        .any(|id| self.trusted_evidence_ids.contains(id.as_str()))
+            })
+    }
+
+    fn trusted_evidence_relation_targets(&self, target_id: &Id) -> bool {
+        self.index.relations_to(target_id).iter().any(|relation| {
+            matches!(
+                relation.relation_type,
+                CaseRelationType::SatisfiesEvidenceRequirement
+                    | CaseRelationType::Verifies
+                    | CaseRelationType::Accepts
+            ) && self
+                .trusted_evidence_ids
+                .contains(relation.from_id.as_str())
         })
     }
 
     fn contradiction_relations(&self, cell_id: &Id) -> Vec<&'a CaseRelation> {
-        self.hard_relations
+        self.index
+            .relations_from(cell_id)
             .iter()
             .copied()
+            .chain(self.index.relations_to(cell_id).iter().copied())
             .filter(|relation| {
-                matches!(
-                    relation.relation_type,
-                    CaseRelationType::Contradicts
-                        | CaseRelationType::Invalidates
-                        | CaseRelationType::Blocks
-                ) && (relation.from_id == *cell_id || relation.to_id == *cell_id)
+                relation.relation_strength == RelationStrength::Hard
+                    && matches!(
+                        relation.relation_type,
+                        CaseRelationType::Contradicts
+                            | CaseRelationType::Invalidates
+                            | CaseRelationType::Blocks
+                    )
                     && !self.unblocked_by_review(relation)
             })
+            .map(|relation| (relation.id.as_str(), relation))
+            .collect::<BTreeMap<_, _>>()
+            .into_values()
             .collect()
     }
 
     fn unblocked_by_review(&self, blocked_relation: &CaseRelation) -> bool {
-        self.hard_relations.iter().any(|relation| {
-            relation.relation_type == CaseRelationType::Unblocks
-                && relation.to_id == blocked_relation.id
-                && self.review_satisfied(&relation.from_id)
-        })
+        self.index
+            .relations_to(&blocked_relation.id)
+            .iter()
+            .any(|relation| {
+                relation.relation_strength == RelationStrength::Hard
+                    && relation.relation_type == CaseRelationType::Unblocks
+                    && relation.to_id == blocked_relation.id
+                    && self.review_satisfied(&relation.from_id)
+            })
     }
 
     fn required_review_relations(&self, cell_id: &Id) -> Vec<&'a CaseRelation> {
-        self.hard_relations
+        self.index
+            .relations_from(cell_id)
             .iter()
             .copied()
             .filter(|relation| {
-                relation.from_id == *cell_id
+                relation.relation_strength == RelationStrength::Hard
                     && matches!(
                         relation.relation_type,
                         CaseRelationType::Accepts | CaseRelationType::Rejects
@@ -581,17 +605,15 @@ fn readiness_result(case_space: &CaseSpace, results: &[CellEvaluation]) -> Nativ
 }
 
 fn frontier_cell_ids(
-    case_space: &CaseSpace,
     readiness: &NativeReadiness,
-    traversal: &NativeCaseTraversal,
+    context: &NativeEvaluationContext<'_>,
 ) -> Vec<Id> {
-    let completed_targets = traversal.completed_targets();
     readiness
         .ready_cell_ids
         .iter()
-        .filter(|id| !completed_targets.contains(*id))
+        .filter(|id| !context.index.completed_targets().contains(*id))
         .filter(|id| {
-            case_space.case_cells.iter().any(|cell| {
+            context.cells.get(id.as_str()).is_some_and(|cell| {
                 cell.id == **id
                     && !matches!(
                         cell.lifecycle,

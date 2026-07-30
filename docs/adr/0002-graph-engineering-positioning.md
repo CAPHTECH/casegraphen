@@ -58,15 +58,26 @@ against the real binary (the section numbers refer to
   is contained: it enters untrusted and cannot promote itself
   (never-trust-caller-declared-trust, ADR 0001).
 
-Equally, this tool measurably lacks what the field defines as the execution
-harness's job. Measured on this codebase (release build, single run):
-readiness derivation is O(n²) — 0.3 s at 1,000 cells, 2.6 s at 3,000, 32 s at
-10,000 — and every revision stores a full snapshot (a 10,000-cell space grew
-29 MB → 51 MB on one appended cell). `run --step` advances exactly one item
-under a per-case lock; there is no fan-out. Step-to-step dataflow and typed
-handoff do not exist; the execution-plan contract has no field that supplies
-one step's output as another step's input. Cost is not tracked; model identity
-is not part of a binding's content address; the only worker kind is `shell`.
+Equally, this tool lacks what the field defines as the execution harness's job.
+`run --step` advances exactly one item under a per-case lock; there is no
+fan-out. Step-to-step dataflow and typed handoff do not exist; the
+execution-plan contract has no field that supplies one step's output as another
+step's input. Cost is not tracked; model identity is not part of a binding's
+content address; the only worker kind is `shell`.
+
+This ADR originally also recorded a size limit: readiness derivation measured
+O(n²) (0.23 s at 1,000 cells, 0.84 s at 2,000, 3.66 s at 4,000, 32 s at
+10,000, best of three release-build runs), and decision 2 below drew its
+boundary partly from that number. The cause was per-cell linear rescans of the
+relation list and of the morphism log; indexing them once per evaluation made
+derivation linear. The same measurement now reads 0.02 s at 1,000 cells, 0.07 s
+at 4,000, 0.20 s at 10,000, and 1.92 s at 100,000 — a 162× improvement at
+10,000 cells, with byte-identical output on four real stores.
+
+What remains is a storage cost, not a time cost: every revision writes a full
+snapshot, so a 100,000-cell space occupies about 287 MB and each edit adds
+another snapshot. That is the real ceiling now, and pruning old snapshots while
+keeping the log is a separate decision.
 
 ## Decision
 
@@ -85,9 +96,15 @@ is not part of a binding's content address; the only worker kind is `shell`.
    requires evidence a human or policy must be able to check. Individual LLM
    calls, retries, tool invocations, and streaming belong to the runtime's own
    trace; at most, that trace enters as *one* evidence cell (content-hashed
-   artifact or URI) attached to the governed node. Case spaces stay at
-   decision granularity — hundreds of cells, not tens of thousands — which is
-   also where the measured O(n²) evaluation is comfortably fast.
+   artifact or URI) attached to the governed node.
+
+   This rule is semantic, not a performance budget. It survived the linearity
+   fix above unchanged in substance and lost its numeric ceiling: a cell asserts
+   that someone must be able to check this, so a cell per model call is noise
+   that dilutes the ledger rather than a load problem. Derivation is now
+   comfortable into the tens of thousands of cells, so a domain that genuinely
+   has that many *decisions* is in range; the constraint to respect is the
+   per-revision snapshot cost, not evaluation time.
 
 3. **Integration contract: runtime reports enter as evidence input JSON.**
    This extends the rule ADR 0001 already sets for `higher-graphen-runtime` to

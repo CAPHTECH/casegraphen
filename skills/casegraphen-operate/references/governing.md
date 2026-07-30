@@ -38,11 +38,13 @@ trace.
 | A whole agent run that produced a reviewable artifact | at most **one** evidence cell, content-hashed, pointing at the runtime's artifact |
 | The runtime's own execution trace for a node | one evidence cell (or a URI in that cell's metadata) attached to the governed node |
 
-This is not a style preference. Readiness derivation is O(n²): about 0.3 s at
-1,000 cells, 2.6 s at 3,000, 32 s at 10,000, and every revision writes a full
-snapshot. A decision-granularity space (tens to hundreds of cells) is instant; a
-call-granularity space is unusable. If you find yourself minting a cell per model
-call, the granularity is wrong, not the tool.
+This is a semantic rule, not a load budget. A cell asserts "someone must be able
+to check this", so a cell per model call dilutes the ledger into noise even
+though the tool can now carry it: derivation is linear — about 0.02 s at 1,000
+cells, 0.20 s at 10,000, 1.92 s at 100,000. The cost that does grow is storage,
+because every revision writes a full snapshot (about 287 MB for a 100,000-cell
+space). If you find yourself minting a cell per model call, the granularity is
+wrong even though it would run.
 
 ## Mapping the org graph onto authority
 

@@ -506,11 +506,20 @@ pub(super) fn close_check_skeleton(
     }
 }
 
+pub(super) fn evidence_trust_input_with_status(
+    cell: &CaseCell,
+    latest_review_status: Option<ReviewStatus>,
+) -> crate::evidence_trust::EvidenceTrustInput {
+    native_evidence_trust_input(cell, latest_review_status)
+}
+
+#[cfg(test)]
 pub(super) fn evidence_trust_input(
     case_space: &CaseSpace,
     cell: &CaseCell,
 ) -> crate::evidence_trust::EvidenceTrustInput {
-    native_evidence_trust_input(cell, latest_evidence_review_status(case_space, &cell.id))
+    let statuses = latest_evidence_review_statuses(case_space);
+    evidence_trust_input_with_status(cell, statuses.get(cell.id.as_str()).copied())
 }
 
 fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
@@ -521,33 +530,49 @@ fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
     )
 }
 
-fn latest_evidence_review_status(case_space: &CaseSpace, evidence_id: &Id) -> Option<ReviewStatus> {
-    let entry = case_space.morphism_log.iter().rev().find(|entry| {
-        entry
+pub(super) fn latest_evidence_review_statuses(
+    case_space: &CaseSpace,
+) -> BTreeMap<&str, ReviewStatus> {
+    let mut statuses = BTreeMap::new();
+    for entry in &case_space.morphism_log {
+        if entry
             .morphism
             .metadata
             .get("target_kind")
             .and_then(Value::as_str)
-            == Some("evidence")
-            && entry
-                .morphism
-                .metadata
-                .get("target_id")
-                .and_then(Value::as_str)
-                == Some(evidence_id.as_str())
-    })?;
+            != Some("evidence")
+        {
+            continue;
+        }
+        let Some(evidence_id) = entry
+            .morphism
+            .metadata
+            .get("target_id")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        statuses.insert(evidence_id, evidence_review_status(entry, evidence_id));
+    }
+    statuses
+}
+
+fn evidence_review_status(
+    entry: &crate::native_model::MorphismLogEntry,
+    evidence_id: &str,
+) -> ReviewStatus {
     let Some(review) = crate::native_review::canonical_review(&entry.morphism) else {
-        return Some(ReviewStatus::Rejected);
+        return ReviewStatus::Rejected;
     };
     if review.target_kind != crate::native_review::NativeReviewTargetKind::Evidence
-        || review.target_id != *evidence_id
+        || review.target_id.as_str() != evidence_id
     {
-        return Some(ReviewStatus::Rejected);
+        return ReviewStatus::Rejected;
     }
     match (review.action, review.outcome) {
-        (ReviewAction::Accept, ReviewStatus::Accepted) => Some(ReviewStatus::Accepted),
-        (ReviewAction::Reject, ReviewStatus::Rejected) => Some(ReviewStatus::Rejected),
-        _ => Some(ReviewStatus::Rejected),
+        (ReviewAction::Accept, ReviewStatus::Accepted) => ReviewStatus::Accepted,
+        (ReviewAction::Reject, ReviewStatus::Rejected) => ReviewStatus::Rejected,
+        _ => ReviewStatus::Rejected,
     }
 }
 
