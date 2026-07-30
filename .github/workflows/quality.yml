@@ -1,0 +1,20 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install the JSON Schema validator the integration tests shell out to
+        run: python3 -m pip install --user jsonschema
+      - name: Run the release quality gate
+        run: sh scripts/static-analysis.sh

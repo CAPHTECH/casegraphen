@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.rs) cargo fmt --all && cargo clippy --all-targets -- -D warnings ;; esac; }",
+            "timeout": 180,
+            "statusMessage": "fmt + clippy"
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */schemas/casegraphen/*) cargo test --test command schema ;; esac; }",
+            "timeout": 180,
+            "statusMessage": "schema contract tests"
+          }
+        ]
+      }
+    ]
+  }
+}
