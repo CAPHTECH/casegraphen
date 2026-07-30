@@ -7,6 +7,13 @@ background reading.
 
 `$STORE`, `$CS`, and `cur()` below are from SKILL.md.
 
+**This path is for deterministic gate nodes only** — a checker, a linter, a test
+command, a version check. It is not the path for LLM or agent nodes: the only
+worker kind is `shell`, so a model call means a script carrying an API key
+through `env_allowlist`, which is residual risk 3 of that policy. When a runtime
+executes the work, read `references/governing.md` instead and record its reports
+as evidence.
+
 Order: register the binding → propose the plan → check it → accept it → run one
 step. Each step freezes something the next one verifies.
 

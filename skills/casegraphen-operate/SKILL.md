@@ -1,6 +1,6 @@
 ---
 name: casegraphen-operate
-description: Use when driving work through a CaseGraphen case space with the casegraphen CLI — lifting a case space, reading readiness or blockers, proposing and applying a morphism, attaching or promoting evidence, transitioning a cell, registering a worker binding, accepting a plan, or running a step. Covers the revision and gate discipline every mutating command needs and the refusals that will otherwise waste attempts.
+description: Use when driving work through a CaseGraphen case space with the casegraphen CLI — lifting a case space, reading readiness or blockers, proposing and applying a morphism, attaching or promoting evidence, transitioning a cell, registering a worker binding, accepting a plan, running a step, or governing an agent runtime's graph by recording what it produced as reviewable evidence. Covers the revision and gate discipline every mutating command needs and the refusals that will otherwise waste attempts.
 ---
 
 # Operating a case space
@@ -20,6 +20,7 @@ For a worked example of every command below with its real output, read the
 | Create a case space, or model goals/work/evidence so readiness comes out right | `references/authoring.md` |
 | Change the graph: add, update, retire cells or relations; attach or promote evidence; transition a cell | `references/mutating.md` |
 | Have a worker do the work: binding, plan, `run --step`, reading the result | `references/executing.md` |
+| An agent runtime executes the graph and CaseGraphen records what was accepted: node granularity, mandates, taking runtime reports as evidence | `references/governing.md` |
 
 ## The two rules that break every first attempt
 

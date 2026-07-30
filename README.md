@@ -110,7 +110,9 @@ and the native derived commands answer what those commands answered.
 
 [`skills/casegraphen-operate`](skills/) is an agent skill for operating a case
 space: the revision and gate discipline every mutating command needs, how to
-model readiness so it comes out right, and how to read the refusals.
+model readiness so it comes out right, how to read the refusals, and — when an
+agent runtime executes the graph — what to record as evidence and at which
+granularity.
 
 ```sh
 cd /path/to/your/project

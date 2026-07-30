@@ -6,7 +6,7 @@ crate. (The repository's own development skills stay in `.claude/skills/`.)
 
 | Skill | Use when |
 |---|---|
-| [`casegraphen-operate`](casegraphen-operate/SKILL.md) | Driving work through a case space: lifting one, reading readiness, applying morphisms, attaching and promoting evidence, dispatching workers with `run --step` |
+| [`casegraphen-operate`](casegraphen-operate/SKILL.md) | Driving work through a case space: lifting one, reading readiness, applying morphisms, attaching and promoting evidence, dispatching workers with `run --step`, and governing an agent runtime's graph by recording what it produced as reviewable evidence |
 
 ## Install
 
