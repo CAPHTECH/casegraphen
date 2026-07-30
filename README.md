@@ -104,6 +104,13 @@ casegraphen cg workflow ...                       # store-backed workflow bridge
 
 `casegraphen` with no arguments prints the full usage text.
 
+## Driving it from an agent
+
+[`skills/casegraphen-operate`](skills/) is an agent skill for operating a case
+space: the revision and gate discipline every mutating command needs, how to
+model readiness so it comes out right, and how to read the refusals. Copy it into
+your project's `.claude/skills/` — see [`skills/README.md`](skills/README.md).
+
 ## Contracts
 
 Wire formats live in [`schemas/casegraphen/`](schemas/casegraphen/) and are

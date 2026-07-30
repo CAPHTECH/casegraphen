@@ -1,7 +1,9 @@
 # Running work through a worker
 
-Read `docs/security/worker-execution-policy.md` before enabling a worker against
-a real project. It is the approval policy, not background reading.
+Read the
+[worker execution security and approval policy](https://github.com/CAPHTECH/casegraphen/blob/main/docs/security/worker-execution-policy.md)
+before enabling a worker against a real project. It is the approval policy, not
+background reading.
 
 `$STORE`, `$CS`, and `cur()` below are from SKILL.md.
 

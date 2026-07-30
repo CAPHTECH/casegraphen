@@ -15,8 +15,10 @@ casegraphen lift native --store "$STORE" --input genesis.case.space.json \
   --revision-id revision:<name>-genesis --format json
 ```
 
-Start from `docs/guides/release-decision/genesis.case.space.json` and edit it.
-The contract is `schemas/casegraphen/native.case.space.schema.json`
+Start from the
+[example genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/release-decision/genesis.case.space.json)
+and edit it. The contract is
+[`native.case.space.schema.json`](https://github.com/CAPHTECH/casegraphen/blob/main/schemas/casegraphen/native.case.space.schema.json)
 (`additionalProperties: false` throughout).
 
 ## The genesis snapshot must be self-reconstructing
@@ -65,8 +67,9 @@ driven by relations, so what you want enforced must exist as a relation.
 `accepted`.** That second clause makes it easy to author a vacuous dependency:
 mark a work cell `review_status: accepted` at genesis and every hard dependency
 on it is satisfied before the work starts. Author work cells as `reviewed` (or
-`unreviewed`) and reserve `accepted` provenance for facts, not for tasks. The full readiness rule set is in
-`docs/specs/casegraphen-native-case-management.md` ("Default readiness rules").
+`unreviewed`) and reserve `accepted` provenance for facts, not for tasks. The
+full rule set is under "Default readiness rules" in the
+[native case-management spec](https://github.com/CAPHTECH/casegraphen/blob/main/docs/specs/casegraphen-native-case-management.md).
 
 A **requirement placeholder** is an evidence cell with `lifecycle: proposed`,
 `review_status: unreviewed`, and **no** `metadata.evidence_boundary`. That
@@ -98,11 +101,14 @@ and `metadata.{evidence_boundary,content_hash,trace_id,worker_report_id}`.
 ## Check the model before building on it
 
 ```sh
-python3 -m jsonschema -i genesis.case.space.json \
-  schemas/casegraphen/native.case.space.schema.json
-casegraphen space frontier      --store "$STORE" --case-space-id "$CS" --format json
-casegraphen obstruction list    --store "$STORE" --case-space-id "$CS" --format json
+# optional, with a local copy of the schema file
+python3 -m jsonschema -i genesis.case.space.json native.case.space.schema.json
+casegraphen space frontier   --store "$STORE" --case-space-id "$CS" --format json
+casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format json
 ```
+
+`lift native` rejects a malformed snapshot anyway, so schema validation is only a
+faster feedback loop.
 
 If the frontier or the blockers are not what you intended, fix the model now —
 after the first mutation, changing it costs a gated morphism.

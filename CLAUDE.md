@@ -50,6 +50,9 @@ preferences.
   morphism application, evidence attachment, the store) — run the
   `adversarial-execution-reviewer` agent and **reproduce its findings yourself**
   before accepting them. Three rounds of that review each found real defects.
+- Driving an actual case space with the CLI (rather than changing this crate) —
+  read `skills/casegraphen-operate/SKILL.md` first. It ships for consumers, so it
+  is not auto-loaded here.
 - Integration tests spawn the real binary via `CARGO_BIN_EXE_casegraphen`. A new
   command needs a test that exercises it through the binary, not only a unit test.
 - Fixtures are updated to match stricter behaviour. Never relax a check to keep an
@@ -72,3 +75,4 @@ preferences.
 | Contracts | `schemas/casegraphen/` |
 | Decisions, specs, security policy, audit | `docs/` |
 | End-to-end example of the whole control model | `docs/guides/release-decision-walkthrough.md` |
+| Shipped agent skill for *using* the CLI | `skills/casegraphen-operate/` |
