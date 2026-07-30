@@ -180,3 +180,43 @@ trace → worker report + raw output hashes → log entries → revision replay.
 4. Hosts without usable `setsid` and `kill` utilities cannot guarantee
    descendant termination. The direct child is killed, reader waits remain
    bounded, and `descendants_may_survive` makes that residual risk explicit.
+5. Pinning a binding's executable identity proves nothing about an
+   interpreter's arguments: a binding whose command is `/bin/sh` with a `-c`
+   script, or any interpreter reading a script file, is fixed only in its
+   interpreter hash. Reviewers must read the full `args` during plan review and
+   prefer bindings that name a single pinned program.
+6. A narrow window remains between the dispatch-time canonicalization of the
+   command and working directory and the spawn itself; an attacker who can
+   rewrite those paths in that window can still substitute code. Store and
+   working directories must be writable only by the operating user.
+7. Capability grants are fixed at lift/import time and cannot be revoked
+   through the CLI. Revoking a grant means lifting a new case space (or
+   migrating), which is deliberate: revocation is a source-boundary decision,
+   not a runtime one.
+8. An operator who can write to the store can hold or repeatedly recreate a
+   case lock and deny writes, and can pre-create run directories to push the
+   attempt counter forward. Both are availability, not integrity, risks and are
+   bounded by store filesystem permissions.
+
+## 5. Review provenance
+
+This document is not an assertion of safety by construction. Its claims were
+checked against the implementation by three adversarial review rounds, each of
+which found real defects that were then fixed:
+
+- Round 1 found ten defects (four critical), including snapshot-only state
+  tampering that replay accepted and case creation that replaced an existing
+  history. Both were reproduced on a real store before the fix and confirmed
+  blocked after it.
+- Round 2 judged four of those fully fixed and six partial, and found a new
+  critical defect: reusing an earlier revision id overwrote that revision's
+  snapshot, so a refused operation still left the store permanently invalid.
+  Reproduced and confirmed fixed.
+- Round 3 found that the capability gate was only syntactic: an attacker could
+  replace an accepted capability cell through the generic morphism path and
+  grant themselves the capability the gate checks, because that path — like
+  every other durable mutation except plan review and dispatch — was ungated.
+  Reproduced and confirmed fixed by §2.2.
+
+Anyone extending the execution surface should assume the same treatment is
+required: the controls here hold only for the paths that were actually attacked.
