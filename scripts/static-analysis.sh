@@ -12,6 +12,18 @@ set -eu
 
 say() { printf '\n== %s\n' "$1"; }
 
+# rust-toolchain.toml pins the toolchain so that clippy agrees between a local
+# run and CI. RUSTUP_TOOLCHAIN in the environment silently overrides that file,
+# which is how the first CI run of this repository failed on a lint the local
+# toolchain no longer emits. Warn rather than fail: an override is legitimate
+# when deliberately testing another toolchain.
+pinned=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null || true)
+active=$(rustc --version 2>/dev/null | cut -d' ' -f2)
+if [ -n "$pinned" ] && [ -n "$active" ] && [ "$pinned" != "$active" ]; then
+  printf 'warning: rust %s is active but rust-toolchain.toml pins %s.\n' "$active" "$pinned"
+  printf '         CI runs %s; re-run with RUSTUP_TOOLCHAIN=%s to match it.\n' "$pinned" "$pinned"
+fi
+
 say 'formatting'
 cargo fmt --all --check
 

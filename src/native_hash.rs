@@ -1,6 +1,7 @@
 use crate::native_model::{CaseSpace, MorphismLogEntry};
 use serde::Serialize;
 use serde_json::Value;
+use std::fmt::Write as _;
 
 pub(crate) fn case_space_checksum(case_space: &CaseSpace) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(case_space)?;
@@ -100,8 +101,10 @@ impl Sha256 {
 
         self.state
             .iter()
-            .map(|word| format!("{word:08x}"))
-            .collect()
+            .fold(String::with_capacity(64), |mut digest, word| {
+                let _ = write!(digest, "{word:08x}");
+                digest
+            })
     }
 }
 

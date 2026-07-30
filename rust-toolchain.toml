@@ -1,0 +1,9 @@
+# Pin the toolchain so a local gate run and a CI run mean the same thing.
+#
+# This matches Cargo.toml's rust-version. Without the pin, a newer local clippy
+# and the CI clippy disagree about which lints exist: the first CI run of this
+# repository failed on a lint that the local toolchain no longer emits, which
+# defeats the purpose of running the same gate script in both places.
+[toolchain]
+channel = "1.80.0"
+components = ["rustfmt", "clippy"]
