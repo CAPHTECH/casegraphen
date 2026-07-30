@@ -45,7 +45,8 @@ Explicit non-goals:
 
 - Re-implementing installed `cg` behavior, command names, workspace cache, task
   tracker states, or clone behavior as the native product model.
-- Changing the external `/Users/rizumita/Workspace/casegraphen` repository.
+- Changing the external CaseGraphen repository, `CAPHTECH/casegraphen`. (Superseded
+  by ADR 0001 in that repository, which reverses this boundary deliberately.)
 - Adding MCP support, provider SDK integration, marketplace packages, or
   agent-provider runtime dependencies.
 - Rewriting external repositories or external issue/task systems.

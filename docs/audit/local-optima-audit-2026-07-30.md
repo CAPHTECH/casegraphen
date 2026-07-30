@@ -2,8 +2,8 @@
 
 Date: 2026-07-30
 Mode: discovery
-Scope: `/Users/rizumita/Workspace/casegraphen` (13 unpushed commits, `main`) and
-`/Users/rizumita/Workspace/higher-graphen` branch `feat/casegraphen-extraction`
+Scope: this repository (13 unpushed commits on `main` at the time of the audit)
+and the `feat/casegraphen-extraction` branch of `CAPHTECH/higher-graphen`
 (2 unpushed commits).
 
 ## 1. Evidence available

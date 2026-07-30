@@ -10,7 +10,7 @@
 
 ### 1.1 リポジトリ状況
 
-- 本リポジトリ (`/Users/rizumita/Workspace/casegraphen`) は空（コミットなし）。旧独立実装は GitHub 上で `CAPHTECH/casegraphen-legacy` にリネーム済みで、`casegraphen` の名前は切り出し先として確保されている。
+- 本リポジトリは調査時点で空（コミットなし）。旧独立実装は GitHub 上で `CAPHTECH/casegraphen-legacy` にリネーム済みで、`casegraphen` の名前は切り出し先として確保されている。
 - HigherGraphen の全 crate は crates.io に公開済み（`cargo install casegraphen` が案内されている。v0.7.1 タグは公開が明示承認制のため未公開の可能性あり）。切り出し後は公開版 `higher-graphen-*` crate への依存が可能。
 
 ### 1.2 tools/casegraphen の実装インベントリ
@@ -47,7 +47,7 @@ grep により確認: `worker / dispatch / scheduler / queue / lease / execute` 
 
 1. **「外部システムに対するシナリオ実行」は明示的な非ゴール**（`casegraphen.md:537`）。worker / dispatch / execution plan という語は仕様9文書のどこにも登場しない。実行制御は「文書化済みだが未実装」ではなく、**契約境界の意図的改定を伴う新設**である。
 2. **「workflow 固有コードは `higher-graphen-runtime`・外部 CaseGraphen リポジトリに依存してはならない」**（`casegraphen-feature-completion-contract.md:316-318`）。依存方向 `casegraphen -> higher-graphen crates` は仕様側で既に確定している。
-3. `casegraphen-native-case-management.md:48` は「外部 `/Users/rizumita/Workspace/casegraphen` リポジトリを変更しないこと」を非ゴールに挙げており、本切り出しはこの境界の意図的な反転にあたる。→ HigherGraphen 側での ADR が必要。
+3. `casegraphen-native-case-management.md:48` は「外部の CaseGraphen リポジトリ（本リポジトリ）を変更しないこと」を非ゴールに挙げており、本切り出しはこの境界の意図的な反転にあたる。→ HigherGraphen 側での ADR が必要。
 4. AI 生成構造は常に `unreviewed` で生まれ、明示的な review 行為なしに受理事実へ昇格してはならない（typed provenance の `Reviewed<T, Candidate|Accepted>` typestate は「永続化された accepted 値もデシリアライズ時は candidate に戻る」まで強制する）。
 5. 命名規則: intermediate tool は素の小文字 `casegraphen`（`higher-graphen` プレフィックス禁止）。
 6. `COMMERCIAL_BOUNDARY.md` は「ホスト型実行基盤・運用 runbook・認証情報」を公開リポジトリ外に置くべきとしており、**実行制御を持つ CaseGraphen の分離はむしろ境界文書と整合する**。
