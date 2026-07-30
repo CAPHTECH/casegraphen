@@ -142,6 +142,13 @@ impl WorkflowWorkspaceStore {
         action: WorkflowPatchReviewAction,
         request: WorkflowPatchReviewRequest,
     ) -> StoreResult<WorkflowPatchReviewResult> {
+        if action == WorkflowPatchReviewAction::Apply {
+            return Err(contract_error(
+                &self.root,
+                "workflow patch materialization is not implemented; use the native `morphism apply` path to materialize reviewed changes",
+            ));
+        }
+
         let replay = self.replay_current_graph(workflow_graph_id)?;
         let mut graph = replay.graph;
         let previous_revision_id = replay.current_revision_id;

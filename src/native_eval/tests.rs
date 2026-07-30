@@ -305,6 +305,32 @@ fn review_promoted_evidence_requires_accepted_review() {
 }
 
 #[test]
+fn caller_declared_native_review_promotion_is_not_acceptable_without_review() {
+    let mut space = fixture_space();
+    let mut evidence = cell(
+        "evidence:caller-promoted",
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+    );
+    evidence.provenance = provenance(SourceKind::Human, ReviewStatus::Unreviewed);
+    evidence.metadata.insert(
+        "evidence_boundary".to_owned(),
+        Value::String("review_promoted".to_owned()),
+    );
+    space.case_cells.push(evidence);
+    refresh_morphism(&mut space);
+    let evidence = space
+        .case_cells
+        .iter()
+        .find(|cell| cell.id == id("evidence:caller-promoted"))
+        .expect("caller-promoted evidence");
+
+    assert!(!crate::evidence_trust::evidence_is_acceptable(
+        evidence_trust_input(&space, evidence)
+    ));
+}
+
+#[test]
 fn projection_loss_and_evolution_summaries_are_reported() {
     let mut space = fixture_space();
     space.case_cells.push(cell(

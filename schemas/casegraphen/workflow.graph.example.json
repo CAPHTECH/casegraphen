@@ -246,7 +246,7 @@
     {
       "id": "evidence:workflow-gap-inference",
       "evidence_type": "ai_inference",
-      "evidence_boundary": "ai_inference",
+      "evidence_boundary": "worker_output",
       "summary": "The current baseline has no first-class workflow item, readiness, or evolution model.",
       "supports_ids": [
         "correspondence:baseline-casegraphen-to-workflow-contract",

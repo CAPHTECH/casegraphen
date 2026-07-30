@@ -1,5 +1,5 @@
 use super::*;
-use crate::native_model::{EvidenceBoundary, ReviewAction};
+use crate::native_model::{native_evidence_trust_input, EvidenceBoundary, ReviewAction};
 use serde_json::{json, Value};
 
 pub(super) fn completion_candidates(
@@ -506,23 +506,19 @@ pub(super) fn close_check_skeleton(
     }
 }
 
-pub(super) fn acceptable_evidence(case_space: &CaseSpace, cell: &CaseCell) -> bool {
-    let review_status = latest_evidence_review_status(case_space, &cell.id);
-    cell.cell_type == CaseCellType::Evidence
-        && cell.provenance.review_status != ReviewStatus::Rejected
-        && review_status != Some(ReviewStatus::Rejected)
-        && !cell.source_ids.is_empty()
-        && match evidence_boundary(cell) {
-            EvidenceBoundary::SourceBacked => true,
-            EvidenceBoundary::ReviewPromoted => {
-                cell.provenance.review_status == ReviewStatus::Accepted
-                    || review_status == Some(ReviewStatus::Accepted)
-            }
-            EvidenceBoundary::Inferred | EvidenceBoundary::WorkerOutput => {
-                review_status == Some(ReviewStatus::Accepted)
-            }
-            EvidenceBoundary::Rejected | EvidenceBoundary::Contradicting => false,
-        }
+pub(super) fn evidence_trust_input(
+    case_space: &CaseSpace,
+    cell: &CaseCell,
+) -> crate::evidence_trust::EvidenceTrustInput {
+    native_evidence_trust_input(cell, latest_evidence_review_status(case_space, &cell.id))
+}
+
+fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
+    EvidenceBoundary::from_metadata_value(
+        cell.metadata
+            .get("evidence_boundary")
+            .and_then(Value::as_str),
+    )
 }
 
 fn latest_evidence_review_status(case_space: &CaseSpace, evidence_id: &Id) -> Option<ReviewStatus> {
@@ -552,25 +548,6 @@ fn latest_evidence_review_status(case_space: &CaseSpace, evidence_id: &Id) -> Op
         (ReviewAction::Accept, ReviewStatus::Accepted) => Some(ReviewStatus::Accepted),
         (ReviewAction::Reject, ReviewStatus::Rejected) => Some(ReviewStatus::Rejected),
         _ => Some(ReviewStatus::Rejected),
-    }
-}
-
-fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
-    let Some(value) = cell
-        .metadata
-        .get("evidence_boundary")
-        .and_then(Value::as_str)
-    else {
-        return EvidenceBoundary::Inferred;
-    };
-    match value {
-        "source_backed" | "source_backed_evidence" => EvidenceBoundary::SourceBacked,
-        "inferred" | "ai_inference" => EvidenceBoundary::Inferred,
-        "worker_output" => EvidenceBoundary::WorkerOutput,
-        "review_promoted" | "review_promotion" => EvidenceBoundary::ReviewPromoted,
-        "rejected" => EvidenceBoundary::Rejected,
-        "contradicting" => EvidenceBoundary::Contradicting,
-        _ => EvidenceBoundary::Inferred,
     }
 }
 

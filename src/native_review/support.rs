@@ -1,9 +1,10 @@
 use super::{NativeReviewError, NativeReviewTargetKind, REVIEW_SCHEMA_VERSION};
 use crate::{
+    evidence_trust::evidence_is_acceptable,
     native_eval::{NativeCloseInvariantResult, NativeCompletionCandidate, NativeObstruction},
     native_model::{
-        CaseCell, CaseCellType, CaseMorphism, CaseMorphismType, CaseRelationType, CaseSpace,
-        EvidenceBoundary, ReviewAction,
+        native_evidence_trust_input, CaseCellType, CaseMorphism, CaseMorphismType,
+        CaseRelationType, CaseSpace, ReviewAction,
     },
 };
 use higher_graphen_core::{Id, ReviewStatus, Severity};
@@ -156,52 +157,17 @@ pub(super) fn evidence_requirement_blockers(
             continue;
         }
         let acceptable = cells.get(&relation.to_id).is_some_and(|cell| {
-            cell.cell_type == CaseCellType::Evidence && evidence_acceptable_for_close(cell, reviews)
+            cell.cell_type == CaseCellType::Evidence
+                && evidence_is_acceptable(native_evidence_trust_input(
+                    cell,
+                    latest_review_for(reviews, &cell.id).map(|review| review.outcome),
+                ))
         });
         if !acceptable {
             blockers.push(relation.to_id.clone());
         }
     }
     dedupe_ids(blockers)
-}
-
-fn evidence_acceptable_for_close(
-    cell: &CaseCell,
-    reviews: &BTreeMap<Id, Vec<ExplicitReview>>,
-) -> bool {
-    if cell.provenance.review_status == ReviewStatus::Rejected
-        || target_has_action(reviews, &cell.id, ReviewAction::Reject)
-    {
-        return false;
-    }
-    let boundary = cell
-        .metadata
-        .get("evidence_boundary")
-        .and_then(Value::as_str)
-        .map(evidence_boundary_value)
-        .unwrap_or(EvidenceBoundary::Inferred);
-    let review_promoted = target_has_action(reviews, &cell.id, ReviewAction::Accept);
-    let has_source = !cell.source_ids.is_empty();
-    let accepted = cell.provenance.review_status == ReviewStatus::Accepted;
-    match boundary {
-        EvidenceBoundary::SourceBacked => has_source,
-        EvidenceBoundary::ReviewPromoted => has_source && (accepted || review_promoted),
-        EvidenceBoundary::Inferred | EvidenceBoundary::WorkerOutput => {
-            has_source && review_promoted
-        }
-        EvidenceBoundary::Rejected | EvidenceBoundary::Contradicting => false,
-    }
-}
-
-fn evidence_boundary_value(value: &str) -> EvidenceBoundary {
-    match value {
-        "source_backed" | "source_backed_evidence" => EvidenceBoundary::SourceBacked,
-        "worker_output" => EvidenceBoundary::WorkerOutput,
-        "review_promoted" | "review_promotion" => EvidenceBoundary::ReviewPromoted,
-        "rejected" => EvidenceBoundary::Rejected,
-        "contradicting" => EvidenceBoundary::Contradicting,
-        _ => EvidenceBoundary::Inferred,
-    }
 }
 
 pub(super) fn target_has_terminal_review(

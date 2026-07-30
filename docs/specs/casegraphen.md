@@ -397,7 +397,7 @@ All report-producing commands should emit this envelope:
   "report_version": 1,
   "metadata": {
     "command": "casegraphen <operation> ...",
-    "tool_package": "tools/casegraphen",
+    "tool_package": "casegraphen",
     "core_packages": ["higher-graphen-core", "higher-graphen-structure::space"]
   },
   "input": {},

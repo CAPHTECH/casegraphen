@@ -206,6 +206,61 @@ fn ai_inference_does_not_satisfy_evidence_requirements() {
         .any(|id| id.as_str() == "evidence:workflow-gap-inference"));
 }
 
+#[test]
+fn caller_declared_accepted_evidence_requires_an_accepted_workflow_review() {
+    let mut graph: WorkflowCaseGraph =
+        serde_json::from_str(WORKFLOW_EXAMPLE).expect("workflow graph example");
+    let evidence = graph
+        .evidence_records
+        .iter_mut()
+        .find(|record| record.id.as_str() == "evidence:workflow-target-doc")
+        .expect("workflow target evidence");
+    evidence.evidence_boundary = crate::workflow_model::EvidenceBoundary::AcceptedEvidence;
+    evidence.provenance.review_status = ReviewStatus::Unreviewed;
+
+    let without_review = evaluate_workflow_checked(&graph).expect("valid workflow");
+    assert!(!without_review
+        .evidence_findings
+        .accepted_evidence_ids
+        .contains(&id("evidence:workflow-target-doc")));
+    assert!(without_review.obstructions.iter().any(|obstruction| {
+        obstruction.obstruction_type == ObstructionType::MissingEvidence
+            && obstruction
+                .affected_ids
+                .contains(&id("task:define-workflow-reasoning-contract"))
+    }));
+
+    let mut review_provenance = graph.evidence_records[0].provenance.clone();
+    review_provenance.review_status = ReviewStatus::Accepted;
+    graph
+        .completion_reviews
+        .push(crate::workflow_model::CompletionReviewRecord {
+            id: id("completion_review:workflow-target-doc"),
+            candidate_id: id("candidate:workflow-target-doc"),
+            action: crate::workflow_model::CompletionReviewAction::Accept,
+            outcome_review_status: ReviewStatus::Accepted,
+            reviewer_id: id("reviewer:workflow-test"),
+            reason: "Explicitly reviewed the linked evidence.".to_owned(),
+            evidence_ids: vec![id("evidence:workflow-target-doc")],
+            decision_ids: Vec::new(),
+            source_ids: vec![id("source:workflow-target-doc")],
+            candidate_snapshot: json!({}),
+            provenance: review_provenance,
+        });
+
+    let with_review = evaluate_workflow_checked(&graph).expect("reviewed workflow");
+    assert!(with_review
+        .evidence_findings
+        .accepted_evidence_ids
+        .contains(&id("evidence:workflow-target-doc")));
+    assert!(!with_review.obstructions.iter().any(|obstruction| {
+        obstruction.obstruction_type == ObstructionType::MissingEvidence
+            && obstruction
+                .affected_ids
+                .contains(&id("task:define-workflow-reasoning-contract"))
+    }));
+}
+
 fn id(value: &str) -> Id {
     Id::new(value).expect("test id")
 }

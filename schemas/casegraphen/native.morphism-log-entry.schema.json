@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.morphism_log_entry.v1",
+  "title": "Native CaseGraphen Morphism Log Entry",
+  "description": "Standalone identity for the morphism-log entry contract embedded in the native case-space schema.",
+  "allOf": [
+    {
+      "$ref": "native.case.space.schema.json#/$defs/morphism_log_entry"
+    }
+  ]
+}

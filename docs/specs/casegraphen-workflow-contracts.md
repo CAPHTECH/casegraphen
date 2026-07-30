@@ -850,7 +850,7 @@ Workflow reports should use the same broad envelope style as current
   "report_version": 1,
   "metadata": {
     "command": "casegraphen workflow <operation> ...",
-    "tool_package": "tools/casegraphen"
+    "tool_package": "casegraphen"
   },
   "input": {},
   "result": {},

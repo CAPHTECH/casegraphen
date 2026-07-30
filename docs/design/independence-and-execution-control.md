@@ -84,7 +84,7 @@ runtime は純粋・同期・副作用なしのレポート生成ライブラリ
 
 - `include_str!` による `../../../schemas/casegraphen/*.example.json` 参照が約14箇所（src 8 + tests 4 + 統合テストの実行時パス解決）。
 - 統合テストが `python3 -m jsonschema` をサブプロセス起動（JSON Schema 検証 crate は不使用。スキーマIDはRust側定数に手動複製されておりドリフト可能）。
-- レポート内 `"tool_package": "tools/casegraphen"` が3箇所でスキーマ検証対象の値。
+- レポート内 `"tool_package": "casegraphen"` がスキーマ検証対象の値。
 - Cargo.toml は version/license/lints/依存すべて workspace 継承。
 - HigherGraphen 側: `examples/architecture` が `casegraphen` への **path 依存**を持つ。`scripts/check-static-limits.py` / `validate-json-contracts.py` が casegraphen を対象に含む。
 
@@ -115,7 +115,7 @@ runtime は純粋・同期・副作用なしのレポート生成ライブラリ
 
 **D8. 最初の実行サーフェスは `run --step` のみ**。1回の呼び出しで frontier から1件だけ進める。常駐 daemon・分散 scheduler・retry 基盤・event bus・並列 dispatch は導入しない。選択ポリシーは「accepted plan に列挙された順で、frontier に含まれる最初の項目」という決定論とし、優先度エンジンは作らない。
 
-**D9. バージョニング**: 新レコードはすべて新スキーマID（`highergraphen.case.workflow.execution_plan.v1` 等）とし、既存 v1 スキーマへのフィールド追加はしない（strict v1 / unknown fields rejected の規約に従う）。レポートの `tool_package` 値は切り出し直後は `"tools/casegraphen"` のまま維持し、契約バージョン更新時に改める（wire 安定性優先）。
+**D9. バージョニング**: 新レコードはすべて新スキーマID（`highergraphen.case.workflow.execution_plan.v1` 等）とし、既存 v1 スキーマへのフィールド追加はしない（strict v1 / unknown fields rejected の規約に従う）。レポートの `tool_package` 値は切り出し後の実体に合わせて `"casegraphen"` とする。
 
 ---
 

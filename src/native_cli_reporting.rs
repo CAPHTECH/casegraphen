@@ -11,7 +11,7 @@ pub(super) fn report(command: &str, result: Value) -> Value {
         "report_version": REPORT_VERSION,
         "metadata": {
             "command": command,
-            "tool_package": "tools/casegraphen",
+            "tool_package": "casegraphen",
             "core_packages": [
                 "higher-graphen-core"
             ]
@@ -36,4 +36,16 @@ pub(super) fn report(command: &str, result: Value) -> Value {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_reports_name_the_actual_tool_package() {
+        let value = report("casegraphen space inspect", json!({}));
+
+        assert_eq!(value["metadata"]["tool_package"], json!("casegraphen"));
+    }
 }

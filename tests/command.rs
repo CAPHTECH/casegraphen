@@ -49,10 +49,7 @@ fn workflow_reason_emits_reasoning_report_for_workflow_fixture() {
         value["metadata"]["command"],
         json!("casegraphen workflow reason")
     );
-    assert_eq!(
-        value["metadata"]["tool_package"],
-        json!("tools/casegraphen")
-    );
+    assert_eq!(value["metadata"]["tool_package"], json!("casegraphen"));
     assert_eq!(value["result"]["status"], json!("obstructions_detected"));
     assert_eq!(
         value["result"]["readiness"]["ready_item_ids"],
@@ -965,7 +962,7 @@ fn cg_bridge_completion_reopen_restores_unreviewed_candidate_state() {
 }
 
 #[test]
-fn cg_bridge_completion_patch_check_and_apply_flow() {
+fn cg_bridge_completion_patch_check_and_apply_reports_materialization_as_unsupported() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     import_bridge_workflow(&directory);
@@ -1065,17 +1062,31 @@ fn cg_bridge_completion_patch_check_and_apply_flow() {
         "--format",
         "json",
     ]);
-    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
-    let apply_json = stdout_json(&apply);
+    assert!(!apply.status.success());
+    assert!(stdout(&apply).is_empty());
+    assert!(stderr(&apply).contains(
+        "workflow patch materialization is not implemented; use the native `morphism apply` path"
+    ));
+
+    let unchanged = run_cli(&[
+        "cg",
+        "workflow",
+        "patch",
+        "check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--workflow-graph-id",
+        "workflow_graph:casegraphen-rewrite-contract",
+        "--transition-id",
+        "transition:patch:test-missing-task",
+        "--format",
+        "json",
+    ]);
+    assert!(unchanged.status.success(), "stderr: {}", stderr(&unchanged));
     assert_eq!(
-        apply_json["schema"],
-        json!("highergraphen.case.workflow.patch_apply.report.v1")
+        stdout_json(&unchanged)["result"]["review_status"],
+        json!("unreviewed")
     );
-    assert_eq!(
-        apply_json["result"]["transition_after_review"]["provenance"]["review_status"],
-        json!("accepted")
-    );
-    assert_eq!(apply_json["result"]["materialized_record_count"], json!(0));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -5273,6 +5284,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/workflow.report.schema.json",
         "schemas/casegraphen/workflow.operation.report.schema.json",
         "schemas/casegraphen/native.case.space.schema.json",
+        "schemas/casegraphen/native.morphism-log-entry.schema.json",
         "schemas/casegraphen/native.case.report.schema.json",
         "schemas/casegraphen/execution.plan.schema.json",
         "schemas/casegraphen/worker.binding.schema.json",

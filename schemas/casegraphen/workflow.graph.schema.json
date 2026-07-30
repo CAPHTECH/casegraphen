@@ -436,6 +436,7 @@
             "accepted_evidence",
             "source_backed_evidence",
             "ai_inference",
+            "worker_output",
             "review_promotion",
             "rejected_evidence"
           ]

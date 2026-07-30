@@ -3,6 +3,7 @@
 
 pub mod cli;
 pub mod core_extension_bridge;
+pub(crate) mod evidence_trust;
 pub mod exec;
 pub mod math_diagnostics;
 pub mod model;

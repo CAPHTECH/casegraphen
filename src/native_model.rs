@@ -1,3 +1,4 @@
+use crate::evidence_trust::{EvidenceTrustBoundary, EvidenceTrustInput};
 use higher_graphen_core::{Id, Provenance, ReviewStatus, Severity};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -794,6 +795,50 @@ pub enum EvidenceBoundary {
     ReviewPromoted,
     Rejected,
     Contradicting,
+}
+
+impl EvidenceBoundary {
+    pub(crate) fn from_metadata_value(value: Option<&str>) -> Self {
+        match value {
+            Some("source_backed" | "source_backed_evidence") => Self::SourceBacked,
+            Some("inferred" | "ai_inference") => Self::Inferred,
+            Some("worker_output") => Self::WorkerOutput,
+            Some("review_promoted" | "review_promotion") => Self::ReviewPromoted,
+            Some("rejected") => Self::Rejected,
+            Some("contradicting") => Self::Contradicting,
+            Some(_) | None => Self::Inferred,
+        }
+    }
+}
+
+impl From<EvidenceBoundary> for EvidenceTrustBoundary {
+    fn from(boundary: EvidenceBoundary) -> Self {
+        match boundary {
+            EvidenceBoundary::SourceBacked => Self::SourceBacked,
+            EvidenceBoundary::Inferred => Self::Inferred,
+            EvidenceBoundary::WorkerOutput => Self::WorkerOutput,
+            EvidenceBoundary::ReviewPromoted => Self::ReviewPromoted,
+            EvidenceBoundary::Rejected => Self::Rejected,
+            EvidenceBoundary::Contradicting => Self::Contradicting,
+        }
+    }
+}
+
+pub(crate) fn native_evidence_trust_input(
+    cell: &CaseCell,
+    latest_review_status: Option<ReviewStatus>,
+) -> EvidenceTrustInput {
+    EvidenceTrustInput {
+        boundary: EvidenceBoundary::from_metadata_value(
+            cell.metadata
+                .get("evidence_boundary")
+                .and_then(Value::as_str),
+        )
+        .into(),
+        cell_review_status: cell.provenance.review_status,
+        latest_review_status,
+        has_source: !cell.source_ids.is_empty(),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -1,3 +1,4 @@
+use crate::evidence_trust::EvidenceTrustBoundary;
 use higher_graphen_core::{Confidence, Id, ReviewStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -164,11 +165,31 @@ pub enum EvidenceType {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceBoundary {
+    /// A caller-declared legacy label. It maps to review-promoted trust, so the
+    /// label alone never makes evidence acceptable without an accepted review.
     AcceptedEvidence,
     SourceBackedEvidence,
     AiInference,
+    WorkerOutput,
     ReviewPromotion,
     RejectedEvidence,
+}
+
+/// Normalizes workflow boundaries for the shared trust rule. In particular,
+/// caller-declared `AcceptedEvidence` is review-promoted and therefore requires
+/// an accepted review instead of granting trust by itself.
+impl From<EvidenceBoundary> for EvidenceTrustBoundary {
+    fn from(boundary: EvidenceBoundary) -> Self {
+        match boundary {
+            EvidenceBoundary::AcceptedEvidence | EvidenceBoundary::ReviewPromotion => {
+                Self::ReviewPromoted
+            }
+            EvidenceBoundary::SourceBackedEvidence => Self::SourceBacked,
+            EvidenceBoundary::AiInference => Self::Inferred,
+            EvidenceBoundary::WorkerOutput => Self::WorkerOutput,
+            EvidenceBoundary::RejectedEvidence => Self::Rejected,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -374,11 +395,11 @@ mod tests {
             .iter()
             .find(|record| record.id.as_str() == "evidence:workflow-target-doc")
             .expect("source-backed evidence");
-        let inference = graph
+        let worker_output = graph
             .evidence_records
             .iter()
             .find(|record| record.id.as_str() == "evidence:workflow-gap-inference")
-            .expect("inference evidence");
+            .expect("worker output evidence");
 
         assert_eq!(
             source_backed.evidence_boundary,
@@ -389,9 +410,15 @@ mod tests {
             ReviewStatus::Accepted
         );
         assert_eq!(source_backed.provenance.source.kind, "document");
-        assert_eq!(inference.evidence_boundary, EvidenceBoundary::AiInference);
-        assert_eq!(inference.provenance.review_status, ReviewStatus::Unreviewed);
-        assert_eq!(inference.provenance.source.kind, "agent_inference");
+        assert_eq!(
+            worker_output.evidence_boundary,
+            EvidenceBoundary::WorkerOutput
+        );
+        assert_eq!(
+            worker_output.provenance.review_status,
+            ReviewStatus::Unreviewed
+        );
+        assert_eq!(worker_output.provenance.source.kind, "agent_inference");
 
         let round_trip: WorkflowCaseGraph =
             serde_json::from_str(&serde_json::to_string(&graph).expect("serialize workflow graph"))

@@ -1,3 +1,4 @@
+use crate::evidence_trust::evidence_is_acceptable;
 use crate::workflow_model::{
     EvidenceRecord, ReadinessRule, ReadinessRuleType, WorkItem, WorkItemState, WorkflowCaseGraph,
     WorkflowProvenance, WorkflowRelationType, WorkflowSeverity,
@@ -16,7 +17,7 @@ mod types;
 mod validation;
 
 use completion::completion_candidates as derive_completion_candidates;
-use evidence::{acceptable_evidence, evidence_findings};
+use evidence::{evidence_findings, evidence_trust_input};
 pub use result_sections::projection_profile_for;
 use result_sections::{
     correspondence_results, evaluation_status, evolution_result, projection_result,
@@ -286,20 +287,17 @@ impl<'a> EvaluationContext<'a> {
         self.work_items
             .get(wait_id.as_str())
             .is_some_and(|item| terminal_success_state(item.state))
-            || self
-                .acceptable_evidence_for(wait_id, wait_id)
-                .next()
-                .is_some()
+            || self.trusted_evidence_for(wait_id, wait_id).next().is_some()
     }
 
     fn evidence_requirement_satisfied(&self, requirement_id: &Id, item_id: &Id) -> bool {
-        self.acceptable_evidence_for(requirement_id, item_id)
+        self.trusted_evidence_for(requirement_id, item_id)
             .next()
             .is_some()
     }
 
     fn proof_requirement_satisfied(&self, requirement_id: &Id, item_id: &Id) -> bool {
-        self.acceptable_evidence_for(requirement_id, item_id)
+        self.trusted_evidence_for(requirement_id, item_id)
             .next()
             .is_some()
             || self
@@ -308,7 +306,7 @@ impl<'a> EvaluationContext<'a> {
                 .is_some_and(|item| terminal_success_state(item.state))
     }
 
-    fn acceptable_evidence_for(
+    fn trusted_evidence_for(
         &'a self,
         requirement_id: &'a Id,
         item_id: &'a Id,
@@ -316,7 +314,7 @@ impl<'a> EvaluationContext<'a> {
         self.graph
             .evidence_records
             .iter()
-            .filter(|record| acceptable_evidence(record))
+            .filter(|record| evidence_is_acceptable(evidence_trust_input(self.graph, record)))
             .filter(move |record| {
                 record.id == *requirement_id
                     || record.supports_ids.contains(requirement_id)

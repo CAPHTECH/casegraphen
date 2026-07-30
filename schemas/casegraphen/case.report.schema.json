@@ -39,7 +39,7 @@
           "minLength": 1
         },
         "tool_package": {
-          "const": "tools/casegraphen"
+          "const": "casegraphen"
         },
         "core_packages": {
           "type": "array",

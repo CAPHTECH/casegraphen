@@ -29,6 +29,9 @@ This directory contains the first file-based JSON contracts for the
   `highergraphen.case.space.v1` native case-space contracts for cells,
   relations, morphism-log entries, projections, revisions, reviews, and
   close-check skeletons.
+- `native.morphism-log-entry.schema.json` gives the embedded native morphism-log
+  record contract its standalone `highergraphen.case.morphism_log_entry.v1`
+  schema identity while reusing the case-space definition.
 - `native.case.report.schema.json` validates
   `highergraphen.case.native.report.v1` package-level native report envelopes.
 - `native-cli.report.schema.json` validates generated repo-owned native CLI

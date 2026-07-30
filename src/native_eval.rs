@@ -1,3 +1,4 @@
+use crate::evidence_trust::evidence_is_acceptable;
 use crate::native_model::{
     CaseCell, CaseCellLifecycle, CaseCellType, CaseRelation, CaseRelationType, CaseSpace,
     RelationStrength,
@@ -17,8 +18,8 @@ pub use validation::validate_native_case_space;
 
 use graph::NativeCaseTraversal;
 use sections::{
-    acceptable_evidence, close_check_skeleton, completion_candidates, correspondence_summaries,
-    evidence_findings, evolution_summary, projection_loss, review_gaps,
+    close_check_skeleton, completion_candidates, correspondence_summaries, evidence_findings,
+    evidence_trust_input, evolution_summary, projection_loss, review_gaps,
 };
 use util::*;
 
@@ -364,15 +365,11 @@ impl<'a> NativeEvaluationContext<'a> {
     }
 
     fn wait_satisfied(&self, wait_id: &Id) -> bool {
-        self.complete_cell(wait_id)
-            || self
-                .acceptable_evidence_for(wait_id, wait_id)
-                .next()
-                .is_some()
+        self.complete_cell(wait_id) || self.trusted_evidence_for(wait_id, wait_id).next().is_some()
     }
 
     fn evidence_requirement_satisfied(&self, cell_id: &Id, requirement_id: &Id) -> bool {
-        self.acceptable_evidence_for(requirement_id, cell_id)
+        self.trusted_evidence_for(requirement_id, cell_id)
             .next()
             .is_some()
     }
@@ -381,19 +378,19 @@ impl<'a> NativeEvaluationContext<'a> {
         self.cells.get(proof_id.as_str()).is_some_and(|cell| {
             cell.cell_type == CaseCellType::Proof && self.complete_cell(proof_id)
         }) || self
-            .acceptable_evidence_for(proof_id, cell_id)
+            .trusted_evidence_for(proof_id, cell_id)
             .next()
             .is_some()
     }
 
-    fn acceptable_evidence_for(
+    fn trusted_evidence_for(
         &'a self,
         requirement_id: &'a Id,
         cell_id: &'a Id,
     ) -> impl Iterator<Item = &'a CaseCell> + 'a {
         self.case_space.case_cells.iter().filter(move |cell| {
             cell.cell_type == CaseCellType::Evidence
-                && acceptable_evidence(self.case_space, cell)
+                && evidence_is_acceptable(evidence_trust_input(self.case_space, cell))
                 && (cell.id == *requirement_id
                     || cell.structure_ids.contains(requirement_id)
                     || cell.structure_ids.contains(cell_id)

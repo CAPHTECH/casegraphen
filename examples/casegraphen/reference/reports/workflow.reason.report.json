@@ -470,7 +470,7 @@
         "id": "witness:evidence:workflow-gap-inference",
         "observed_at": "unrecorded",
         "payload_ref": {
-          "kind": "workflow_aiinference",
+          "kind": "workflow_workeroutput",
           "uri": "casegraphen://workflow/workflow_graph/casegraphen-rewrite-contract/evidence/evidence/workflow-gap-inference"
         },
         "provenance": {
@@ -514,7 +514,7 @@
       "higher-graphen-structure",
       "higher-graphen-projection"
     ],
-    "tool_package": "tools/casegraphen"
+    "tool_package": "casegraphen"
   },
   "projection": {
     "ai_view": {
@@ -876,7 +876,7 @@
           "source_ids": [
             "evidence:workflow-target-doc"
           ],
-          "summary": "evidence:workflow-target-doc is accepted or accepted-boundary evidence."
+          "summary": "evidence:workflow-target-doc is acceptable under the evidence trust policy."
         },
         {
           "confidence": 0.8,
@@ -1453,7 +1453,7 @@
           "finding_type": "accepted_evidence_present",
           "id": "finding:evidence-workflow-target-doc:accepted",
           "review_status": "accepted",
-          "summary": "evidence:workflow-target-doc is accepted or accepted-boundary evidence."
+          "summary": "evidence:workflow-target-doc is acceptable under the evidence trust policy."
         },
         {
           "evidence_ids": [
