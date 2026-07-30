@@ -172,6 +172,26 @@ fn parses_lift_adapters() {
         NativeCliCommand::LiftStructuredSource { adapter, .. } if adapter == "workflow"
     ));
 
+    let github_issues = NativeCliCommand::parse(
+        "lift",
+        args(&[
+            "github-issues",
+            "--store",
+            "store",
+            "--input",
+            "github.issue-snapshot.json",
+            "--revision-id",
+            "revision:lifted",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect("GitHub issues lift command");
+    assert!(matches!(
+        github_issues,
+        NativeCliCommand::LiftStructuredSource { adapter, .. } if adapter == "github-issues"
+    ));
+
     let native = NativeCliCommand::parse(
         "lift",
         args(&[

@@ -1,4 +1,8 @@
 use super::{
+    github_issue_lift::{
+        github_source_boundary, github_source_id, materialize_github_issue_snapshot,
+        parse_github_issue_snapshot,
+    },
     io::{case_space_checksum, read_case_space},
     new_case_space, path_segment, report, retarget_latest_revision, source_boundary_value,
     workflow_lift::materialize_workflow_graph,
@@ -70,28 +74,55 @@ pub(in crate::native_cli) fn lift_structured_source(
     // relations, and evidence replace the synthetic root cell, and the
     // genesis payload below is rebuilt from them so the lifted space
     // replays, rebuilds, and validates like any other.
-    if adapter == "workflow" {
-        let graph = parse_workflow_graph(&bytes)?;
-        let materialized = materialize_workflow_graph(&graph)?;
-        case_space.case_cells = materialized.cells;
-        case_space.case_relations = materialized.relations;
-        information_loss = vec![json!({
-            "source_schema": lift.source_schema,
-            "input": input.display().to_string(),
-            "note": "Work items, workflow relations, and evidence records were materialized as case cells and relations; the unmapped families are declared below."
-        })];
-        information_loss.extend(materialized.information_loss);
+    let mut github_snapshot = None;
+    match adapter {
+        "workflow" => {
+            let graph = parse_workflow_graph(&bytes)?;
+            let materialized = materialize_workflow_graph(&graph)?;
+            case_space.case_cells = materialized.cells;
+            case_space.case_relations = materialized.relations;
+            information_loss = vec![json!({
+                "source_schema": lift.source_schema,
+                "input": input.display().to_string(),
+                "note": "Work items, workflow relations, and evidence records were materialized as case cells and relations; the unmapped families are declared below."
+            })];
+            information_loss.extend(materialized.information_loss);
+        }
+        "github-issues" => {
+            let snapshot = parse_github_issue_snapshot(&bytes)?;
+            let materialized = materialize_github_issue_snapshot(&snapshot)?;
+            case_space.case_cells = materialized.cells;
+            case_space.case_relations = materialized.relations;
+            information_loss = vec![json!({
+                "source_schema": lift.source_schema,
+                "input": input.display().to_string(),
+                "note": "GitHub issues, milestones, pull-request references, and in-snapshot task-list references were materialized; every omitted source family and semantic default is declared below."
+            })];
+            information_loss.extend(materialized.information_loss);
+            github_snapshot = Some(snapshot);
+        }
+        _ => {}
     }
-    let source_boundary = source_boundary_value(
-        Id::new(format!("source_boundary:{}", path_segment(&case_space_id)))?,
-        std::slice::from_ref(&lift.lift_source_id),
-        &[adapter],
-        "Structured source records are accepted as bounded lift input; generated records require review before they satisfy hard requirements.",
-        "Lift adapters preserve source identifiers and declare unsupported source fields as information loss.",
-        information_loss,
-    );
+    let source_boundary_id = Id::new(format!("source_boundary:{}", path_segment(&case_space_id)))?;
+    let source_boundary = if let Some(snapshot) = &github_snapshot {
+        github_source_boundary(
+            snapshot,
+            source_boundary_id,
+            &lift.lift_source_id,
+            information_loss,
+        )
+    } else {
+        source_boundary_value(
+            source_boundary_id,
+            std::slice::from_ref(&lift.lift_source_id),
+            &[adapter],
+            "Structured source records are accepted as bounded lift input; generated records require review before they satisfy hard requirements.",
+            "Lift adapters preserve source identifiers and declare unsupported source fields as information loss.",
+            information_loss,
+        )
+    };
     let input_content_hash = crate::native_hash::sha256_hex(&bytes);
-    let annotate_root_cell = adapter != "workflow";
+    let annotate_root_cell = !matches!(adapter, "workflow" | "github-issues");
     annotate_lift_metadata(
         &mut case_space,
         &lift,
@@ -139,7 +170,15 @@ fn read_lift_input(bytes: &[u8], adapter: &str) -> Result<LiftInput, NativeCliEr
         .get("space_id")
         .and_then(Value::as_str)
         .ok_or_else(|| NativeCliError::invalid("lift input must contain space_id"))?;
-    let lift_source_id = Id::new(format!("source:{}", path_segment(&source_id)))?;
+    let lift_source_id = if adapter == "github-issues" {
+        let repository = object
+            .get("repository")
+            .and_then(Value::as_str)
+            .ok_or_else(|| NativeCliError::invalid("lift input must contain repository"))?;
+        github_source_id(repository)?
+    } else {
+        Id::new(format!("source:{}", path_segment(&source_id)))?
+    };
     Ok(LiftInput {
         source_schema,
         source_id,
@@ -231,6 +270,13 @@ fn parse_workflow_graph(bytes: &[u8]) -> Result<WorkflowCaseGraph, NativeCliErro
 }
 
 fn source_id_for_lift(adapter: &str, object: &Map<String, Value>) -> Result<Id, NativeCliError> {
+    if adapter == "github-issues" {
+        let repository = object
+            .get("repository")
+            .and_then(Value::as_str)
+            .ok_or_else(|| NativeCliError::invalid("lift input must contain repository"))?;
+        return Ok(Id::new(format!("github:{repository}"))?);
+    }
     let field = match adapter {
         "workflow" => "workflow_graph_id",
         "case-graph" => "case_graph_id",

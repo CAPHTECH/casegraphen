@@ -3339,6 +3339,170 @@ fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+#[test]
+fn lift_github_issues_materializes_the_snapshot_into_a_rebuildable_case_space() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let output = run_cli(&[
+        "lift",
+        "github-issues",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        repo_path("schemas/casegraphen/github.issue-snapshot.example.json")
+            .to_str()
+            .expect("GitHub issue snapshot example path"),
+        "--revision-id",
+        "revision:github-issues-lift-genesis",
+        "--format",
+        "json",
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let lifted = stdout_json(&output);
+    let case_space = &lifted["result"]["case_space"];
+    let case_space_id = case_space["case_space_id"]
+        .as_str()
+        .expect("case space id")
+        .to_owned();
+    let cells = case_space["case_cells"].as_array().expect("case cells");
+    let relations = case_space["case_relations"]
+        .as_array()
+        .expect("case relations");
+    let cell = |id: &str| {
+        cells
+            .iter()
+            .find(|cell| cell["id"] == json!(id))
+            .unwrap_or_else(|| panic!("missing cell {id}"))
+    };
+
+    assert_eq!(cell("work:issue-101")["lifecycle"], json!("active"));
+    assert_eq!(cell("work:issue-102")["lifecycle"], json!("resolved"));
+    assert_eq!(cell("work:issue-103")["lifecycle"], json!("retired"));
+    assert_eq!(cell("work:issue-101")["cell_type"], json!("work"));
+    assert_eq!(
+        cell("work:issue-101")["source_ids"],
+        json!(["source:github:CAPHTECH/casegraphen"])
+    );
+    assert_eq!(
+        cell("work:issue-101")["provenance"]["source"]["kind"],
+        json!("api")
+    );
+    assert_eq!(
+        cell("work:issue-101")["provenance"]["review_status"],
+        json!("reviewed")
+    );
+    assert_eq!(
+        cell("work:issue-101")["metadata"]["github_labels"],
+        json!(["enhancement"])
+    );
+
+    assert_eq!(
+        cell("goal:milestone-release-1-0")["cell_type"],
+        json!("goal")
+    );
+    let covers = relations
+        .iter()
+        .find(|relation| {
+            relation["relation_type"] == json!("covers")
+                && relation["from_id"] == json!("work:issue-101")
+                && relation["to_id"] == json!("goal:milestone-release-1-0")
+        })
+        .expect("diagnostic milestone covers relation");
+    assert_eq!(covers["relation_strength"], json!("diagnostic"));
+
+    let pull_request = cell("evidence:github-pr-42");
+    assert_eq!(pull_request["cell_type"], json!("evidence"));
+    assert_eq!(
+        pull_request["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+    assert_eq!(
+        pull_request["metadata"]["evidence_boundary"],
+        json!("inferred")
+    );
+    let verifies = relations
+        .iter()
+        .find(|relation| {
+            relation["relation_type"] == json!("verifies")
+                && relation["from_id"] == json!("evidence:github-pr-42")
+                && relation["to_id"] == json!("work:issue-102")
+        })
+        .expect("diagnostic PR verifies relation");
+    assert_eq!(verifies["relation_strength"], json!("diagnostic"));
+
+    let task_list_dependency = relations
+        .iter()
+        .find(|relation| {
+            relation["relation_type"] == json!("depends_on")
+                && relation["from_id"] == json!("work:issue-101")
+                && relation["to_id"] == json!("work:issue-102")
+        })
+        .expect("soft task-list dependency");
+    assert_eq!(task_list_dependency["relation_strength"], json!("soft"));
+    assert!(cells
+        .iter()
+        .all(|cell| cell["cell_type"] != json!("custom:capability")));
+
+    let source_boundary = &case_space["metadata"]["source_boundary"];
+    assert_eq!(
+        source_boundary["included_sources"][0]["repository"],
+        json!("CAPHTECH/casegraphen")
+    );
+    assert!(source_boundary["included_sources"][0]["query"]
+        .as_str()
+        .expect("recorded query")
+        .starts_with("gh issue list --repo CAPHTECH/casegraphen"));
+    assert!(source_boundary["information_loss"]
+        .as_array()
+        .expect("information loss")
+        .iter()
+        .any(|loss| loss["skipped_issue_numbers"] == json!([999])));
+
+    // Delete the disposable snapshot so rebuild must fold the real genesis
+    // payload from an empty case space and recreate it.
+    let relative_snapshot = lifted["result"]["record"]["current_snapshot_path"]
+        .as_str()
+        .expect("snapshot path");
+    fs::remove_file(directory.join(relative_snapshot)).expect("delete current snapshot");
+    let rebuild = run_cli(&[
+        "space",
+        "rebuild",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(rebuild.status.success(), "stderr: {}", stderr(&rebuild));
+    assert_eq!(
+        stdout_json(&rebuild)["result"]["rebuild"]["revisions"][0]["snapshot_status"],
+        json!("rebuilt")
+    );
+
+    let validation = run_cli(&[
+        "space",
+        "validate",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(
+        validation.status.success(),
+        "stderr: {}",
+        stderr(&validation)
+    );
+    assert_eq!(
+        stdout_json(&validation)["result"]["validation"]["valid"],
+        json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 /// A workflow graph with one task, one proof, and one extra work item the test
 /// supplies. The task hard-requires evidence that no record declares and a
 /// proof that the graph declares, so a clean lift always carries a
@@ -4253,6 +4417,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/coverage.policy.example.json",
         "schemas/casegraphen/projection.example.json",
         "schemas/casegraphen/workflow.graph.example.json",
+        "schemas/casegraphen/github.issue-snapshot.example.json",
         "schemas/casegraphen/native.case.space.example.json",
         "schemas/casegraphen/native.case.report.example.json",
         "schemas/casegraphen/execution.plan.example.json",
@@ -4265,6 +4430,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/projection.schema.json",
         "schemas/casegraphen/case.report.schema.json",
         "schemas/casegraphen/workflow.graph.schema.json",
+        "schemas/casegraphen/github.issue-snapshot.schema.json",
         "schemas/casegraphen/native.case.space.schema.json",
         "schemas/casegraphen/native.morphism-log-entry.schema.json",
         "schemas/casegraphen/native.case.report.schema.json",
@@ -4281,6 +4447,10 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
 
 fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
     [
+        (
+            "schemas/casegraphen/github.issue-snapshot.schema.json",
+            "schemas/casegraphen/github.issue-snapshot.example.json",
+        ),
         (
             "schemas/casegraphen/native.case.space.schema.json",
             "schemas/casegraphen/native.case.space.example.json",

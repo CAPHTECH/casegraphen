@@ -5,6 +5,7 @@ pub mod cli;
 pub mod core_extension_bridge;
 pub(crate) mod evidence_trust;
 pub mod exec;
+pub mod github_issue_snapshot;
 pub mod math_diagnostics;
 pub mod native_cli;
 pub mod native_eval;

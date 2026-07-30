@@ -6,6 +6,7 @@ use casegraphen::{
         records::{EXECUTION_TRACE_SCHEMA, WORKER_REPORT_SCHEMA},
         EXECUTION_PLAN_SCHEMA,
     },
+    github_issue_snapshot::GITHUB_ISSUE_SNAPSHOT_SCHEMA,
     native_model::{NATIVE_CASE_SPACE_SCHEMA, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA},
     workflow_model::WORKFLOW_GRAPH_SCHEMA,
 };
@@ -35,6 +36,7 @@ fn every_input_and_record_schema_constant_has_a_shipped_schema_id() {
 
     let input_and_record_ids = [
         WORKFLOW_GRAPH_SCHEMA,
+        GITHUB_ISSUE_SNAPSHOT_SCHEMA,
         NATIVE_CASE_SPACE_SCHEMA,
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
         EXECUTION_PLAN_SCHEMA,

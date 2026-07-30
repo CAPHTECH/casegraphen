@@ -86,7 +86,8 @@ Integration tests validate the JSON contracts with `python3 -m jsonschema`.
 All commands take `--format json` and optionally `--output <path>`.
 
 ```text
-casegraphen lift native|workflow|case-graph      # bounded lift into a case space
+casegraphen lift native|workflow|case-graph      # native and graph lifts
+casegraphen lift github-issues                   # bounded GitHub issue snapshot lift
 casegraphen space new|list|inspect|history|replay|rebuild|validate|reason|frontier|evidence|project|topology
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
 casegraphen review accept|reject|reopen|waive     # gated

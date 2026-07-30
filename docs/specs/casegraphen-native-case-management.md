@@ -149,6 +149,36 @@ projections, close policy, case-space metadata, and genesis revision metadata.
 A future v2 schema may promote `source_boundary` from metadata into a
 first-class `CaseSpace` field.
 
+#### GitHub issue snapshot lift
+
+`highergraphen.case.github.issue_snapshot.v1` is the bounded input contract for
+`lift github-issues`. It wraps the captured `gh issue list` array with the
+repository, exact query, target `space_id`, and capture time. The wrapper is
+strict. Each issue requires `number`, `title`, and `state`; issue objects alone
+permit additional `gh --json` fields because the selected GitHub field set can
+grow. Optional fields consumed by the adapter are `stateReason`, `labels`,
+`milestone`, `closedByPullRequestsReferences`, `createdAt`, `closedAt`, and
+`body`.
+
+The deterministic mapping is:
+
+- issue `N` becomes active/resolved/retired work cell `work:issue-N`;
+- each distinct milestone title becomes `goal:milestone-<slug>`, covered by its
+  issues through diagnostic relations;
+- each referenced closing PR becomes inferred, unreviewed evidence
+  `evidence:github-pr-N`, with a diagnostic `verifies` relation to the issue;
+- line-anchored `- [ ] #N`, `- [x] #N`, `* [ ] #N`, and `* [x] #N` task-list
+  entries become soft `depends_on` relations only when issue `N` is present in
+  the same snapshot.
+
+Labels remain metadata and do not influence cell or relation semantics. The
+genesis boundary names the repository and query, excludes issue bodies beyond
+the query limit, PR documents, and discussions, and declares loss of comments,
+reactions, assignees, projects, non-task-list body text, timelines/event
+history, label semantics, relation-strength defaults, and task references to
+issues absent from the snapshot. The lift never creates capability cells, so
+the result is an analysis space and cannot satisfy an operation gate.
+
 ### CaseSpace
 
 `CaseSpace` is the bounded native case universe. It replaces the current
@@ -662,6 +692,7 @@ Canonical higher-order CLI target:
 casegraphen lift native --store <dir> --input <native.case.space.json> --revision-id <id> --format json
 casegraphen lift workflow --store <dir> --input <workflow.graph.json> --revision-id <id> --format json
 casegraphen lift case-graph --store <dir> --input <case.graph.json> --revision-id <id> --format json
+casegraphen lift github-issues --store <dir> --input <snapshot.json> --revision-id <id> --format json
 casegraphen space new --store <dir> --case-space-id <id> --space-id <id> --title <text> --revision-id <id> --format json
 casegraphen space list --store <dir> --format json
 casegraphen space inspect --store <dir> --case-space-id <id> --format json

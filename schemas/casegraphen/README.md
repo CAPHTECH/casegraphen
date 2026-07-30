@@ -16,6 +16,11 @@ CLI.
   correspondence. Since ADR 0003 the workflow graph is a lift input only:
   `lift workflow` materializes it into a native case space, and the native
   derived commands replace the retired workflow report contracts.
+- `github.issue-snapshot.schema.json` validates the strict wrapper around a
+  captured `gh issue list --json ...` result used by `lift github-issues`.
+  The wrapper records the repository, exact query, and capture time; issue
+  objects alone allow additional `gh` fields so field-set changes do not erase
+  the source boundary.
 - `native.case.space.schema.json` validates
   `highergraphen.case.space.v1` native case-space contracts for cells,
   relations, morphism-log entries, projections, revisions, reviews, and
@@ -36,8 +41,8 @@ CLI.
 
 The matching `*.example.json` files are used by package tests. Input fixtures
 such as `case.graph.example.json`, `workflow.graph.example.json`,
-`projection.example.json`, `coverage.policy.example.json`, and
-`native.case.space.example.json` can be passed directly to the relevant
-`casegraphen` CLI commands. Report fixtures such as
+`github.issue-snapshot.example.json`, `projection.example.json`,
+`coverage.policy.example.json`, and `native.case.space.example.json` can be
+passed directly to the relevant `casegraphen` CLI commands. Report fixtures such as
 `native.case.report.example.json` are output contract examples, not CLI
 inputs.

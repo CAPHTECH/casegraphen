@@ -1,0 +1,71 @@
+{
+  "schema": "highergraphen.case.github.issue_snapshot.v1",
+  "schema_version": 1,
+  "repository": "CAPHTECH/casegraphen",
+  "space_id": "space:casegraphen",
+  "query": "gh issue list --repo CAPHTECH/casegraphen --state all --limit 200 --json number,title,state,stateReason,labels,milestone,closedByPullRequestsReferences,createdAt,closedAt,body",
+  "captured_at": "2026-07-30T12:00:00Z",
+  "issues": [
+    {
+      "number": 101,
+      "title": "Ship the GitHub issue lift",
+      "state": "OPEN",
+      "stateReason": null,
+      "labels": [
+        {
+          "id": "label:enhancement",
+          "name": "enhancement",
+          "description": "New feature or request",
+          "color": "a2eeef"
+        }
+      ],
+      "milestone": {
+        "number": 1,
+        "title": "Release 1.0",
+        "description": "First stable release",
+        "dueOn": "2026-08-31T00:00:00Z"
+      },
+      "closedByPullRequestsReferences": [],
+      "createdAt": "2026-07-28T08:00:00Z",
+      "closedAt": null,
+      "body": "Track the prerequisite issue.\n\n- [ ] #102\n* [x] #999\n\nInline text - [ ] #103 is not a task-list reference.",
+      "author": {
+        "login": "example-author"
+      }
+    },
+    {
+      "number": 102,
+      "title": "Implement the materializer",
+      "state": "CLOSED",
+      "stateReason": "COMPLETED",
+      "labels": [
+        {
+          "name": "implementation"
+        }
+      ],
+      "milestone": {
+        "title": "Release 1.0"
+      },
+      "closedByPullRequestsReferences": [
+        {
+          "number": 42
+        }
+      ],
+      "createdAt": "2026-07-25T08:00:00Z",
+      "closedAt": "2026-07-29T18:00:00Z",
+      "body": "Implemented by the linked pull request."
+    },
+    {
+      "number": 103,
+      "title": "Retire the superseded approach",
+      "state": "CLOSED",
+      "stateReason": "NOT_PLANNED",
+      "labels": [],
+      "milestone": null,
+      "closedByPullRequestsReferences": [],
+      "createdAt": "2026-07-20T08:00:00Z",
+      "closedAt": "2026-07-24T08:00:00Z",
+      "body": null
+    }
+  ]
+}

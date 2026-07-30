@@ -149,7 +149,7 @@ impl NativeCliCommand {
                 revision_id: options.require_id("--revision-id")?,
                 output: options.output,
             }),
-            "workflow" | "case-graph" => Ok(Self::LiftStructuredSource {
+            "workflow" | "case-graph" | "github-issues" => Ok(Self::LiftStructuredSource {
                 store: options.require_store()?,
                 input: options.require_path("--input")?,
                 revision_id: options.require_id("--revision-id")?,

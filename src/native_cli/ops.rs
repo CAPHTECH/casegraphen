@@ -28,6 +28,7 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 mod binding;
+mod github_issue_lift;
 mod io;
 mod lift;
 mod mutations;
