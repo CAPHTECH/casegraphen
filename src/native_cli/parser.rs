@@ -69,17 +69,11 @@ impl NativeCliCommand {
         }
         let options = NativeOptions::parse(args)?;
         match operation {
-            "new" | "create" => Ok(Self::CaseNew {
+            "new" => Ok(Self::CaseNew {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
                 space_id: options.require_id("--space-id")?,
                 title: options.require_string("--title")?,
-                revision_id: options.require_id("--revision-id")?,
-                output: options.output,
-            }),
-            "import" => Ok(Self::CaseImport {
-                store: options.require_store()?,
-                input: options.require_path("--input")?,
                 revision_id: options.require_id("--revision-id")?,
                 output: options.output,
             }),
