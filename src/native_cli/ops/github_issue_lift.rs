@@ -259,6 +259,16 @@ pub(super) fn materialize_github_issue_snapshot(
             "Milestone and pull-request-reference relations defaulted to diagnostic strength; \
              task-list dependency relations defaulted to soft strength.",
         ),
+        // The mirrored GitHub records accept fields this adapter does not map,
+        // so that a widened `gh --json` selection does not refuse the snapshot.
+        // Accepting them silently would make the boundary claim a completeness
+        // it does not have; the snapshot's content hash is what pins exactly
+        // which bytes were read.
+        loss(
+            "Fields of the mirrored GitHub issue, label, milestone, and pull-request-reference \
+             records that this adapter does not map were read and ignored; only the snapshot \
+             content hash pins what was present.",
+        ),
     ];
     if !skipped_task_targets.is_empty() {
         information_loss.push(json!({

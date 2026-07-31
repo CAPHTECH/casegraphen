@@ -4363,6 +4363,116 @@ fn native_cli_invalid_targets_exit_nonzero() {
 }
 
 #[test]
+fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+
+    // An author writes the state and a genesis stub: who, from what, under
+    // which boundary. The reconstructive copy — payload, added_ids, and the
+    // immutable shell — is the tool's to derive. Documenting it as the author's
+    // job once cost a reader a hand-written generator for 30 cells and 28
+    // relations, so this pins that a stub is enough.
+    let mut genesis: Value = serde_json::from_str(
+        &fs::read_to_string(repo_path(
+            "docs/guides/release-decision/genesis.case.space.json",
+        ))
+        .expect("read the walkthrough genesis"),
+    )
+    .expect("walkthrough genesis parses");
+    let stub_metadata = genesis["morphism_log"][0]["morphism"]["metadata"]
+        .as_object_mut()
+        .expect("genesis morphism metadata");
+    stub_metadata.remove("payload");
+    stub_metadata.remove("genesis_case_space");
+    genesis["morphism_log"][0]["morphism"]["added_ids"] = json!([]);
+    let stub_path = directory.join("genesis-stub.case.space.json");
+    fs::write(
+        &stub_path,
+        serde_json::to_vec_pretty(&genesis).expect("serialize the stub"),
+    )
+    .expect("write the stub");
+
+    let output = run_cli(&[
+        "lift",
+        "native",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        stub_path.to_str().expect("stub path"),
+        "--revision-id",
+        "revision:genesis-stub",
+        "--format",
+        "json",
+    ]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+
+    let lifted = stdout_json(&output);
+    let case_space = &lifted["result"]["case_space"];
+    let genesis_morphism = &case_space["morphism_log"][0]["morphism"];
+    assert_eq!(
+        genesis_morphism["metadata"]["payload"]["added_cells"],
+        case_space["case_cells"]
+    );
+    assert_eq!(
+        genesis_morphism["metadata"]["payload"]["added_relations"],
+        case_space["case_relations"]
+    );
+    assert_eq!(
+        genesis_morphism["added_ids"]
+            .as_array()
+            .expect("derived added ids")
+            .len(),
+        case_space["case_cells"]
+            .as_array()
+            .expect("case cells")
+            .len()
+            + case_space["case_relations"]
+                .as_array()
+                .expect("case relations")
+                .len()
+    );
+    assert_eq!(
+        genesis_morphism["metadata"]["genesis_case_space"]["space_id"],
+        case_space["space_id"]
+    );
+
+    // Derived is not the same as adequate: delete the snapshot so the fold has
+    // to run from an empty case space against the derived genesis alone.
+    let relative_snapshot = lifted["result"]["record"]["nearest_snapshot_path"]
+        .as_str()
+        .expect("nearest snapshot path");
+    fs::remove_file(directory.join(relative_snapshot)).expect("delete nearest snapshot");
+    let case_space_id = case_space["case_space_id"].as_str().expect("case space id");
+    let rebuild = run_cli(&[
+        "space",
+        "rebuild",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(rebuild.status.success(), "stderr: {}", stderr(&rebuild));
+    let validation = run_cli(&[
+        "space",
+        "validate",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        stdout_json(&validation)["result"]["validation"]["valid"],
+        json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -4582,7 +4692,23 @@ fn lift_github_issues_materializes_the_snapshot_into_a_rebuildable_case_space() 
         .iter()
         .all(|cell| cell["cell_type"] != json!("custom:capability")));
 
+    // The lifted id is the one an operator can type from the input they just
+    // lifted. It carries no path encoding: the store escapes it once when it
+    // needs a directory, and escaping it here too produced an id spelled
+    // `case_space:github~3aOWNER~2fREPO` under a twice-escaped directory.
+    assert_eq!(case_space_id, "case_space:github:CAPHTECH/casegraphen");
+
     let source_boundary = &case_space["metadata"]["source_boundary"];
+    assert_eq!(
+        source_boundary["id"],
+        json!("source_boundary:case_space:github:CAPHTECH/casegraphen")
+    );
+    // The gate compares `--source-boundary-id` against the first of these and
+    // falls back to the second, so they are minted once and must not drift.
+    assert_eq!(
+        case_space["morphism_log"][0]["morphism"]["metadata"]["source_boundary_id"],
+        source_boundary["id"]
+    );
     assert_eq!(
         source_boundary["included_sources"][0]["repository"],
         json!("CAPHTECH/casegraphen")
@@ -4596,6 +4722,20 @@ fn lift_github_issues_materializes_the_snapshot_into_a_rebuildable_case_space() 
         .expect("information loss")
         .iter()
         .any(|loss| loss["skipped_issue_numbers"] == json!([999])));
+    // The example carries `gh` fields this adapter does not map — a label
+    // `url`, a milestone `state`, and the `id` on a closing pull-request
+    // reference that used to refuse the whole snapshot. Accepting them is only
+    // honest if the boundary says they were dropped.
+    assert!(
+        source_boundary["information_loss"]
+            .as_array()
+            .expect("information loss")
+            .iter()
+            .any(|loss| loss["description"]
+                .as_str()
+                .is_some_and(|text| text.contains("that this adapter does not map"))),
+        "the boundary must declare the unmapped mirrored fields it ignored"
+    );
 
     // Delete the disposable snapshot so rebuild must fold the real genesis
     // payload from an empty case space and recreate it.
@@ -4743,7 +4883,7 @@ fn lift_workflow_refuses_a_cell_colliding_with_a_genesis_structural_id() {
     let graph = workflow_attack_graph(
         "workflow_graph:collide",
         vec![json!({
-            "id": "morphism:create:case_space~3aworkflow_graph~7e3acollide",
+            "id": "morphism:create:case_space~3aworkflow_graph~3acollide",
             "space_id": "space:attack", "item_type": "task", "title": "collision",
             "state": "todo", "case_ids": [], "hard_dependency_ids": [],
             "external_wait_ids": [], "evidence_requirement_ids": [],
@@ -4778,7 +4918,7 @@ fn lift_workflow_refuses_caller_declared_evidence_trust_from_a_work_item() {
         "baseline",
     );
     assert!(baseline.status.success(), "stderr: {}", stderr(&baseline));
-    let mut expected = obstruction_types(&directory, "case_space:workflow_graph~3abaseline");
+    let mut expected = obstruction_types(&directory, "case_space:workflow_graph:baseline");
     expected.sort();
     assert_eq!(expected, vec!["missing_evidence", "missing_proof"]);
 
@@ -4802,7 +4942,7 @@ fn lift_workflow_refuses_caller_declared_evidence_trust_from_a_work_item() {
     let output = lift_workflow_graph(&directory, &graph, "selfdeclared");
     assert!(output.status.success(), "stderr: {}", stderr(&output));
 
-    let mut actual = obstruction_types(&directory, "case_space:workflow_graph~3aselfdeclared");
+    let mut actual = obstruction_types(&directory, "case_space:workflow_graph:selfdeclared");
     actual.sort();
     assert_eq!(
         actual, expected,
@@ -4844,7 +4984,7 @@ fn lift_workflow_refuses_the_legacy_accepted_evidence_label_without_a_review() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
 
     assert!(
-        obstruction_types(&directory, "case_space:workflow_graph~3alegacylabel")
+        obstruction_types(&directory, "case_space:workflow_graph:legacylabel")
             .contains(&"missing_evidence".to_owned()),
         "a caller-declared accepted review promoted its own evidence"
     );
@@ -4886,7 +5026,7 @@ fn a_failed_import_rolls_back_instead_of_burning_the_case_space_id() {
     );
     let case_dir = directory
         .join("native_case_spaces")
-        .join("case_space~3aworkflow_graph~7e3arollback");
+        .join("case_space~3aworkflow_graph~3arollback");
     assert!(
         !case_dir.exists(),
         "a failed import left {} behind",

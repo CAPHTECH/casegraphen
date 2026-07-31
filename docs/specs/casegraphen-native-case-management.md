@@ -153,12 +153,16 @@ first-class `CaseSpace` field.
 
 `highergraphen.case.github.issue_snapshot.v1` is the bounded input contract for
 `lift github-issues`. It wraps the captured `gh issue list` array with the
-repository, exact query, target `space_id`, and capture time. The wrapper is
-strict. Each issue requires `number`, `title`, and `state`; issue objects alone
-permit additional `gh --json` fields because the selected GitHub field set can
-grow. Optional fields consumed by the adapter are `stateReason`, `labels`,
-`milestone`, `closedByPullRequestsReferences`, `createdAt`, `closedAt`, and
-`body`.
+repository, exact query, target `space_id`, and capture time. Strictness follows
+ownership, not nesting depth: the wrapper is CaseGraphen's own and rejects
+unknown fields, while every mirrored `gh --json` record — the issue and its
+`labels`, `milestone`, and `closedByPullRequestsReferences` entries — permits
+additional fields, because the selected GitHub field set is GitHub's to grow.
+Each issue requires `number`, `title`, and `state`. Optional fields consumed by
+the adapter are `stateReason`, `labels`, `milestone`,
+`closedByPullRequestsReferences`, `createdAt`, `closedAt`, and `body`; every
+other field of a mirrored record is read, ignored, and declared as information
+loss.
 
 The deterministic mapping is:
 
@@ -175,9 +179,10 @@ Labels remain metadata and do not influence cell or relation semantics. The
 genesis boundary names the repository and query, excludes issue bodies beyond
 the query limit, PR documents, and discussions, and declares loss of comments,
 reactions, assignees, projects, non-task-list body text, timelines/event
-history, label semantics, relation-strength defaults, and task references to
-issues absent from the snapshot. The lift never creates capability cells, so
-the result is an analysis space and cannot satisfy an operation gate.
+history, label semantics, relation-strength defaults, unmapped fields of the
+mirrored GitHub records, and task references to issues absent from the snapshot.
+The lift never creates capability cells, so the result is an analysis space and
+cannot satisfy an operation gate.
 
 ### CaseSpace
 
@@ -341,6 +346,19 @@ For the genesis entry, `metadata.payload` is required and uses the same
 `MorphismPayload` shape as later reducers. `added_ids` includes both cells and
 relations and must match the payload exactly. `metadata.genesis_case_space`
 contains the non-reducer shell fields described under `CaseSpace`.
+
+Those three are required *of a stored genesis*, not of a lift input. `lift
+native` and `space new` derive all three from the top-level case space and
+reseal the revision and replay checksums before the store sees the entry, so an
+author writes the state once and the tool writes the reconstructive copy. The
+store still refuses a genesis that does not reconstruct the imported space, but
+on these paths it is checking a copy the tool has just derived, so the check
+cannot disagree with the caller — and it should not be read as verifying the
+caller's own mirror. Nothing is verified there because nothing can be: the
+caller owns both sides of the file, so agreement between them proves only that
+the author copied correctly. Reconstruction becomes load-bearing at the first
+appended morphism, where the hash chain and the replayed base revision are what
+a caller cannot restate.
 
 ### MorphismLog
 

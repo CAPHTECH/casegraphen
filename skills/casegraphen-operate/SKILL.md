@@ -37,13 +37,24 @@ and pass `--base-revision-id "$(cur)"` every time. The same applies inside a
 morphism proposal: its `source_revision_id` must equal the current revision at
 apply time, so write the proposal file immediately before applying it.
 
+`space inspect` answers *where and how far*: revisions, log and snapshot paths,
+counts. It carries no cells, so it cannot tell you what the space contains. The
+folded state comes from `space replay`, and `space frontier` / `space reason`
+derive from it — do not read an empty `inspect` payload as an empty space.
+
 **2. Every durable mutation needs a valid operation gate.** Five flags, and all
-five are checked against the case space:
+five are checked against the case space. The reference files below pass them as
+`$GATE`, which is this:
 
 ```sh
---actor-id <id> --capability-id <id> [--capability-id <id>…] \
---operation-scope-id "$CS" --audience audit --source-boundary-id <declared boundary id>
+GATE="--actor-id <id> --capability-id <id> \
+--operation-scope-id $CS --audience audit --source-boundary-id <declared boundary id>"
 ```
+
+`$GATE` is written unquoted at the call sites, so the shell splits it into
+separate arguments. If you build argv yourself rather than through a shell, pass
+the five flags as separate elements; handing the whole string over as one
+argument is refused with `unsupported native argument "--actor-id …"`.
 
 | Requirement | How it fails |
 |---|---|

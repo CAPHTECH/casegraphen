@@ -146,10 +146,15 @@ other ways to install the skill.
 
 Wire formats live in [`schemas/casegraphen/`](schemas/casegraphen/) and are
 strict: unknown fields are rejected and breaking changes require a new schema
-id. The case space (`highergraphen.case.space.v1`) and workflow graph
-(`highergraphen.case.workflow.graph.v1`, a lift input since ADR 0003) are
-inputs; reports and the execution records (`execution_plan`, `worker_binding`,
-`worker_report`, `execution_trace`) are versioned alongside them.
+id. The one deliberate exception is a record that mirrors another system's
+output rather than stating something to this tool — the `gh --json` objects
+inside the GitHub issue snapshot, whose field set is GitHub's to grow. Those
+accept unknown fields and declare them as information loss; the CaseGraphen
+wrapper around them does not. The case space (`highergraphen.case.space.v1`) and
+workflow graph (`highergraphen.case.workflow.graph.v1`, a lift input since
+ADR 0003) are inputs; reports and the execution records (`execution_plan`,
+`worker_binding`, `worker_report`, `execution_trace`) are versioned alongside
+them.
 
 ## Relationship to HigherGraphen
 

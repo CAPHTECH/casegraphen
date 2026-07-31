@@ -433,6 +433,25 @@ pub(super) fn morphism_reject(
     ))
 }
 
+/// The boundary id a case space declares for itself.
+///
+/// Derived in exactly one place. The operation gate compares
+/// `--source-boundary-id` against `metadata.source_boundary.id`, and the genesis
+/// morphism records the same id under `metadata.source_boundary_id`, so a second
+/// derivation is a second answer to one question: the two would agree only for
+/// as long as nobody edited one of them.
+///
+/// `path_segment` is deliberately absent. It encodes an id for the filesystem,
+/// and an id is not a path — running it here put `~3a` inside the identifier the
+/// operator has to type, which the store then escaped a second time on its way
+/// to a directory name.
+pub(super) fn minted_source_boundary_id(case_space_id: &Id) -> Result<Id, NativeCliError> {
+    Ok(Id::new(format!(
+        "source_boundary:{}",
+        case_space_id.as_str()
+    ))?)
+}
+
 fn new_case_space(
     case_space_id: &Id,
     space_id: &Id,
@@ -450,10 +469,7 @@ fn new_case_space(
         path_segment(case_space_id)
     ))?;
     let source_boundary = source_boundary_value(
-        Id::new(format!(
-            "source_boundary:{}",
-            path_segment(case_space_id)
-        ))?,
+        minted_source_boundary_id(case_space_id)?,
         std::slice::from_ref(&source_id),
         &["native.case.new.v1"],
         "native CLI source fields are accepted as explicit user input; inferred fields need review before close.",
@@ -534,10 +550,7 @@ fn genesis_entry(input: GenesisEntryInput<'_>) -> Result<MorphismLogEntry, Nativ
     );
     metadata.insert(
         "source_boundary_id".to_owned(),
-        json!(Id::new(format!(
-            "source_boundary:{}",
-            path_segment(input.case_space_id)
-        ))?),
+        json!(minted_source_boundary_id(input.case_space_id)?),
     );
     metadata.insert("source_boundary".to_owned(), input.source_boundary);
     let morphism = CaseMorphism {

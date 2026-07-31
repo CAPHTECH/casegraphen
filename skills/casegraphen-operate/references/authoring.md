@@ -32,30 +32,53 @@ and edit it. The contract is
 [`native.case.space.schema.json`](https://github.com/CAPHTECH/casegraphen/blob/main/schemas/casegraphen/native.case.space.schema.json)
 (`additionalProperties: false` throughout).
 
-## The genesis snapshot must be self-reconstructing
+## The genesis snapshot is made self-reconstructing for you
 
 `space rebuild` folds the log from empty, so the single genesis log entry has to
-carry everything:
+carry the complete initial content. **You do not write that copy.** `lift native`
+derives it from the top-level state you authored, every time, and reseals the
+checksums around it. Write the state once:
 
-- `morphism.metadata.payload.added_cells` and `.added_relations` — the complete
-  initial content, byte-identical to the top-level `case_cells` / `case_relations`.
-- `morphism.added_ids` — every id in that payload, and nothing else. A mismatch
-  is rejected: `added_ids […] do not match payload added_cells and added_relations`.
-- `morphism.metadata.genesis_case_space` — `space_id`, `projections`,
-  `close_policy_id`, `metadata`, `revision_metadata`: the immutable shell.
-- `morphism.metadata.source_boundary` with an `id` matching
+- `case_cells` and `case_relations` — the complete initial content.
+- One genesis log entry naming *who and from what*: `entry_id`, `morphism_id`,
+  `target_revision_id`, `actor_id`, `recorded_at`, `provenance`, `source_ids`,
+  and `morphism.metadata.source_boundary` whose `id` matches
   `metadata.source_boundary.id` at the top level. Gates check that id.
-- The log entry also needs `actor_id`, `recorded_at`, `provenance`, `source_ids`,
-  and `replay_checksum`. Checksums you supply are recomputed on lift, so any
-  placeholder string is fine.
+
+These are derived on lift. Whatever you supply is overwritten, not compared, so
+a stale value is not a refusal — it is simply discarded:
+
+| Field | Derived from | If you leave it out |
+|---|---|---|
+| `morphism.metadata.payload.added_cells` / `.added_relations` | the top-level `case_cells` / `case_relations` | fine — `metadata` is free-form |
+| `morphism.metadata.genesis_case_space` | `space_id`, `projections`, `close_policy_id`, `metadata`, `revision_metadata` | fine — same |
+| `morphism.added_ids` | every id in that payload | write `[]`; the field itself is required |
+| `revision.checksum`, the entry's `replay_checksum` | the resealed space | write `""`; the fields are required |
+
+Hand-mirroring the payload is the single most expensive way to get this wrong:
+the copies are not compared, so a hand-written one is discarded, and a generator
+that produces it is work the tool already did. The redundancy becomes load-bearing
+only *after* the import — from the first appended morphism on, the hash chain is
+what makes the log reconstructive.
 
 ## Capability cells are the authorization root
 
 One `custom:capability` cell per distinct authority, `lifecycle: accepted`,
 `provenance.review_status: accepted`, and `metadata.actor_ids` listing exactly
 the actors that hold it. Separate the roles: the actor that accepts plans should
-not be the actor that dispatches workers, so a compromised runner cannot approve
-its own work.
+not be the actor that dispatches workers.
+
+**What that separation currently buys, and what it does not.** The gate checks
+that each `--capability-id` resolves to an accepted, active capability cell and
+that the cell grants the acting actor. It does **not** check that the capability
+has anything to do with the operation being performed: a capability cell carries
+no operation list, so any capability an actor holds admits every gated operation
+that actor attempts. An actor holding only a dispatch capability can pass
+`review accept` with it. Separating the roles therefore separates *actors*, and
+the ledger records which actor and which capability were named — it does not
+stop an actor from reaching outside its intended authority. Treat the actor, not
+the capability, as the boundary, and keep a compromised runner's actor id out of
+any cell you would not let it use.
 
 There is no CLI path to add, amend, or revoke one afterwards. Decide the grants
 before lifting.

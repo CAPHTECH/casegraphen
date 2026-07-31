@@ -1,4 +1,17 @@
 //! GitHub issue snapshot input contract for the native lift adapter.
+//!
+//! One rule decides strictness here, and it is drawn around ownership rather
+//! than around nesting depth. The wrapper is CaseGraphen's own: it declares the
+//! repository, the exact query, the target space, and the capture time, and an
+//! unknown field in it means the caller believes it is saying something this
+//! tool will act on. That is refused.
+//!
+//! Everything under `issues` is a mirror of what `gh --json` emitted. The field
+//! set is GitHub's to grow, so an unknown field there is not a claim about this
+//! tool — it is a field this adapter does not map, and the boundary declares
+//! that class as information loss. Enumerating them instead was tried: `labels`
+//! grew `id`, `description`, and `color` that way, and the next `gh` field to
+//! appear inside `closedByPullRequestsReferences` refused a whole snapshot.
 
 use serde::Deserialize;
 
@@ -46,7 +59,6 @@ pub enum GitHubIssueState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct GitHubIssueLabel {
     pub id: Option<String>,
     pub name: String,
@@ -55,7 +67,6 @@ pub struct GitHubIssueLabel {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct GitHubIssueMilestone {
     pub number: Option<u64>,
     pub title: String,
@@ -65,7 +76,6 @@ pub struct GitHubIssueMilestone {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct GitHubPullRequestReference {
     pub number: u64,
 }

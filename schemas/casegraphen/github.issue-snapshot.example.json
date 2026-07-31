@@ -16,14 +16,16 @@
           "id": "label:enhancement",
           "name": "enhancement",
           "description": "New feature or request",
-          "color": "a2eeef"
+          "color": "a2eeef",
+          "url": "https://api.github.com/repos/CAPHTECH/casegraphen/labels/enhancement"
         }
       ],
       "milestone": {
         "number": 1,
         "title": "Release 1.0",
         "description": "First stable release",
-        "dueOn": "2026-08-31T00:00:00Z"
+        "dueOn": "2026-08-31T00:00:00Z",
+        "state": "open"
       },
       "closedByPullRequestsReferences": [],
       "createdAt": "2026-07-28T08:00:00Z",
@@ -48,7 +50,9 @@
       },
       "closedByPullRequestsReferences": [
         {
-          "number": 42
+          "number": 42,
+          "id": "PR_kwDOExample42",
+          "url": "https://github.com/CAPHTECH/casegraphen/pull/42"
         }
       ],
       "createdAt": "2026-07-25T08:00:00Z",

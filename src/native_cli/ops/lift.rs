@@ -4,7 +4,8 @@ use super::{
         parse_github_issue_snapshot,
     },
     io::{case_space_checksum, read_case_space},
-    new_case_space, path_segment, report, retarget_latest_revision, source_boundary_value,
+    minted_source_boundary_id, new_case_space, report, retarget_latest_revision,
+    source_boundary_value,
     workflow_lift::materialize_workflow_graph,
     write_genesis_materialization, NativeCliError,
 };
@@ -58,7 +59,11 @@ pub(in crate::native_cli) fn lift_structured_source(
         source,
     })?;
     let lift = read_lift_input(&bytes, adapter)?;
-    let case_space_id = Id::new(format!("case_space:{}", path_segment(&lift.source_id)))?;
+    // The id names the source; it does not encode a path. The store escapes it
+    // once when it needs a directory (`native_store::case_dir`), so escaping it
+    // here produced `case_space:github~3aowner~2frepo` — an id nobody can guess
+    // from the input they just lifted, stored under a twice-escaped directory.
+    let case_space_id = Id::new(format!("case_space:{}", lift.source_id.as_str()))?;
     let mut case_space = new_case_space(
         &case_space_id,
         &lift.space_id,
@@ -103,7 +108,7 @@ pub(in crate::native_cli) fn lift_structured_source(
         }
         _ => {}
     }
-    let source_boundary_id = Id::new(format!("source_boundary:{}", path_segment(&case_space_id)))?;
+    let source_boundary_id = minted_source_boundary_id(&case_space_id)?;
     let source_boundary = if let Some(snapshot) = &github_snapshot {
         github_source_boundary(
             snapshot,
@@ -177,7 +182,7 @@ fn read_lift_input(bytes: &[u8], adapter: &str) -> Result<LiftInput, NativeCliEr
             .ok_or_else(|| NativeCliError::invalid("lift input must contain repository"))?;
         github_source_id(repository)?
     } else {
-        Id::new(format!("source:{}", path_segment(&source_id)))?
+        Id::new(format!("source:{}", source_id.as_str()))?
     };
     Ok(LiftInput {
         source_schema,

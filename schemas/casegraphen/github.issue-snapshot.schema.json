@@ -116,7 +116,7 @@
     },
     "label": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": [
         "name"
       ],
@@ -140,7 +140,7 @@
     },
     "milestone": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": [
         "title"
       ],
@@ -168,7 +168,7 @@
     },
     "pull_request_reference": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": [
         "number"
       ],
