@@ -16,8 +16,11 @@ to use the skill in:
 ```sh
 cd /path/to/your/project
 sh /path/to/casegraphen/skills/install.sh            # into ./.claude/skills
-sh /path/to/casegraphen/skills/install.sh --user     # into ~/.claude/skills
+sh /path/to/casegraphen/skills/install.sh --user     # into every agent home
 ```
+
+`--user` installs into `<home>/skills` for each of `~/.claude` and `~/.codex`
+that exists, and fails if neither does.
 
 The script copies from its own location, so it does not care where you run it
 from. It replaces a previous install of the same skill, leaves a symlink alone if

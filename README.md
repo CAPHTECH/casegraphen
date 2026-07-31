@@ -130,7 +130,7 @@ granularity.
 
 ```sh
 cd /path/to/your/project
-sh /path/to/casegraphen/skills/install.sh          # or --user for ~/.claude/skills
+sh /path/to/casegraphen/skills/install.sh          # or --user for ~/.claude and ~/.codex
 ```
 
 See [`skills/README.md`](skills/README.md) for the other ways to install it.
