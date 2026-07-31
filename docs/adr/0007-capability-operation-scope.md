@@ -36,7 +36,12 @@ correction is a holding action, not the answer.
 
 ## Decision
 
-Not yet made. The options, with what each costs:
+Not yet made. **Recommended: (a) with "absent means none".** The reasoning is
+under the options; the short form is that the cost that made (b) attractive —
+a contract change — turned out not to exist, and the cost that remains is one
+every operator of this tool already pays whenever a grant changes.
+
+The options, with what each costs:
 
 **(a) Scope capabilities to operations.** Add `metadata.operations` to the
 capability cell — a list of the operation strings from the per-command table in
@@ -44,13 +49,18 @@ capability cell — a list of the operation strings from the per-command table i
 require `gate.operation` to appear in the union of the presented capabilities'
 lists.
 
-- It is a contract change under `schemas/casegraphen/`, so the `contract-change`
-  skill applies and the field's shape is a contract decision.
-- Capability cells enter only at genesis, so **every existing case space would
-  have to be lifted again** to carry the new field. Whether the field is
-  required or optional decides that: optional-and-absent would have to mean
-  something, and "absent means all operations" reintroduces the defect by
-  default while "absent means none" bricks existing spaces.
+- **It is not a schema change.** `metadata` is `{"type": "object"}` in
+  `native.case.space.schema.json`, and the gate already reads
+  `metadata.actor_ids` out of it (`src/native_review.rs:341`). This is the
+  second row of the `contract-change` decision table — an existing escape hatch
+  the reducer already reads — so it costs a documented convention, not a new
+  `$id`. That is much cheaper than this ADR first assumed.
+- The real cost is what an absent field means. "Absent means every operation"
+  keeps today's behaviour for every existing space and buys nothing by default.
+  "Absent means none" is the enforcing choice and stops every existing space at
+  its next gated command. Capability cells enter only at genesis and there is no
+  amendment path, so the fix for an existing space is to lift it again — which
+  is already how any capability change works here.
 - It makes the four-cell split in the walkthrough mean what its titles say.
 
 **(b) State that capabilities are not scoped.** Keep one capability as "this
@@ -69,14 +79,32 @@ trust (`review`, `plan-review`, `morphism-apply`) and leaving the rest unscoped.
 This buys most of (a)'s value at less contract churn, at the cost of a rule that
 has to be justified case by case rather than read off the cell.
 
+## Why (a), and why not first
+
+(b) was attractive only while option (a) looked like a contract change with a
+re-lift attached. It is not one. What (b) actually buys is that nothing breaks,
+and what it costs is permanent: the per-command operation table in the policy
+becomes descriptive, the four capability cells in the shipped walkthrough become
+four labels for one authority, and every future reader of `authoring.md` has to
+be told that the separation they are being asked to model is documentation. A
+tool whose stated purpose is that "CaseGraphen decides; an LLM only proposes"
+should not have an authorization root that records intent it does not enforce.
+
+(c) — scoping only the trust-promoting operations — is the option to fall back
+to if "absent means none" proves too disruptive in practice. It is strictly
+weaker and needs a case-by-case justification for each operation left unscoped,
+which is exactly the kind of rule that drifts.
+
+**It should not be implemented first.** Finding 2 of the same audit lets a hard
+evidence requirement be cleared with no review at all, by an actor whose
+capability is unquestionably the right one for the operation it names. Scoping
+capabilities does not touch that. Doing this one first would leave the larger
+hole open while making the authorization model look hardened — and the audit's
+own conclusion is that partial fixes in this area cost more in false assurance
+than they buy in coverage.
+
 ## Consequences
 
-Undecided until this ADR is accepted. Two things hold in the meantime:
-
-- The gate's other five checks are enforced and were re-verified during the
-  audit; this is not a hole in the gate, it is a missing dimension of it.
-- Finding 2 of the same audit lets a hard evidence requirement be cleared with
-  no review at all, by an actor whose capability is unquestionably the right one
-  for the operation it names. Scoping capabilities does not touch that, and
-  fixing this ADR's question first would leave the larger hole open while
-  looking like the authorization model had been hardened.
+Undecided until this ADR is accepted. One thing holds in the meantime: the
+gate's other five checks are enforced and were re-verified during the audit.
+This is not a hole in the gate, it is a missing dimension of it.

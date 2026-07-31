@@ -71,15 +71,33 @@ space validate valid: True
 `trusted_evidence_relation_targets` (`src/native_eval.rs:419`) does not filter
 `relation_strength`, unlike `direct_targets` (`src/native_eval/graph.rs:51`),
 `completed_targets` (`:27`), and `contradiction_relations`
-(`src/native_eval.rs:439`). `diagnostic` is the strength this tool itself mints
-for untrusted links in `evidence attach` (`src/native_cli/ops/mutations.rs:110`)
-and `run --step` (`src/native_cli/ops/run.rs:1880`), so the weakest edge the
-tool produces satisfies the strongest requirement it models.
+(`src/native_eval.rs:439`).
 
-**2b. Widening a trusted evidence cell's `structure_ids`.** The cell is taken
-verbatim from `space replay` and one id is appended; `provenance` and all four
-frozen metadata keys are untouched, so
-`require_immutable_cell_update_fields` (`src/native_model.rs:905`) passes:
+**Filtering it is not the fix, and would break the product.** The canonical
+path runs through the same disjunct at the same strength. Reproduced:
+
+```
+BASELINE                                         ['missing_evidence']
+after evidence attach (not yet reviewed)         ['missing_evidence']
+after review accept (canonical promotion)        []  CLEARED
+
+the relation the canonical path minted:
+  satisfies_evidence_requirement | strength: diagnostic | to: evidence:needed
+```
+
+`evidence attach` mints `Diagnostic` deliberately
+(`src/native_cli/ops/mutations.rs:110`), as does `run --step`
+(`src/native_cli/ops/run.rs:1880`). Requiring `Hard` here would refuse every
+piece of evidence this tool attaches. The attack and the promotion differ in
+**who minted the coverage edge**, not in its strength or its type: one came
+from an `evidence attach` morphism whose `--satisfies` target is recorded in the
+log, the other from a generic `morphism apply`. Any fix that reads the edge out
+of the current graph cannot tell them apart.
+
+**2b. Widening a trusted evidence cell's `structure_ids`. Fixed.** The cell was
+taken verbatim from `space replay` and one id appended; `provenance` and all
+four frozen metadata keys were untouched, so
+`require_immutable_cell_update_fields` (`src/native_model.rs:905`) passed:
 
 ```
 trusted cell boundary: source_backed | review_status: accepted
@@ -90,8 +108,16 @@ space validate valid: True
 
 `src/native_eval.rs:119` reads `structure_ids` of every trusted evidence cell as
 "this evidence covers that id". That is a coverage claim, which is a trust
-value, and it is writable after the review that promoted the cell — so a
-promotion decision can be extended to cover work the reviewer never saw.
+value, and it was writable after the review that promoted the cell — so a
+promotion could be extended to cover work the reviewer never saw.
+
+`structure_ids` is now immutable on evidence-cell updates, alongside the
+provenance and metadata keys that rule already froze. This route is closed and
+the canonical path is unaffected — `evidence attach` adds cells and never
+updates one, and attach-then-`review accept` still clears the requirement. It is
+a separable defect from the rest of section 2: the others are about *where
+coverage is read from*, this one was about a completed review's subject changing
+after the fact.
 
 Two further routes were demonstrated by the review and are not reproduced here:
 setting `evidence_ids` on the requirement relation through `updated_relations`,
@@ -126,10 +152,25 @@ operationally empty while section 2 stands:
   (`review accept`, with operation gate)" — reproduced with zero review
   morphisms.
 
-The shape of the durable fix, for whoever takes this: trusted-evidence coverage
-should be derived from the canonical review and attach morphisms in the log, the
-way `latest_evidence_review_statuses` (`src/native_eval/sections.rs:533`) already
-is, rather than read from graph fields a gated write can edit. Filtering
-`relation_strength` and freezing `structure_ids` each remove one route; neither
-removes the class, and shipping them alone would make the remaining routes
-harder to find without making them harder to use.
+The shape of the durable fix, for whoever takes this: **a coverage claim is
+trusted when a canonical morphism minted it, not when it is present in the
+graph.** `evidence attach --satisfies T` already records the claim in the log —
+the attach morphism's payload carries the `satisfies_evidence_requirement`
+relation from the cell to `T` — and `run --step` records the same shape for
+worker output. Genesis carries its own coverage as the declared trust root.
+Everything else is a generic write.
+
+So the derivation is available from the log, the way
+`latest_evidence_review_statuses` (`src/native_eval/sections.rs:533`) already
+derives review status: build the set of coverage edges that entered through
+genesis, `evidence attach`, or `run --step`, and have `trusted_evidence_exists`
+consult that instead of reading `structure_ids`, relation targets, and
+`evidence_ids` out of the current graph. The relation would still be in the
+graph for display; it would stop being what the trust decision reads.
+
+Two consequences to decide before implementing: a space where a coverage edge
+was added by a generic morphism loses that satisfaction, and the obstruction
+reappears — fail-closed, and the same direction as `8984e78`. And the six
+disjuncts of `trusted_evidence_exists` collapse into roughly one, which is worth
+confirming against the readiness fixtures before assuming the extra five were
+never load-bearing for a legitimate shape.

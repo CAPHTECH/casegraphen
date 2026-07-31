@@ -922,6 +922,20 @@ fn require_immutable_cell_update_fields(
             morphism.morphism_id, existing.id
         )));
     }
+    // `structure_ids` is what the evaluator reads as "this evidence covers that
+    // id" (`native_eval::NativeEvaluationContext::new`), so on a trusted cell it
+    // is a coverage claim, and a coverage claim is a trust value. Leaving it
+    // writable let a review be extended after the fact: promote evidence for one
+    // requirement, then append a second id and the promotion covers work the
+    // reviewer never saw. The rest of this function exists to stop evidence-cell
+    // rewrites; this field was the hole in it.
+    if existing.structure_ids != updated.structure_ids {
+        return Err(MorphismApplyError::new(format!(
+            "morphism {} cannot update evidence cell {}: structure_ids is immutable, because it \
+             is the coverage the review accepted; attach new evidence for the further target",
+            morphism.morphism_id, existing.id
+        )));
+    }
     for key in [
         "evidence_boundary",
         "content_hash",
@@ -1513,6 +1527,14 @@ mod tests {
         let mut provenance = evidence.clone();
         provenance.provenance.review_status = ReviewStatus::Reviewed;
         assert!(rejected_cell_update(&space, provenance).contains("provenance is immutable"));
+
+        // Widening the coverage of already-promoted evidence extends a review
+        // after it happened: the promotion then covers a requirement the
+        // reviewer never saw. The evaluator reads `structure_ids` as coverage,
+        // so this is the same class as the metadata keys below.
+        let mut widened = evidence.clone();
+        widened.structure_ids.push(id("work:smuggled-coverage"));
+        assert!(rejected_cell_update(&space, widened).contains("structure_ids is immutable"));
 
         for key in [
             "evidence_boundary",
