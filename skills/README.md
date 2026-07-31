@@ -10,25 +10,31 @@ crate. (The repository's own development skills stay in `.claude/skills/`.)
 
 ## Install
 
-From a checkout of this repository, run the installer from the project you want
-to use the skill in:
+[`install.sh`](../install.sh) at the repository root installs the `casegraphen`
+binary and these skills together — the skill is instructions for a CLI, so
+installing one without the other leaves you with half of it. Run it from the
+project you want to use the skill in:
 
 ```sh
 cd /path/to/your/project
-sh /path/to/casegraphen/skills/install.sh            # into ./.claude/skills
-sh /path/to/casegraphen/skills/install.sh --user     # into every agent home
+sh /path/to/casegraphen/install.sh            # binary, and skills into ./.claude/skills
+sh /path/to/casegraphen/install.sh --user     # binary, and skills into every agent home
 ```
 
-`--user` installs into `<home>/skills` for each of `~/.claude` and `~/.codex`
-that exists, and fails if neither does.
+The binary goes where `cargo install` puts it (`~/.cargo/bin` unless you have
+moved it), built from the same source tree the skills are copied from, so the
+documented command surface is the installed one.
 
-The script copies from its own location, so it does not care where you run it
-from. It replaces a previous install of the same skill, leaves a symlink alone if
-you have linked the skill instead, and touches nothing else.
+`--user` installs skills into `<home>/skills` for each of `~/.claude` and
+`~/.codex` that exists, and fails before building if neither does.
+
+The script builds and copies from its own location, so it does not care where you
+run it from. It replaces a previous install of the same skill, leaves a symlink
+alone if you have linked the skill instead, and touches nothing else.
 
 If you installed the binary with `cargo install casegraphen` rather than cloning,
 the same script is in the unpacked crate source under
-`~/.cargo/registry/src/<index>/casegraphen-<version>/skills/`.
+`~/.cargo/registry/src/<index>/casegraphen-<version>/`.
 
 Copying by hand is fine too — the skill is plain Markdown:
 

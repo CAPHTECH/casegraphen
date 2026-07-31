@@ -87,6 +87,9 @@ enforced controls, what always needs a human, and the accepted residual risks.
 cargo install casegraphen
 ```
 
+From a checkout, `install.sh` installs the binary and the agent skills that
+drive it in one step — see [Driving it from an agent](#driving-it-from-an-agent).
+
 ```sh
 cargo test
 cargo clippy --all-targets
@@ -128,12 +131,16 @@ model readiness so it comes out right, how to read the refusals, and — when an
 agent runtime executes the graph — what to record as evidence and at which
 granularity.
 
+[`install.sh`](install.sh) installs the binary and the skill together, because a
+skill for a CLI is useless without the CLI it documents:
+
 ```sh
 cd /path/to/your/project
-sh /path/to/casegraphen/skills/install.sh          # or --user for ~/.claude and ~/.codex
+sh /path/to/casegraphen/install.sh          # or --user for ~/.claude and ~/.codex
 ```
 
-See [`skills/README.md`](skills/README.md) for the other ways to install it.
+See [`skills/README.md`](skills/README.md) for what it writes where, and for the
+other ways to install the skill.
 
 ## Contracts
 
