@@ -72,6 +72,23 @@ cell's `cell_type`. For evidence cells it additionally makes the entire
 `trace_id`, and `worker_report_id` immutable. Evidence promotion remains a
 canonical review morphism, not an evidence-cell rewrite.
 
+Immutability alone left the addition direction open, so the reducer also refuses
+an *added* evidence cell that declares any `evidence_boundary` other than
+`inferred` or `worker_output` outside the genesis entry. Those two are the only
+spellings the tool mints after genesis — `evidence attach` forces the first and
+`run --step` records the second — and `source_backed` is read as acceptable with
+no review at all, so accepting it from a payload would have made a hard evidence
+requirement satisfiable by typing a string. Genesis stays exempt: it is the
+declared trust root where source-backed evidence legitimately enters.
+
+The rule is enforced in both reducer entry points, so it also runs during the
+fold that `space replay`, `space rebuild`, and `space validate` perform. A case
+space that already recorded such an entry therefore stops loading rather than
+loading with the declared trust intact. That is the intended direction: no path
+in this tool ever produced one — after genesis it mints only `inferred` and
+`worker_output` — so a log carrying one records a trust claim the tool never
+made, and reading it is the wrong default.
+
 For `morphism apply`, `morphism reject`, `evidence attach`, `cell transition`,
 and all four `review` actions, the validated gate is stored as
 `morphism.metadata.operation_gate`. Both run modes use the same actor for their

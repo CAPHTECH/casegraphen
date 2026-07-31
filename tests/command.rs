@@ -1081,6 +1081,102 @@ fn generic_morphism_refuses_capability_self_grant() {
 }
 
 #[test]
+fn generic_morphism_refuses_caller_declared_evidence_trust_on_an_added_cell() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:added-evidence-trust-base");
+
+    // `evidence attach` overwrites the boundary its input names, because the
+    // boundary decides whether a cell satisfies a hard requirement with no
+    // review. A morphism payload reaches the same state, so it has to answer to
+    // the same rule — one caller-written string used to be the whole difference
+    // between a blocking obstruction and a cleared one.
+    let added_evidence = |boundary: &str| {
+        json!({
+            "id": "evidence:declared-trust",
+            "cell_type": "evidence",
+            "lifecycle": "active",
+            "space_id": "space:casegraphen",
+            "title": "Evidence that names its own boundary",
+            "source_ids": ["source:native-cli"],
+            "structure_ids": [],
+            "metadata": {"evidence_boundary": boundary},
+            "provenance": {
+                "confidence": 1.0,
+                "review_status": "unreviewed",
+                "source": {"kind": "document", "title": "caller supplied"}
+            }
+        })
+    };
+    let morphism = |boundary: &str| {
+        json!({
+            "morphism_id": "morphism:added-evidence-trust",
+            "morphism_type": "update",
+            "source_revision_id": "revision:added-evidence-trust-base",
+            "target_revision_id": "revision:added-evidence-trust",
+            "added_ids": ["evidence:declared-trust"],
+            "updated_ids": [],
+            "retired_ids": [],
+            "preserved_ids": [],
+            "violated_invariant_ids": [],
+            "review_status": "unreviewed",
+            "evidence_ids": [],
+            "source_ids": ["source:native-cli"],
+            "metadata": {"payload": {"added_cells": [added_evidence(boundary)]}}
+        })
+    };
+    let morphism_path = directory.join("added-evidence-trust.case_morphism.json");
+    let propose = |boundary: &str| {
+        fs::write(
+            &morphism_path,
+            serde_json::to_string_pretty(&morphism(boundary)).expect("serialize morphism"),
+        )
+        .expect("write morphism");
+        run_cli(&[
+            "morphism",
+            "propose",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--input",
+            morphism_path.to_str().expect("morphism path"),
+            "--format",
+            "json",
+        ])
+    };
+
+    for boundary in ["source_backed", "review_promoted"] {
+        let refused = propose(boundary);
+        assert!(
+            !refused.status.success(),
+            "evidence_boundary {boundary} was accepted on an added cell"
+        );
+        assert!(
+            stderr(&refused).contains(
+                "evidence entering after genesis is untrusted, so only inferred and \
+                 worker_output are accepted"
+            ),
+            "stderr: {}",
+            stderr(&refused)
+        );
+    }
+
+    // The rule must not be wider than the defect: the two spellings this tool
+    // itself mints after genesis still pass.
+    for boundary in ["inferred", "worker_output"] {
+        let accepted = propose(boundary);
+        assert!(
+            accepted.status.success(),
+            "evidence_boundary {boundary} was refused; stderr: {}",
+            stderr(&accepted)
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn generic_morphisms_cannot_forge_plan_review_or_status() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

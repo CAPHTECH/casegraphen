@@ -429,6 +429,7 @@ pub fn apply_morphism(
 
     for cell in payload.added_cells {
         require_not_capability_administration(morphism, &cell, "add", is_genesis)?;
+        require_untrusted_added_evidence(morphism, &cell, is_genesis)?;
         if !known_ids.insert(cell.id.clone()) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -582,6 +583,7 @@ pub(crate) fn apply_morphism_indexed(
 
     for cell in &payload.added_cells {
         require_not_capability_administration(morphism, cell, "add", is_genesis)?;
+        require_untrusted_added_evidence(morphism, cell, is_genesis)?;
         if index.contains(&cell.id) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -856,6 +858,48 @@ fn require_not_capability_administration(
          administered only at lift/import time inside the declared source boundary",
         morphism.morphism_id, cell.id
     )))
+}
+
+/// Evidence entering the log after genesis is untrusted by construction.
+///
+/// `evidence_boundary` decides whether a cell satisfies a hard requirement with
+/// no review at all (`evidence_trust::evidence_is_acceptable` reads
+/// `source_backed` as acceptable outright), which makes it a trust value — and a
+/// trust value is never taken from a caller. The sibling path already knew this:
+/// `evidence attach` overwrites whatever boundary the input names. A morphism
+/// payload reached the same state without passing that rule, so a proposal
+/// carrying one string cleared a hard `missing_evidence` obstruction unreviewed.
+///
+/// After genesis this tool mints exactly two spellings — `inferred` for attached
+/// evidence and `worker_output` for what a worker produced — so those two are
+/// the only ones an added evidence cell may carry. Refusing rather than
+/// rewriting is deliberate: the reducer also folds the stored log during replay
+/// and rebuild, and a reducer that edits what it folds no longer reproduces it.
+///
+/// Genesis is exempt. It is the declared trust root, authored inside the source
+/// boundary and reviewable as a whole, and it is where `source_backed`
+/// legitimately enters.
+fn require_untrusted_added_evidence(
+    morphism: &CaseMorphism,
+    cell: &CaseCell,
+    is_genesis: bool,
+) -> Result<(), MorphismApplyError> {
+    if is_genesis || cell.cell_type != CaseCellType::Evidence {
+        return Ok(());
+    }
+    let declared = cell
+        .metadata
+        .get("evidence_boundary")
+        .and_then(Value::as_str);
+    match EvidenceBoundary::from_metadata_value(declared) {
+        EvidenceBoundary::Inferred | EvidenceBoundary::WorkerOutput => Ok(()),
+        _ => Err(MorphismApplyError::new(format!(
+            "morphism {} cannot add evidence cell {} declaring evidence_boundary {:?}: evidence \
+             entering after genesis is untrusted, so only inferred and worker_output are accepted; \
+             attach it with evidence attach and promote it with review accept",
+            morphism.morphism_id, cell.id, declared
+        ))),
+    }
 }
 
 fn require_immutable_cell_update_fields(
@@ -1377,6 +1421,71 @@ mod tests {
         assert!(retire_error
             .to_string()
             .contains("cannot retire capability cell capability:plan-review"));
+    }
+
+    #[test]
+    fn both_reducer_entry_points_refuse_caller_declared_evidence_trust_on_add() {
+        let space = fixture_space();
+        let mut evidence = space
+            .case_cells
+            .iter()
+            .find(|cell| cell.cell_type == CaseCellType::Evidence)
+            .expect("fixture evidence")
+            .clone();
+        evidence.id = id("evidence:declared-trust");
+        let added = |boundary: &str| {
+            let mut cell = evidence.clone();
+            cell.metadata.insert(
+                "evidence_boundary".to_owned(),
+                Value::String(boundary.to_owned()),
+            );
+            let mut morphism = fixture_morphism(&space);
+            morphism.added_ids = vec![cell.id.clone()];
+            set_payload(
+                &mut morphism,
+                MorphismPayload {
+                    added_cells: vec![cell],
+                    ..MorphismPayload::default()
+                },
+            );
+            morphism
+        };
+
+        // `apply_morphism` gates the append; `apply_morphism_indexed` is the
+        // fold behind replay, rebuild, and validate. A rule that lands in only
+        // one of them lets a store keep the trust it was never granted.
+        for boundary in ["source_backed", "review_promoted"] {
+            let morphism = added(boundary);
+            for error in [
+                apply_morphism(&mut space.clone(), &morphism).expect_err("append reducer"),
+                apply_morphism_indexed(
+                    &mut space.clone(),
+                    &morphism,
+                    &mut MorphismApplicationIndex::new(&space),
+                )
+                .expect_err("fold reducer"),
+            ] {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("evidence entering after genesis is untrusted"),
+                    "{boundary} was not refused: {error}"
+                );
+            }
+        }
+
+        for boundary in ["inferred", "worker_output"] {
+            let morphism = added(boundary);
+            apply_morphism(&mut space.clone(), &morphism).unwrap_or_else(|error| {
+                panic!("{boundary} refused by the append reducer: {error}")
+            });
+            apply_morphism_indexed(
+                &mut space.clone(),
+                &morphism,
+                &mut MorphismApplicationIndex::new(&space),
+            )
+            .unwrap_or_else(|error| panic!("{boundary} refused by the fold reducer: {error}"));
+        }
     }
 
     #[test]
