@@ -81,7 +81,10 @@ struct NativeEvaluationContext<'a> {
     index: NativeCaseIndex<'a>,
     cells: BTreeMap<&'a str, &'a CaseCell>,
     trusted_evidence_ids: BTreeSet<&'a str>,
-    trusted_evidence_structure_ids: BTreeSet<&'a str>,
+    /// Targets that trusted evidence covers, taken from the morphisms that
+    /// minted the coverage rather than from the graph. See
+    /// `sections::canonical_evidence_coverage`.
+    trusted_coverage_targets: BTreeSet<String>,
 }
 
 struct CellEvaluation {
@@ -104,7 +107,6 @@ impl<'a> NativeEvaluationContext<'a> {
             .collect();
         let index = NativeCaseIndex::from_case_space(case_space);
         let mut trusted_evidence_ids = BTreeSet::new();
-        let mut trusted_evidence_structure_ids = BTreeSet::new();
         for cell in case_space
             .case_cells
             .iter()
@@ -116,15 +118,19 @@ impl<'a> NativeEvaluationContext<'a> {
             );
             if evidence_is_acceptable(trust_input) {
                 trusted_evidence_ids.insert(cell.id.as_str());
-                trusted_evidence_structure_ids.extend(cell.structure_ids.iter().map(Id::as_str));
             }
         }
+        let trusted_coverage_targets = sections::canonical_evidence_coverage(case_space)
+            .into_iter()
+            .filter(|(evidence_id, _)| trusted_evidence_ids.contains(evidence_id.as_str()))
+            .map(|(_, target_id)| target_id)
+            .collect();
         Self {
             case_space,
             index,
             cells,
             trusted_evidence_ids,
-            trusted_evidence_structure_ids,
+            trusted_coverage_targets,
         }
     }
 
@@ -393,40 +399,27 @@ impl<'a> NativeEvaluationContext<'a> {
         }) || self.trusted_evidence_exists(proof_id, cell_id)
     }
 
+    /// Is the requirement satisfied by evidence that is both trusted and
+    /// *recorded as covering it*?
+    ///
+    /// This used to be six disjuncts, five of which read coverage out of the
+    /// current graph — an evidence cell's `structure_ids`, a
+    /// `satisfies`/`verifies`/`accepts` edge into the requirement or the work
+    /// cell, and a relation's `evidence_ids`. Every one of those is writable by
+    /// any actor the gate admits, so an already-promoted piece of evidence could
+    /// be re-pointed at a requirement nobody reviewed it for, and the hard
+    /// obstruction disappeared with no review anywhere in the log.
+    ///
+    /// Both halves are now log-derived: `trusted_evidence_ids` from the review
+    /// morphisms, `trusted_coverage_targets` from the morphisms that minted the
+    /// coverage. The graph still carries the edges — they are what a reader
+    /// sees — but the decision no longer asks it.
     fn trusted_evidence_exists(&self, requirement_id: &Id, cell_id: &Id) -> bool {
         self.trusted_evidence_ids.contains(requirement_id.as_str())
             || self
-                .trusted_evidence_structure_ids
+                .trusted_coverage_targets
                 .contains(requirement_id.as_str())
-            || self
-                .trusted_evidence_structure_ids
-                .contains(cell_id.as_str())
-            || self.trusted_evidence_relation_targets(requirement_id)
-            || self.trusted_evidence_relation_targets(cell_id)
-            || self.index.relations_from(cell_id).iter().any(|relation| {
-                (relation.to_id == *requirement_id
-                    || matches!(
-                        relation.relation_type,
-                        CaseRelationType::RequiresEvidence | CaseRelationType::RequiresProof
-                    ))
-                    && relation
-                        .evidence_ids
-                        .iter()
-                        .any(|id| self.trusted_evidence_ids.contains(id.as_str()))
-            })
-    }
-
-    fn trusted_evidence_relation_targets(&self, target_id: &Id) -> bool {
-        self.index.relations_to(target_id).iter().any(|relation| {
-            matches!(
-                relation.relation_type,
-                CaseRelationType::SatisfiesEvidenceRequirement
-                    | CaseRelationType::Verifies
-                    | CaseRelationType::Accepts
-            ) && self
-                .trusted_evidence_ids
-                .contains(relation.from_id.as_str())
-        })
+            || self.trusted_coverage_targets.contains(cell_id.as_str())
     }
 
     fn contradiction_relations(&self, cell_id: &Id) -> Vec<&'a CaseRelation> {

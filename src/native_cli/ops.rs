@@ -774,6 +774,26 @@ fn validate_generic_morphism_metadata(morphism: &CaseMorphism) -> Result<(), Nat
              are reserved for casegraphen review and plan review commands",
         ));
     }
+    // `morphism_type` is a field of a proposal file, so a caller writes it. Two
+    // types are read downstream as evidence that a specific command ran:
+    // `review` by `canonical_review`, and `evidence_attach` by the coverage
+    // derivation in `native_eval::sections`. Declaring one on a generic proposal
+    // is therefore a caller-declared trust value — writing the word
+    // `evidence_attach` on a hand-authored morphism was enough to mint the
+    // coverage that clears a hard evidence requirement. The reserved metadata
+    // keys above already made a forged review fail; this closes the same door
+    // for the type itself, so both keys mean what they say: the tool minted it.
+    if matches!(
+        morphism.morphism_type,
+        CaseMorphismType::Review | CaseMorphismType::EvidenceAttach
+    ) {
+        return Err(NativeCliError::invalid(format!(
+            "generic morphism propose/apply cannot declare morphism_type {}: review and \
+             evidence_attach are minted by casegraphen review, evidence attach, and run --step, \
+             and are read back as proof that one of those ran",
+            morphism.morphism_type
+        )));
+    }
     Ok(())
 }
 

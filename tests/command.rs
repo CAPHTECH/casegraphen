@@ -1081,6 +1081,249 @@ fn generic_morphism_refuses_capability_self_grant() {
 }
 
 #[test]
+fn a_hard_evidence_requirement_is_satisfied_only_by_recorded_coverage() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:coverage-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let morphism_path = directory.join("coverage.case_morphism.json");
+    let space_id = json_file(native_case_fixture())["space_id"].clone();
+
+    let write_morphism = |value: Value| {
+        fs::write(
+            &morphism_path,
+            serde_json::to_string_pretty(&value).expect("serialize morphism"),
+        )
+        .expect("write morphism");
+        run_cli(&[
+            "morphism",
+            "propose",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--input",
+            morphism_path.to_str().expect("morphism path"),
+            "--format",
+            "json",
+        ])
+    };
+    let apply = |morphism_id: &str, base: &str| {
+        run_cli_with_mutation_gate(
+            &[
+                "morphism",
+                "apply",
+                "--store",
+                &store,
+                "--case-space-id",
+                native_case_space_id(),
+                "--morphism-id",
+                morphism_id,
+                "--base-revision-id",
+                base,
+                "--reviewer-id",
+                "reviewer:coverage",
+                "--reason",
+                "coverage test",
+                "--format",
+                "json",
+            ],
+            "actor:native-mutation-cli",
+        )
+    };
+    let blocked = || {
+        let listed = run_cli(&[
+            "obstruction",
+            "list",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]);
+        assert!(listed.status.success(), "stderr: {}", stderr(&listed));
+        stdout_json(&listed)["result"]["obstructions"]
+            .as_array()
+            .expect("obstructions")
+            .iter()
+            .any(|obstruction| {
+                obstruction["obstruction_type"] == json!("missing_evidence")
+                    && obstruction.to_string().contains("work:coverage-target")
+            })
+    };
+
+    // A work cell with a hard evidence requirement that nothing satisfies yet.
+    let setup = json!({
+        "morphism_id": "morphism:coverage-setup",
+        "morphism_type": "create",
+        "source_revision_id": "revision:coverage-base",
+        "target_revision_id": "revision:coverage-target",
+        "added_ids": ["work:coverage-target", "evidence:coverage-needed", "relation:coverage-requires"],
+        "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+        "evidence_ids": [], "source_ids": ["source:native-cli"],
+        "violated_invariant_ids": [], "review_status": "unreviewed",
+        "metadata": {"payload": {
+            "added_cells": [
+                {"id": "work:coverage-target", "cell_type": "work", "lifecycle": "active",
+                 "space_id": space_id, "title": "Work needing evidence",
+                 "source_ids": ["source:native-cli"], "structure_ids": [], "metadata": {},
+                 "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                                "source": {"kind": "human", "title": "t"}}},
+                {"id": "evidence:coverage-needed", "cell_type": "evidence", "lifecycle": "proposed",
+                 "space_id": space_id, "title": "Required evidence placeholder",
+                 "source_ids": ["source:native-cli"], "structure_ids": [],
+                 "metadata": {"evidence_boundary": "inferred"},
+                 "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                                "source": {"kind": "human", "title": "t"}}}
+            ],
+            "added_relations": [
+                {"id": "relation:coverage-requires", "relation_type": "requires_evidence",
+                 "relation_strength": "hard", "from_id": "work:coverage-target",
+                 "to_id": "evidence:coverage-needed", "evidence_ids": [],
+                 "source_ids": ["source:native-cli"], "metadata": {},
+                 "provenance": {"confidence": 1.0, "review_status": "accepted",
+                                "source": {"kind": "human", "title": "t"}}}
+            ],
+            "updated_cells": [], "updated_relations": []
+        }}
+    });
+    assert!(write_morphism(setup).status.success());
+    let applied = apply("morphism:coverage-setup", "revision:coverage-base");
+    assert!(applied.status.success(), "stderr: {}", stderr(&applied));
+    assert!(blocked(), "the requirement should start unsatisfied");
+
+    // A generic morphism points already-trusted evidence at the requirement.
+    // The edge is indistinguishable in the graph from the one `evidence attach`
+    // mints — same type, same endpoints, same diagnostic strength — so nothing
+    // read out of the graph can refuse it. The write is allowed; what it must
+    // not do is satisfy the requirement.
+    let repoint = json!({
+        "morphism_id": "morphism:coverage-repoint",
+        "morphism_type": "relate",
+        "source_revision_id": "revision:coverage-target",
+        "target_revision_id": "revision:coverage-repointed",
+        "added_ids": ["relation:coverage-repoint"],
+        "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+        "evidence_ids": [], "source_ids": ["source:native-cli"],
+        "violated_invariant_ids": [], "review_status": "unreviewed",
+        "metadata": {"payload": {
+            "added_cells": [],
+            "added_relations": [
+                {"id": "relation:coverage-repoint", "relation_type": "verifies",
+                 "relation_strength": "diagnostic", "from_id": "evidence:native-schema-json-valid",
+                 "to_id": "evidence:coverage-needed", "evidence_ids": [],
+                 "source_ids": ["source:native-cli"], "metadata": {},
+                 "provenance": {"confidence": 0.1, "review_status": "unreviewed",
+                                "source": {"kind": "human", "title": "t"}}}
+            ],
+            "updated_cells": [], "updated_relations": []
+        }}
+    });
+    assert!(write_morphism(repoint.clone()).status.success());
+    let repointed = apply("morphism:coverage-repoint", "revision:coverage-target");
+    assert!(repointed.status.success(), "stderr: {}", stderr(&repointed));
+    assert!(
+        blocked(),
+        "re-pointing trusted evidence through a generic morphism satisfied a hard requirement"
+    );
+
+    // Coverage is keyed on the morphism type, and `morphism_type` is a field of
+    // a proposal file. Writing `evidence_attach` on the same hand-authored
+    // morphism was enough to mint the coverage, so the type is reserved the way
+    // the canonical review metadata already was.
+    let mut forged = repoint;
+    forged["morphism_id"] = json!("morphism:coverage-forged-attach");
+    forged["morphism_type"] = json!("evidence_attach");
+    forged["added_ids"] = json!(["relation:coverage-forged"]);
+    forged["metadata"]["payload"]["added_relations"][0]["id"] = json!("relation:coverage-forged");
+    forged["metadata"]["payload"]["added_relations"][0]["relation_type"] =
+        json!("satisfies_evidence_requirement");
+    let forged_propose = write_morphism(forged);
+    assert!(!forged_propose.status.success());
+    assert!(
+        stderr(&forged_propose).contains("cannot declare morphism_type evidence_attach"),
+        "stderr: {}",
+        stderr(&forged_propose)
+    );
+
+    // The canonical path must still satisfy it: attach records the coverage,
+    // review promotes the evidence, and only then is the requirement met.
+    let evidence_path = directory.join("coverage-evidence.json");
+    fs::write(
+        &evidence_path,
+        serde_json::to_string_pretty(&json!({
+            "id": "evidence:coverage-real", "cell_type": "evidence", "lifecycle": "active",
+            "space_id": space_id, "title": "Attached evidence",
+            "source_ids": ["source:native-cli"], "structure_ids": [], "metadata": {},
+            "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                           "source": {"kind": "document", "title": "doc"}}
+        }))
+        .expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:coverage-repointed",
+            "--input",
+            evidence_path.to_str().expect("evidence path"),
+            "--satisfies",
+            "evidence:coverage-needed",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    assert!(
+        blocked(),
+        "attached evidence satisfied a hard requirement before it was reviewed"
+    );
+
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+    let promoted = run_cli_with_mutation_gate(
+        &[
+            "review",
+            "accept",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            "evidence:coverage-real",
+            "--reviewer-id",
+            "reviewer:human",
+            "--reason",
+            "read the document",
+            "--base-revision-id",
+            &attached_revision,
+            "--evidence-id",
+            "evidence:coverage-real",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(promoted.status.success(), "stderr: {}", stderr(&promoted));
+    assert!(
+        !blocked(),
+        "the canonical attach-then-review path no longer satisfies a hard requirement"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn generic_morphism_refuses_caller_declared_evidence_trust_on_an_added_cell() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -5282,9 +5525,13 @@ fn write_native_metadata_morphism_with_metadata(
     target_revision_id: &str,
     metadata: Value,
 ) {
+    // `update`, not `review`: a generic proposal may not declare a morphism type
+    // the tool mints for itself, and these fixtures exercise generic propose and
+    // apply. Declaring `review` here made every one of them depend on a rule
+    // that no longer exists.
     let morphism = json!({
         "morphism_id": morphism_id,
-        "morphism_type": "review",
+        "morphism_type": "update",
         "source_revision_id": source_revision_id,
         "target_revision_id": target_revision_id,
         "added_ids": [],

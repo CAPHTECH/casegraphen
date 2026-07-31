@@ -47,7 +47,26 @@ left the behaviour, because scoping capabilities is a contract change. See
 ADR 0007.
 
 ## 2. A hard evidence requirement has four independent ways in, and coverage is
-   a mutable graph field
+   a mutable graph field — **fixed**
+
+> **Resolved.** Coverage is now derived from the morphisms that minted it
+> (`native_eval::sections::canonical_evidence_coverage`), so none of the routes
+> below satisfies a requirement any more; the edges stay in the graph and stay
+> visible, they just are not what the decision reads.
+> `trusted_evidence_exists` went from six disjuncts to three, and every test in
+> the suite still passes — the five graph-reading disjuncts were not load-bearing
+> for any legitimate shape, which is what this section asked to be confirmed.
+>
+> Closing it exposed one more caller-declared trust value, found before the
+> review round reported: coverage was keyed on `morphism_type ==
+> EvidenceAttach`, and `morphism_type` is a field of a proposal file. Writing
+> `evidence_attach` on the hand-authored morphism of 2a cleared the requirement
+> again. `review` and `evidence_attach` are now reserved morphism types on
+> generic propose/apply, next to the canonical review metadata keys that were
+> already reserved for the same reason.
+>
+> The record below is kept as written, because the reasoning is what made the
+> fix findable.
 
 `trusted_evidence_exists` (`src/native_eval.rs:396`) is the whole decision. It
 has six disjuncts; only the first asks about the requirement's own evidence
@@ -142,17 +161,24 @@ cells and says nothing about relations, in either direction.
 
 ## 4. What this means for the policy
 
-Two claims in `docs/security/worker-execution-policy.md` are literally true and
-operationally empty while section 2 stands:
+Two claims in `docs/security/worker-execution-policy.md` were literally true and
+operationally empty while section 2 stood. Both hold operationally now:
 
 - "Inferred or worker-produced material never satisfies a hard evidence
-  requirement until review promotes it" — the inferred cell never becomes
-  trusted, and the requirement is cleared anyway.
+  requirement until review promotes it" — the inferred cell never became
+  trusted, and the requirement was cleared anyway.
 - "Promoting worker evidence to satisfy a hard requirement | Always
   (`review accept`, with operation gate)" — reproduced with zero review
   morphisms.
 
-The shape of the durable fix, for whoever takes this: **a coverage claim is
+The fix as shipped, verified end to end: a generic morphism adding a
+`verifies` edge from already-trusted evidence leaves `missing_evidence`
+standing, and `evidence attach --satisfies` followed by `review accept` still
+clears it — the first time the log records both a coverage claim and a review of
+the evidence making it.
+
+The reasoning that produced it, kept because the argument is the durable part:
+**a coverage claim is
 trusted when a canonical morphism minted it, not when it is present in the
 graph.** `evidence attach --satisfies T` already records the claim in the log —
 the attach morphism's payload carries the `satisfies_evidence_requirement`
@@ -168,9 +194,9 @@ consult that instead of reading `structure_ids`, relation targets, and
 `evidence_ids` out of the current graph. The relation would still be in the
 graph for display; it would stop being what the trust decision reads.
 
-Two consequences to decide before implementing: a space where a coverage edge
-was added by a generic morphism loses that satisfaction, and the obstruction
-reappears — fail-closed, and the same direction as `8984e78`. And the six
-disjuncts of `trusted_evidence_exists` collapse into roughly one, which is worth
-confirming against the readiness fixtures before assuming the extra five were
-never load-bearing for a legitimate shape.
+Both consequences that were flagged before implementing came out as predicted. A
+space where a coverage edge was added by a generic morphism loses that
+satisfaction and the obstruction reappears — fail-closed, the same direction as
+`8984e78`. And the five graph-reading disjuncts turned out not to be load-bearing
+for any legitimate shape: the whole suite passes with them gone, including the
+worker dispatch, workflow-lift, github-lift, and close-check paths.

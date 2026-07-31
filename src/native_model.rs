@@ -697,7 +697,9 @@ pub(crate) fn apply_morphism_indexed(
     Ok(())
 }
 
-fn morphism_payload(morphism: &CaseMorphism) -> Result<MorphismPayload, MorphismApplyError> {
+pub(crate) fn morphism_payload(
+    morphism: &CaseMorphism,
+) -> Result<MorphismPayload, MorphismApplyError> {
     match morphism.metadata.get("payload") {
         Some(value) => serde_json::from_value(value.clone()).map_err(|error| {
             MorphismApplyError::new(format!(

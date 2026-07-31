@@ -1,6 +1,67 @@
 use super::*;
-use crate::native_model::{native_evidence_trust_input, EvidenceBoundary, ReviewAction};
+use crate::native_model::{
+    morphism_payload, native_evidence_trust_input, CaseMorphismType, EvidenceBoundary, ReviewAction,
+};
 use serde_json::{json, Value};
+
+/// Which evidence covers which target, according to the morphism that minted the
+/// claim rather than to the graph as it stands now.
+///
+/// The graph cannot answer this. A `satisfies_evidence_requirement` edge that
+/// `evidence attach --satisfies` wrote and one that a generic `morphism apply`
+/// wrote are the same edge: same type, same endpoints, and the same
+/// `diagnostic` strength, because that is what attach mints. Reading coverage
+/// out of the graph therefore lets any actor who may write the graph point an
+/// already-promoted piece of evidence at a requirement nobody reviewed it for,
+/// and clear a hard obstruction without a review existing anywhere.
+///
+/// The log does answer it. Two morphisms mint coverage and nothing else does:
+///
+/// - **genesis**, which is the declared trust root — its evidence cells carry
+///   their coverage in `structure_ids` and its relations are authored inside the
+///   source boundary;
+/// - **`EvidenceAttach`**, used by both `evidence attach` and `run --step`,
+///   whose payload records the `--satisfies` targets as relations.
+///
+/// A post-genesis attach's `structure_ids` are deliberately *not* read: they
+/// come from the caller's evidence file, and the whole point of this derivation
+/// is that the tool decides coverage. The `--satisfies` targets are checked
+/// against the case space before the morphism is built, which is why they are
+/// the trustworthy half of that command's input.
+pub(super) fn canonical_evidence_coverage(case_space: &CaseSpace) -> BTreeSet<(String, String)> {
+    let mut coverage = BTreeSet::new();
+    for (index, entry) in case_space.morphism_log.iter().enumerate() {
+        let is_genesis = index == 0;
+        if !is_genesis && entry.morphism.morphism_type != CaseMorphismType::EvidenceAttach {
+            continue;
+        }
+        let Ok(payload) = morphism_payload(&entry.morphism) else {
+            continue;
+        };
+        if is_genesis {
+            for cell in payload
+                .added_cells
+                .iter()
+                .filter(|cell| cell.cell_type == CaseCellType::Evidence)
+            {
+                for target in &cell.structure_ids {
+                    coverage.insert((cell.id.to_string(), target.to_string()));
+                }
+            }
+        }
+        for relation in payload.added_relations.iter().filter(|relation| {
+            matches!(
+                relation.relation_type,
+                CaseRelationType::SatisfiesEvidenceRequirement
+                    | CaseRelationType::Verifies
+                    | CaseRelationType::Accepts
+            )
+        }) {
+            coverage.insert((relation.from_id.to_string(), relation.to_id.to_string()));
+        }
+    }
+    coverage
+}
 
 pub(super) fn completion_candidates(
     case_space: &CaseSpace,

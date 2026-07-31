@@ -81,8 +81,28 @@ no review at all, so accepting it from a payload would have made a hard evidence
 requirement satisfiable by typing a string. Genesis stays exempt: it is the
 declared trust root where source-backed evidence legitimately enters.
 
-The rule is enforced in both reducer entry points, so it also runs during the
-fold that `space replay`, `space rebuild`, and `space validate` perform. A case
+Whether a piece of evidence *covers* a requirement is decided the same way:
+from the log, not from the graph. The evaluator reads coverage only from the
+morphisms that mint it — the genesis entry, which is the declared trust root,
+and every `evidence_attach` morphism, whose payload records the `--satisfies`
+targets that `evidence attach` and `run --step` checked before building it. A
+`satisfies_evidence_requirement` edge added by a generic `morphism apply`, an
+evidence cell's post-genesis `structure_ids`, and a relation's `evidence_ids`
+are all still in the graph and are all still shown; none of them satisfies a
+hard requirement. Before this, any actor the gate admitted could point already
+promoted evidence at a requirement nobody reviewed it for, and the obstruction
+disappeared with no review anywhere in the log.
+
+Both keys the log is read by — `review` and `evidence_attach` — are therefore
+reserved: `morphism propose` and `morphism apply` refuse a generic morphism that
+declares either `morphism_type`, alongside the canonical review metadata keys
+they already refused. A proposal file is written by the caller, so a type that
+is read back as proof that a command ran is a caller-declared trust value unless
+the tool is the only writer of it.
+
+The evidence-boundary rule is enforced in both reducer entry points, so it also
+runs during the fold that `space replay`, `space rebuild`, and `space validate`
+perform. A case
 space that already recorded such an entry therefore stops loading rather than
 loading with the declared trust intact. That is the intended direction: no path
 in this tool ever produced one — after genesis it mints only `inferred` and
