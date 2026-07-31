@@ -174,7 +174,11 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0002: positioning within graph engineering](docs/adr/0002-graph-engineering-positioning.md) —
   CaseGraphen is the acceptance ledger of a graph-engineered system, not its
   runtime
+- [ADR 0007: is a capability scoped to an operation?](docs/adr/0007-capability-operation-scope.md) —
+  proposed; the gate checks who holds a capability, not what it authorizes
 - [Worker execution security and approval policy](docs/security/worker-execution-policy.md)
+- [Authorization and evidence-coverage audit](docs/audit/authorization-and-evidence-coverage-2026-07-31.md) —
+  reproduced routes that clear a hard evidence requirement without a review
 
 ## License
 
