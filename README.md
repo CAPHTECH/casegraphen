@@ -135,8 +135,7 @@ granularity.
 skill for a CLI is useless without the CLI it documents:
 
 ```sh
-cd /path/to/your/project
-sh /path/to/casegraphen/install.sh          # or --user for ~/.claude and ~/.codex
+sh /path/to/casegraphen/install.sh          # skills go to ~/.claude and ~/.codex
 ```
 
 See [`skills/README.md`](skills/README.md) for what it writes where, and for the

@@ -12,21 +12,19 @@ crate. (The repository's own development skills stay in `.claude/skills/`.)
 
 [`install.sh`](../install.sh) at the repository root installs the `casegraphen`
 binary and these skills together — the skill is instructions for a CLI, so
-installing one without the other leaves you with half of it. Run it from the
-project you want to use the skill in:
+installing one without the other leaves you with half of it:
 
 ```sh
-cd /path/to/your/project
-sh /path/to/casegraphen/install.sh            # binary, and skills into ./.claude/skills
-sh /path/to/casegraphen/install.sh --user     # binary, and skills into every agent home
+sh /path/to/casegraphen/install.sh
 ```
 
 The binary goes where `cargo install` puts it (`~/.cargo/bin` unless you have
 moved it), built from the same source tree the skills are copied from, so the
 documented command surface is the installed one.
 
-`--user` installs skills into `<home>/skills` for each of `~/.claude` and
-`~/.codex` that exists, and fails before building if neither does.
+The skills are installed into both `~/.claude/skills` and `~/.codex/skills`.
+The installer creates either directory when it does not exist and never uses
+the current project's `.claude/skills` as an install target.
 
 The script builds and copies from its own location, so it does not care where you
 run it from. It replaces a previous install of the same skill, leaves a symlink
@@ -39,7 +37,8 @@ the same script is in the unpacked crate source under
 Copying by hand is fine too — the skill is plain Markdown:
 
 ```sh
-cp -R /path/to/casegraphen/skills/casegraphen-operate .claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-operate ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-operate ~/.codex/skills/
 ```
 
 Claude Code discovers skills in `.claude/skills/` (project) and

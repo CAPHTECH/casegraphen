@@ -28,6 +28,9 @@ fi
 say 'formatting'
 cargo fmt --all --check
 
+say 'installer smoke test'
+sh scripts/install-smoke-test.sh
+
 say 'lints (warnings are failures)'
 cargo clippy --all-targets --locked -- -D warnings
 
