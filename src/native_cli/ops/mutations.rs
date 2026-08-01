@@ -103,6 +103,13 @@ pub(in crate::native_cli) fn evidence_attach(
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
     require_current_revision(&replay.current_revision_id, base_revision_id)?;
+    // Authorize before touching the inputs. Reading them first let an actor
+    // holding no capability tell an existing file from a missing one, and tell
+    // an existing cell id from an unknown one, through the refusal text alone.
+    // Nothing durable was at risk, but the gate is cheaper than the reads and
+    // there is no reason for it to run second.
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, gate_options, "evidence-attach")?;
     let prepared = prepare_evidence_attachments(&replay.case_space, attachments)?;
     let first_cell = &prepared
         .first()
@@ -165,8 +172,6 @@ pub(in crate::native_cli) fn evidence_attach(
         source_ids,
         metadata,
     };
-    let operation_gate =
-        validated_mutation_gate(&replay.case_space, gate_options, "evidence-attach")?;
     morphism.metadata.insert(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,
