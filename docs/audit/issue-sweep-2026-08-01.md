@@ -271,6 +271,16 @@ specifically "an anchored revision that is not in the store", which is
 residual risk 2's rollback signature: ordinary contention manufactured the
 forensic signal that is supposed to mean history was erased.
 
+The fix for it then had a defect of its own, found by driving the branch I
+had shipped as code-read: the rewind cleared `result_revision_id` instead of
+restoring the transition's revision, which really was appended and is the
+store's current revision. A trace saying `transition_applied: true` with a
+null result revision is honest ignorance rather than a false claim, so it is
+strictly better than the phantom — but it drops the one field the audit
+chain follows to the replay. The branch was reachable all along by occupying
+the snapshot path the anchor writes, which fails the append deterministically
+with no timing at all; I had been trying to win a race instead.
+
 Its root cause is worth more than the defect. The lock wait was eight
 attempts capped at 40 ms — about 235 ms — while the lock is held across the
 contract check, the snapshot, the append and the head write, so hold time
@@ -297,6 +307,19 @@ means the next round starts from two places rather than from a list:
   for bugs. The sixth round is the exception worth noting: crash atomicity is
   not a sibling problem, and it was found by asking what happens when the
   process stops between two writes rather than by comparing two code paths.
+
+Concurrency was driven further after that: `--supersede-trace` issued against
+a live *application* — not just a live dispatch — held across a sweep of
+launch offsets, with the supersede refused before any run directory was
+reserved whenever the transition had actually landed. One window remains
+described but unreproduced, and is recorded in the code rather than here: the
+supersede guard reads the trace file, which says `started` until finish
+rewrites it, so between another process's transition committing and its
+finish landing the guard reads data that cannot yet know. It is not the only
+thing preventing a double dispatch — `step_case_eligibility_reasons` reads
+the live case space, where a committed transition has already resolved the
+work cell — and the comment at the guard now says so, because the next reader
+will notice the stale read and should not have to re-derive why it is safe.
 
 Two coverage gaps are worth repeating because no amount of review closes them.
 This host has no `setsid`, so the two real-binary containment tests take the
