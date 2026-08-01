@@ -1,0 +1,171 @@
+// Design spec for issue #1: a named operation-gate profile.
+//
+// The rule this spec exists to pin down: a profile changes only where argv
+// comes from. Explicit flags override profile values, validation always runs
+// on the resolved (expanded) values, and the audit record carries exactly
+// those resolved values — never the profile name, and never a value that
+// skipped validation.
+//
+// ASSUME-1: the five gate fields are independent for resolution; precedence
+//           is per-field (a profile may supply some fields while flags supply
+//           others).
+// MODEL-1:  Value = 0..1 is a verification bound, not a domain fact. Value 0
+//           stands for "the value this case space validates successfully",
+//           value 1 for any value it refuses. accepts[] is frozen at init:
+//           what the space accepts is not writable by resolution.
+// MODEL-2:  three of the five gate fields are modelled, as a verification
+//           bound. Resolution is per-field and uniform (ASSUME-1), so the
+//           field count is not load-bearing; five fields only deepen the
+//           bounded search.
+spec GateProfileResolution {
+  enum Field { Actor, Capability, Boundary }
+  type Value = 0..1
+  enum Phase { Collecting, Resolving, Validated, Recorded, Refused }
+
+  state {
+    accepts:  Map<Field, Value>,
+    flag:     Map<Field, Option<Value>>,
+    profile:  Map<Field, Option<Value>>,
+    resolved: Map<Field, Option<Value>>,
+    recorded: Map<Field, Option<Value>>,
+    done:     Set<Field>,
+    phase:    Phase
+  }
+
+  init {
+    forall f: Field { accepts[f] = 0 }
+    forall f: Field { flag[f] = none }
+    forall f: Field { profile[f] = none }
+    forall f: Field { resolved[f] = none }
+    forall f: Field { recorded[f] = none }
+    done = Set {}
+    phase = Collecting
+  }
+
+  action supply_flag(f: Field, v: Value) {
+    requires phase == Collecting
+    requires flag[f] == none
+    flag[f] = some(v)
+  }
+
+  action supply_profile(f: Field, v: Value) {
+    requires phase == Collecting
+    requires profile[f] == none
+    profile[f] = some(v)
+  }
+
+  action start_resolving() {
+    requires phase == Collecting
+    phase = Resolving
+  }
+
+  // The precedence rule, in one place: a present flag wins; otherwise the
+  // profile value is used; otherwise the field stays unresolved.
+  action resolve_field(f: Field) {
+    requires phase == Resolving
+    requires not done.contains(f)
+    done = done.add(f)
+    if flag[f] != none {
+      resolved[f] = flag[f]
+    } else {
+      resolved[f] = profile[f]
+    }
+  }
+
+  // Validation reads only resolved values. Where a value came from is not an
+  // input to this decision — that is what "the profile is not a trust source"
+  // means operationally.
+  fair action validate() {
+    requires phase == Resolving
+    requires done.size() == 3
+    requires forall f: Field { resolved[f] == some(accepts[f]) }
+    phase = Validated
+  }
+
+  fair action refuse() {
+    requires phase == Resolving
+    requires done.size() == 3
+    requires not (forall f: Field { resolved[f] == some(accepts[f]) })
+    phase = Refused
+  }
+
+  fair action record() {
+    requires phase == Validated
+    forall f: Field { recorded[f] = resolved[f] }
+    phase = Recorded
+  }
+
+  // Explicit flags override the profile, so a profile never silently changes
+  // what a command does.
+  invariant FlagWins {
+    (phase == Validated or phase == Recorded) =>
+      forall f: Field { flag[f] != none => resolved[f] == flag[f] }
+  }
+
+  // Nothing reaches Validated or Recorded without every resolved value having
+  // been checked against the case space — including profile-supplied ones,
+  // and never a missing one.
+  invariant ValidatedIsChecked {
+    (phase == Validated or phase == Recorded) =>
+      forall f: Field { resolved[f] == some(accepts[f]) }
+  }
+
+  // What the audit record carries is exactly the expanded values that were
+  // validated. A log reader never needs the profile file.
+  invariant RecordedIsExpanded {
+    phase == Recorded =>
+      forall f: Field { recorded[f] == resolved[f] and recorded[f] != none }
+  }
+
+  // Auxiliary invariants for induction (domain truths that exclude phantom
+  // states): a field is resolved exactly when it has been through
+  // resolve_field, nothing is recorded before the record step, and no
+  // resolution exists while still collecting argv.
+  invariant ResolutionFollowsPrecedence {
+    forall f: Field {
+      done.contains(f) =>
+        resolved[f] == (if flag[f] != none then flag[f] else profile[f])
+    }
+  }
+  invariant ResolvedExactlyWhenDone {
+    forall f: Field { resolved[f] != none => done.contains(f) }
+  }
+  invariant NothingRecordedEarly {
+    phase != Recorded => forall f: Field { recorded[f] == none }
+  }
+  invariant CollectingIsUnresolved {
+    phase == Collecting => done.size() == 0
+  }
+
+  // Resolution is write-once: no later step may rewrite a resolved value, so
+  // what was validated is what gets recorded.
+  trans ResolvedIsWriteOnce {
+    forall f: Field { old(resolved[f]) != none => resolved[f] == old(resolved[f]) }
+  }
+
+  // A profile alone can drive a complete, recorded gate (the feature works).
+  reachable ProfileAloneRecords {
+    phase == Recorded and (forall f: Field { flag[f] == none })
+  }
+
+  // A wrong explicit flag is refused even when the profile held the accepted
+  // value: precedence is not "first valid wins", the flag decides.
+  reachable WrongFlagNotRescuedByProfile {
+    phase == Refused and
+      not (forall f: Field {
+        not (flag[f] == some(1) and profile[f] == some(0))
+      })
+  }
+
+  // A gate with any field supplied by neither flag nor profile is refused.
+  reachable MissingFieldRefused {
+    phase == Refused and not (forall f: Field { flag[f] != none or profile[f] != none })
+  }
+
+  // Once all fields are resolved, the command always reaches a verdict.
+  leadsTo ResolutionConcludes {
+    done.size() == 3 ~> (phase == Recorded or phase == Refused)
+  }
+
+  terminal { phase == Recorded or phase == Refused }
+}

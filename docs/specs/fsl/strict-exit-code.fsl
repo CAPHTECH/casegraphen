@@ -1,0 +1,99 @@
+// Design spec for issue #2: an opt-in strict mode that maps unresolved
+// domain findings to a distinct non-zero exit code.
+//
+// The contract being preserved (CLAUDE.md): domain findings are successful
+// results carrying obstructions; only stale revisions and integrity
+// mismatches are tool failures. Strict mode moves that distinction into the
+// exit code instead of collapsing it.
+//
+// Exit codes: 0 = success without findings (and, without --strict, success
+// WITH findings); 1 = tool failure (today's CliExitCode::FAILURE, unchanged);
+// 2 = domain finding under --strict. 2 is reserved for exactly that, so a CI
+// caller can tell "the graph says no" from "the tool broke".
+//
+// MODEL-1: the report payload is out of this model; the implementation
+//          contract is that --strict changes the exit code and nothing else
+//          about the report.
+spec StrictExitCode {
+  enum Outcome { NoFinding, DomainFinding, ToolFailure }
+  enum Phase { Pending, Decided, Exited }
+  type Code = 0..2
+
+  state {
+    outcome: Outcome,
+    strict:  Bool,
+    code:    Option<Code>,
+    phase:   Phase
+  }
+
+  init {
+    outcome = NoFinding
+    strict = false
+    code = none
+    phase = Pending
+  }
+
+  // The command runs and its result lands in one of the three outcome
+  // classes; the caller chose strict or not before running.
+  action run(o: Outcome, s: Bool) {
+    requires phase == Pending
+    outcome = o
+    strict = s
+    phase = Decided
+  }
+
+  // The whole mapping, in one place.
+  fair action exit_with_code() {
+    requires phase == Decided
+    if outcome == ToolFailure {
+      code = some(1)
+    } else {
+      if outcome == DomainFinding and strict {
+        code = some(2)
+      } else {
+        code = some(0)
+      }
+    }
+    phase = Exited
+  }
+
+  // The mapping is total: every run exits with a code.
+  invariant ExitIsTotal {
+    phase == Exited => code != none
+  }
+
+  // Default behaviour is unchanged: without --strict a domain finding still
+  // exits 0, because an obstruction is an answer, not a malfunction.
+  invariant DefaultUnchanged {
+    (phase == Exited and not strict and outcome != ToolFailure) => code == some(0)
+  }
+
+  // A tool failure exits 1 with or without --strict: strict never promotes,
+  // demotes, or absorbs a tool failure.
+  invariant ToolFailureIsAlwaysOne {
+    (phase == Exited and outcome == ToolFailure) => code == some(1)
+  }
+
+  // Code 2 means exactly "domain finding under --strict" — in both
+  // directions, so the codes stay distinguishable and 2 is never emitted for
+  // anything else.
+  invariant TwoMeansStrictFinding {
+    phase == Exited =>
+      ((code == some(2)) == (strict and outcome == DomainFinding))
+  }
+
+  // All three exits are live behaviour, not dead table rows.
+  reachable StrictFindingExitsTwo {
+    phase == Exited and strict and outcome == DomainFinding and code == some(2)
+  }
+  reachable LenientFindingExitsZero {
+    phase == Exited and not strict and outcome == DomainFinding and code == some(0)
+  }
+  reachable StrictCleanExitsZero {
+    phase == Exited and strict and outcome == NoFinding and code == some(0)
+  }
+
+  leadsTo EveryRunExits { phase == Decided ~> phase == Exited }
+
+  terminal { phase == Exited }
+}
