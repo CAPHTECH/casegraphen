@@ -185,10 +185,12 @@ workers under a dedicated OS user or container is the operator's control.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
   are available, the worker is launched in a dedicated session and its process
   group is signalled on every exit path, including clean exit, timeout, and
-  incomplete output. `descendants_may_survive: false` means that group signal
-  succeeded; `true` means it did not. Hosts without both utilities therefore
-  report `true` unconditionally, because the tool cannot measure whether the
-  direct child left descendants.
+  incomplete output. If the group `KILL` fails, a signal-zero probe distinguishes
+  a still-visible group from one with no signalable members.
+  `descendants_may_survive: false` means the group was signalled or was
+  verifiably empty; `true` means it was not, including every host without both
+  utilities. The probe cannot prove that an unsignalable group member is absent
+  (§4, residual risk 4).
 - Stdout/stderr reader waits are bounded by a two-second grace. Captured output
   records whether the stream was incomplete, so descendants holding a pipe
   cannot block dispatch indefinitely.
@@ -305,6 +307,10 @@ revision replay.
 4. Hosts without usable `setsid` and `kill` utilities cannot guarantee
    descendant termination. The direct child is killed, reader waits remain
    bounded, and `descendants_may_survive` makes that residual risk explicit.
+   Even with both utilities, a descendant that the group `KILL` cannot signal
+   and the signal-zero probe cannot see (for example, after a setuid boundary)
+   is indistinguishable from an empty group and can therefore be reported as
+   `descendants_may_survive: false`.
 5. Pinning a binding's executable identity proves nothing about an
    interpreter's arguments: a binding whose command is `/bin/sh` with a `-c`
    script, or any interpreter reading a script file, is fixed only in its

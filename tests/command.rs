@@ -2447,6 +2447,99 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn native_run_step_reports_clean_exit_descendant_containment_truthfully() {
+    let utilities_available = dedicated_session_utilities_available();
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let sleeper_pid_path = directory.join("background-sleeper.pid");
+    let script = format!(
+        "exec /bin/sleep 400 >/dev/null 2>&1 & printf '%s\\n' \"$!\" > '{}'; exit 0",
+        sleeper_pid_path.display()
+    );
+    let fixture = setup_native_run(&directory, "clean-exit-descendant", &script);
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("step_executed"));
+    let expected_descendants_may_survive = !utilities_available;
+    assert_eq!(
+        value["result"]["worker_report_summary"]["descendants_may_survive"],
+        json!(expected_descendants_may_survive)
+    );
+    let report = json_file(only_run_file(&directory, "worker.report.json"));
+    assert_eq!(
+        report["descendants_may_survive"],
+        json!(expected_descendants_may_survive)
+    );
+
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let evidence = replay["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .iter()
+        .find(|cell| cell["metadata"]["worker_report_id"] == report["report_id"])
+        .expect("evidence anchored to worker report");
+    assert!(evidence["source_ids"]
+        .as_array()
+        .expect("evidence source ids")
+        .contains(&report["report_id"]));
+
+    let sleeper_pid = fs::read_to_string(&sleeper_pid_path)
+        .expect("read background sleeper pid")
+        .trim()
+        .parse::<u32>()
+        .expect("background sleeper pid");
+    if utilities_available {
+        let exited = wait_for_process_exit(sleeper_pid, Duration::from_secs(5));
+        if !exited {
+            kill_process(sleeper_pid);
+        }
+        assert!(
+            exited,
+            "background sleeper {sleeper_pid} survived a clean worker exit"
+        );
+    } else {
+        assert!(
+            process_exists(sleeper_pid),
+            "the no-containment fixture must leave a descendant to make the report observable"
+        );
+        kill_process(sleeper_pid);
+        assert!(wait_for_process_exit(sleeper_pid, Duration::from_secs(5)));
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_distinguishes_an_empty_group_from_missing_containment() {
+    let utilities_available = dedicated_session_utilities_available();
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "clean-exit-empty-group", "exit 0");
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("step_executed"));
+    let expected_descendants_may_survive = !utilities_available;
+    assert_eq!(
+        value["result"]["worker_report_summary"]["descendants_may_survive"],
+        json!(expected_descendants_may_survive)
+    );
+    assert_eq!(
+        json_file(only_run_file(&directory, "worker.report.json"))["descendants_may_survive"],
+        json!(expected_descendants_may_survive)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 #[test]
 fn native_run_step_does_not_rebase_after_an_intervening_append() {
     let directory = unique_temp_dir();
@@ -6507,6 +6600,59 @@ fn wait_for_file(path: &Path, timeout_message: &str) {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(path.is_file(), "{timeout_message}");
+}
+
+#[cfg(unix)]
+fn dedicated_session_utilities_available() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let executable = |path: &Path| {
+        fs::metadata(path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    };
+    [
+        "/usr/bin/setsid",
+        "/bin/setsid",
+        "/usr/local/bin/setsid",
+        "/opt/homebrew/bin/setsid",
+    ]
+    .iter()
+    .any(|path| executable(Path::new(path)))
+        && ["/bin/kill", "/usr/bin/kill"]
+            .iter()
+            .any(|path| executable(Path::new(path)))
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while process_exists(pid) && started.elapsed() < timeout {
+        thread::sleep(Duration::from_millis(10));
+    }
+    !process_exists(pid)
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    Command::new("/bin/kill")
+        .args(["-0", "--"])
+        .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(unix)]
+fn kill_process(pid: u32) {
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--"])
+        .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 fn assert_native_store_valid_and_rebuilds(directory: &Path) {

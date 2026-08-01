@@ -171,12 +171,12 @@ impl Worker for ShellWorker {
             wait_with_timeout(&mut child, started, timeout, process_group_kill.as_deref())?;
         let (stdout, stderr) = finish_readers(stdout_reader, stderr_reader)?;
         if stdout.incomplete || stderr.incomplete {
-            let group_terminated = process_group_kill
-                .as_deref()
-                .is_some_and(|kill| kill_process_group(kill, child.id()));
-            if !group_terminated {
-                outcome.descendants_may_survive = true;
-            }
+            outcome.process_group = finalize_process_group(
+                process_group_kill.as_deref(),
+                child.id(),
+                WorkerExitKind::IncompleteOutput,
+                outcome.process_group.signal_outcome,
+            );
         }
         let finished_at = timestamp();
 
@@ -187,7 +187,7 @@ impl Worker for ShellWorker {
                 outcome.status.and_then(|status| status.code())
             },
             timed_out: outcome.timed_out,
-            descendants_may_survive: outcome.descendants_may_survive,
+            descendants_may_survive: outcome.process_group.decision.descendants_may_survive,
             stdout_sha256: stdout.content_hash,
             stderr_sha256: stderr.content_hash,
             stdout_byte_len: stdout.byte_len,
@@ -222,16 +222,26 @@ fn wait_with_timeout(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let process_group = finalize_process_group(
+                    process_group_kill,
+                    child.id(),
+                    WorkerExitKind::Clean,
+                    None,
+                );
                 return Ok(WaitOutcome {
                     status: Some(status),
                     timed_out: false,
-                    descendants_may_survive: false,
-                })
+                    process_group,
+                });
             }
             Ok(None) if started.elapsed() >= timeout => {
-                let group_terminated =
-                    process_group_kill.is_some_and(|kill| kill_process_group(kill, child.id()));
-                if !group_terminated {
+                let process_group = finalize_process_group(
+                    process_group_kill,
+                    child.id(),
+                    WorkerExitKind::Timeout,
+                    None,
+                );
+                if process_group.decision.descendants_may_survive {
                     child.kill().map_err(|error| {
                         WorkerError::new(format!("failed to kill timed-out shell worker: {error}"))
                     })?;
@@ -240,14 +250,18 @@ fn wait_with_timeout(
                 return Ok(WaitOutcome {
                     status,
                     timed_out: true,
-                    descendants_may_survive: !group_terminated,
+                    process_group,
                 });
             }
             Ok(None) => thread::sleep(POLL_INTERVAL.min(timeout)),
             Err(error) => {
-                let group_terminated =
-                    process_group_kill.is_some_and(|kill| kill_process_group(kill, child.id()));
-                if !group_terminated {
+                let process_group = finalize_process_group(
+                    process_group_kill,
+                    child.id(),
+                    WorkerExitKind::PollFailure,
+                    None,
+                );
+                if process_group.decision.descendants_may_survive {
                     let _ = child.kill();
                 }
                 return Err(WorkerError::new(format!(
@@ -261,7 +275,73 @@ fn wait_with_timeout(
 struct WaitOutcome {
     status: Option<ExitStatus>,
     timed_out: bool,
+    process_group: ProcessGroupFinalization,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkerExitKind {
+    Clean,
+    Timeout,
+    IncompleteOutput,
+    PollFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProcessGroupExitDecision {
+    signal_process_group: bool,
     descendants_may_survive: bool,
+}
+
+struct ProcessGroupFinalization {
+    decision: ProcessGroupExitDecision,
+    signal_outcome: Option<SignalOutcome>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignalOutcome {
+    Terminated,
+    GroupAlreadyEmpty,
+    Failed,
+}
+
+fn process_group_exit_decision(
+    utilities_available: bool,
+    exit_kind: WorkerExitKind,
+    signal_outcome: Option<SignalOutcome>,
+) -> ProcessGroupExitDecision {
+    // Containment and its durable claim do not depend on how the worker ended.
+    let group_contained = matches!(
+        signal_outcome,
+        Some(SignalOutcome::Terminated | SignalOutcome::GroupAlreadyEmpty)
+    );
+    match exit_kind {
+        WorkerExitKind::Clean
+        | WorkerExitKind::Timeout
+        | WorkerExitKind::IncompleteOutput
+        | WorkerExitKind::PollFailure => ProcessGroupExitDecision {
+            signal_process_group: utilities_available && !group_contained,
+            descendants_may_survive: !(utilities_available && group_contained),
+        },
+    }
+}
+
+fn finalize_process_group(
+    process_group_kill: Option<&Path>,
+    child_id: u32,
+    exit_kind: WorkerExitKind,
+    signal_outcome: Option<SignalOutcome>,
+) -> ProcessGroupFinalization {
+    let utilities_available = process_group_kill.is_some();
+    let decision = process_group_exit_decision(utilities_available, exit_kind, signal_outcome);
+    let signal_outcome = if decision.signal_process_group {
+        process_group_kill.map(|kill| kill_process_group(kill, child_id))
+    } else {
+        signal_outcome
+    };
+    ProcessGroupFinalization {
+        decision: process_group_exit_decision(utilities_available, exit_kind, signal_outcome),
+        signal_outcome,
+    }
 }
 
 fn reap_bounded(child: &mut Child, grace: Duration) -> Result<Option<ExitStatus>, WorkerError> {
@@ -350,9 +430,19 @@ fn find_executable(candidates: &[&str]) -> Option<PathBuf> {
     })
 }
 
-fn kill_process_group(kill_path: &Path, child_id: u32) -> bool {
+fn kill_process_group(kill_path: &Path, child_id: u32) -> SignalOutcome {
+    if signal_process_group(kill_path, "-KILL", child_id) {
+        SignalOutcome::Terminated
+    } else if !signal_process_group(kill_path, "-0", child_id) {
+        SignalOutcome::GroupAlreadyEmpty
+    } else {
+        SignalOutcome::Failed
+    }
+}
+
+fn signal_process_group(kill_path: &Path, signal: &str, child_id: u32) -> bool {
     Command::new(kill_path)
-        .args(["-KILL", "--"])
+        .args([signal, "--"])
         .arg(format!("-{child_id}"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -544,6 +634,41 @@ mod tests {
         assert_eq!(invocation.exit_status, None);
         assert!(started.elapsed() < Duration::from_millis(2500));
         fs::remove_dir_all(directory).expect("remove worker test directory");
+    }
+
+    #[test]
+    fn process_group_report_matches_conclusive_signal_outcomes() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let utilities_available: bool = u.arbitrary()?;
+                let exit_kind = *u.choose(&[
+                    WorkerExitKind::Clean,
+                    WorkerExitKind::Timeout,
+                    WorkerExitKind::IncompleteOutput,
+                ])?;
+                let signal_outcome = *u.choose(&[
+                    SignalOutcome::Terminated,
+                    SignalOutcome::GroupAlreadyEmpty,
+                    SignalOutcome::Failed,
+                ])?;
+
+                let decision = process_group_exit_decision(
+                    utilities_available,
+                    exit_kind,
+                    Some(signal_outcome),
+                );
+                let conclusive = matches!(
+                    signal_outcome,
+                    SignalOutcome::Terminated | SignalOutcome::GroupAlreadyEmpty
+                );
+
+                assert_eq!(
+                    !decision.descendants_may_survive,
+                    utilities_available && conclusive
+                );
+                Ok(())
+            },
+        );
     }
 
     #[test]
