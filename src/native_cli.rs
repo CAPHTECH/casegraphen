@@ -30,6 +30,38 @@ use reporting::report;
 #[cfg(test)]
 mod tests;
 
+#[derive(Debug)]
+pub(crate) struct NativeCommandResult<T> {
+    output: T,
+    domain_finding: bool,
+}
+
+impl<T> NativeCommandResult<T> {
+    pub(super) fn success(output: T) -> Self {
+        Self {
+            output,
+            domain_finding: false,
+        }
+    }
+
+    pub(super) fn with_domain_finding(output: T, domain_finding: bool) -> Self {
+        Self {
+            output,
+            domain_finding,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (T, bool) {
+        (self.output, self.domain_finding)
+    }
+}
+
+fn evaluation_carries_domain_finding(
+    evaluation: &crate::native_eval::NativeCaseEvaluation,
+) -> bool {
+    !evaluation.obstructions.is_empty()
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NativeCliCommand {
     CaseNew {
@@ -86,12 +118,14 @@ pub(crate) enum NativeCliCommand {
     InvariantCheck {
         store: PathBuf,
         case_space_id: Id,
+        strict: bool,
         output: Option<PathBuf>,
     },
     CaseReason {
         store: PathBuf,
         case_space_id: Id,
         section: NativeReasonSection,
+        strict: bool,
         output: Option<PathBuf>,
     },
     ProjectionApply {
@@ -106,6 +140,7 @@ pub(crate) enum NativeCliCommand {
         base_revision_id: Id,
         validation_evidence_ids: Vec<Id>,
         gate_options: NativeCloseGateOptions,
+        strict: bool,
         output: Option<PathBuf>,
     },
     CaseTopology {
@@ -199,6 +234,7 @@ pub(crate) enum NativeCliCommand {
         enabled_worker_kinds: Vec<String>,
         retry_step_id: Option<Id>,
         gate_options: NativeRunGateOptions,
+        strict: bool,
         output: Option<PathBuf>,
     },
     RunFrontier {
@@ -211,6 +247,7 @@ pub(crate) enum NativeCliCommand {
         retry_step_ids: Vec<Id>,
         max_parallel: usize,
         gate_options: NativeRunGateOptions,
+        strict: bool,
         output: Option<PathBuf>,
     },
     Review {
@@ -291,11 +328,28 @@ impl NativeCliCommand {
         }
     }
 
-    pub fn run_json(&self) -> Result<String, NativeCliError> {
-        serde_json::to_string(&self.run_value()?).map_err(NativeCliError::from)
+    pub fn run_json(&self) -> Result<NativeCommandResult<String>, NativeCliError> {
+        let result = self.run_value()?;
+        let (value, domain_finding) = result.into_parts();
+        let json = serde_json::to_string(&value)?;
+        Ok(NativeCommandResult::with_domain_finding(
+            json,
+            domain_finding,
+        ))
     }
 
-    fn run_value(&self) -> Result<Value, NativeCliError> {
+    pub fn strict(&self) -> bool {
+        match self {
+            Self::InvariantCheck { strict, .. }
+            | Self::CaseReason { strict, .. }
+            | Self::CaseCloseCheck { strict, .. }
+            | Self::RunStep { strict, .. }
+            | Self::RunFrontier { strict, .. } => *strict,
+            _ => false,
+        }
+    }
+
+    fn run_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
         match self {
             Self::CaseNew { .. }
             | Self::CaseImport { .. }
@@ -329,7 +383,7 @@ impl NativeCliCommand {
         }
     }
 
-    fn run_case_value(&self) -> Result<Value, NativeCliError> {
+    fn run_case_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
         match self {
             Self::CaseNew { .. }
             | Self::CaseImport { .. }
@@ -351,8 +405,8 @@ impl NativeCliCommand {
         }
     }
 
-    fn run_case_store_value(&self) -> Result<Value, NativeCliError> {
-        Ok(match self {
+    fn run_case_store_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
+        let value = match self {
             Self::CaseNew {
                 store,
                 case_space_id,
@@ -402,28 +456,31 @@ impl NativeCliCommand {
                 ..
             } => case_validate(store, case_space_id)?,
             _ => unreachable!("run_case_store_value called for analysis command"),
-        })
+        };
+        Ok(NativeCommandResult::success(value))
     }
 
-    fn run_case_analysis_value(&self) -> Result<Value, NativeCliError> {
-        Ok(match self {
+    fn run_case_analysis_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
+        match self {
             Self::InvariantCheck {
                 store,
                 case_space_id,
                 ..
-            } => invariant_check(store, case_space_id)?,
+            } => invariant_check(store, case_space_id),
             Self::CaseReason {
                 store,
                 case_space_id,
                 section,
                 ..
-            } => case_reason(store, case_space_id, *section)?,
+            } => case_reason(store, case_space_id, *section),
             Self::ProjectionApply {
                 store,
                 case_space_id,
                 projection,
                 ..
-            } => projection_apply(store, case_space_id, projection)?,
+            } => {
+                projection_apply(store, case_space_id, projection).map(NativeCommandResult::success)
+            }
             Self::CaseCloseCheck {
                 store,
                 case_space_id,
@@ -437,13 +494,14 @@ impl NativeCliCommand {
                 base_revision_id,
                 validation_evidence_ids,
                 gate_options.clone(),
-            )?,
+            ),
             Self::CaseTopology {
                 store,
                 case_space_id,
                 topology_options,
                 ..
-            } => case_topology(store, case_space_id, *topology_options)?,
+            } => case_topology(store, case_space_id, *topology_options)
+                .map(NativeCommandResult::success),
             Self::CaseTopologyDiff {
                 left_store,
                 left_case_space_id,
@@ -457,7 +515,8 @@ impl NativeCliCommand {
                 right_store,
                 right_case_space_id,
                 *topology_options,
-            )?,
+            )
+            .map(NativeCommandResult::success),
             Self::EquivalenceCheck {
                 left_store,
                 left_case_space_id,
@@ -471,13 +530,14 @@ impl NativeCliCommand {
                 right_store,
                 right_case_space_id,
                 *topology_options,
-            )?,
+            )
+            .map(NativeCommandResult::success),
             _ => unreachable!("run_case_analysis_value called for store command"),
-        })
+        }
     }
 
-    fn run_morphism_value(&self) -> Result<Value, NativeCliError> {
-        Ok(match self {
+    fn run_morphism_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
+        let value = match self {
             Self::MorphismPropose {
                 store,
                 case_space_id,
@@ -571,18 +631,20 @@ impl NativeCliCommand {
                 retry_step_id,
                 gate_options,
                 ..
-            } => run_step(
-                store,
-                NativeRunStepOptions {
-                    case_space_id,
-                    plan_id,
-                    base_revision_id,
-                    actor_id,
-                    enabled_worker_kinds,
-                    retry_step_id: retry_step_id.as_ref(),
-                    gate_options,
-                },
-            )?,
+            } => {
+                return run_step(
+                    store,
+                    NativeRunStepOptions {
+                        case_space_id,
+                        plan_id,
+                        base_revision_id,
+                        actor_id,
+                        enabled_worker_kinds,
+                        retry_step_id: retry_step_id.as_ref(),
+                        gate_options,
+                    },
+                )
+            }
             Self::RunFrontier {
                 store,
                 case_space_id,
@@ -594,19 +656,21 @@ impl NativeCliCommand {
                 max_parallel,
                 gate_options,
                 ..
-            } => run_frontier(
-                store,
-                NativeRunFrontierOptions {
-                    case_space_id,
-                    plan_id,
-                    base_revision_id,
-                    actor_id,
-                    enabled_worker_kinds,
-                    retry_step_ids,
-                    max_parallel: *max_parallel,
-                    gate_options,
-                },
-            )?,
+            } => {
+                return run_frontier(
+                    store,
+                    NativeRunFrontierOptions {
+                        case_space_id,
+                        plan_id,
+                        base_revision_id,
+                        actor_id,
+                        enabled_worker_kinds,
+                        retry_step_ids,
+                        max_parallel: *max_parallel,
+                        gate_options,
+                    },
+                )
+            }
             Self::Review {
                 action,
                 store,
@@ -666,7 +730,8 @@ impl NativeCliCommand {
                 gate_options,
             )?,
             _ => unreachable!("run_morphism_value called for case command"),
-        })
+        };
+        Ok(NativeCommandResult::success(value))
     }
 }
 
@@ -742,19 +807,24 @@ fn case_validate(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliErr
     ))
 }
 
-fn invariant_check(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliError> {
+fn invariant_check(
+    store: &Path,
+    case_space_id: &Id,
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
     let store = NativeCaseStore::new(store.to_path_buf());
     let validation = store.validate_case_space(case_space_id)?;
     let replay = store.replay_current_case_space(case_space_id)?;
     let evaluation = evaluate_native_case(&replay.case_space)?;
+    let domain_finding = evaluation_carries_domain_finding(&evaluation);
     let evidence_findings = evaluation.evidence_findings.clone();
     let projection_loss = evaluation.projection_loss.clone();
     let obstructions = evaluation.obstructions.clone();
     let completion_candidates = evaluation.completion_candidates.clone();
     let review_gaps = evaluation.review_gaps.clone();
-    Ok(report(
-        "casegraphen invariant check",
-        json!({
+    Ok(NativeCommandResult::with_domain_finding(
+        report(
+            "casegraphen invariant check",
+            json!({
             "validation": validation,
             "evaluation": evaluation,
             "evidence_findings": evidence_findings,
@@ -762,7 +832,9 @@ fn invariant_check(store: &Path, case_space_id: &Id) -> Result<Value, NativeCliE
             "obstructions": obstructions,
             "completion_candidates": completion_candidates,
             "review_gaps": review_gaps,
-        }),
+            }),
+        ),
+        domain_finding,
     ))
 }
 

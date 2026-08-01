@@ -1,7 +1,8 @@
 use super::{
+    evaluation_carries_domain_finding,
     path_helpers::{id_lossy, path_segment, relative_store_path},
     reporting::report,
-    NativeCliError, NativeReasonSection,
+    NativeCliError, NativeCommandResult, NativeReasonSection,
 };
 use crate::{
     core_extension_bridge::{
@@ -17,7 +18,7 @@ use crate::{
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
     native_review::{
-        check_native_close, check_operation_gate, declared_source_boundary_id,
+        check_native_close_with_finding, check_operation_gate, declared_source_boundary_id,
         NativeCloseCheckRequest, NativeOperationGate,
     },
     native_store::NativeCaseStore,
@@ -98,10 +99,14 @@ pub(super) fn case_reason(
     store: &Path,
     case_space_id: &Id,
     section: NativeReasonSection,
-) -> Result<Value, NativeCliError> {
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let evaluation = evaluate_native_case(&replay.case_space)?;
+    let domain_finding = matches!(
+        section,
+        NativeReasonSection::Reason | NativeReasonSection::Obstructions
+    ) && evaluation_carries_domain_finding(&evaluation);
     let (command, result) = match section {
         NativeReasonSection::Reason => (
             "casegraphen space reason",
@@ -131,7 +136,10 @@ pub(super) fn case_reason(
             }),
         ),
     };
-    Ok(report(command, result))
+    Ok(NativeCommandResult::with_domain_finding(
+        report(command, result),
+        domain_finding,
+    ))
 }
 
 pub(super) fn projection_apply(
@@ -197,11 +205,11 @@ pub(super) fn case_close_check(
     base_revision_id: &Id,
     validation_evidence_ids: &[Id],
     gate_options: NativeCloseGateOptions,
-) -> Result<Value, NativeCliError> {
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let operation_gate = close_operation_gate(&replay.case_space, gate_options)?;
-    let check = check_native_close(
+    let (check, domain_finding) = check_native_close_with_finding(
         &replay.case_space,
         NativeCloseCheckRequest {
             close_policy_id: operation_gate.close_policy_id.clone(),
@@ -218,7 +226,10 @@ pub(super) fn case_close_check(
         &replay.case_space,
         validation_evidence_ids
     )?);
-    Ok(report("casegraphen invariant close-check", result))
+    Ok(NativeCommandResult::with_domain_finding(
+        report("casegraphen invariant close-check", result),
+        domain_finding,
+    ))
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

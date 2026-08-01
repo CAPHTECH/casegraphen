@@ -5636,6 +5636,40 @@ fn strict_exit_codes_distinguish_domain_findings_from_tool_failures() {
         .expect("obstructions")
         .is_empty());
 
+    let stale_close = run_cli(&[
+        "invariant",
+        "close-check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        clean_case_space_id,
+        "--base-revision-id",
+        "revision:strict-stale",
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        stale_close.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr(&stale_close)
+    );
+    let stale_close_json = stdout_json(&stale_close);
+    assert_eq!(
+        stale_close_json["result"]["close_check"]["closeable"],
+        json!(false)
+    );
+    assert!(
+        stale_close_json["result"]["close_check"]["invariant_results"]
+            .as_array()
+            .expect("close invariants")
+            .iter()
+            .any(|invariant| invariant["invariant_id"]
+                == json!("close:native-base-revision-matches")
+                && invariant["passed"] == json!(false))
+    );
+
     let missing_store = directory.join("missing-store");
     let tool_failure = run_cli(&[
         "obstruction",

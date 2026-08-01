@@ -49,15 +49,29 @@ pub(super) struct NativeOptions {
     pub(super) max_dimension: Option<Dimension>,
     pub(super) min_persistence_stages: usize,
     pub(super) adopt_existing_log: bool,
+    pub(super) strict: bool,
 }
 
 impl NativeOptions {
     pub(super) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
+        Self::parse_internal(args, false)
+    }
+
+    pub(super) fn parse_with_strict(
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        Self::parse_internal(args, true)
+    }
+
+    fn parse_internal(
+        args: impl IntoIterator<Item = OsString>,
+        strict_allowed: bool,
+    ) -> Result<Self, NativeCliError> {
         let mut options = Self::default();
         let mut format_seen = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            options.consume_arg(&arg, &mut args, &mut format_seen)?;
+            options.consume_arg(&arg, &mut args, &mut format_seen, strict_allowed)?;
         }
         if !format_seen {
             return Err(NativeCliError::usage("--format json is required"));
@@ -70,6 +84,7 @@ impl NativeOptions {
         arg: &OsString,
         args: &mut impl Iterator<Item = OsString>,
         format_seen: &mut bool,
+        strict_allowed: bool,
     ) -> Result<(), NativeCliError> {
         match arg.to_str() {
             Some("--format") => {
@@ -148,6 +163,7 @@ impl NativeOptions {
                 self.min_persistence_stages = require_usize(args, "--min-persistence")?;
             }
             Some("--adopt-existing-log") => self.adopt_existing_log = true,
+            Some("--strict") if strict_allowed => self.strict = true,
             Some(_) | None => {
                 return Err(NativeCliError::usage(format!(
                     "unsupported native argument {arg:?}"

@@ -1,4 +1,4 @@
-use crate::native_cli::{NativeCliCommand, NativeCliError};
+use crate::native_cli::{NativeCliCommand, NativeCliError, NativeCommandResult};
 #[path = "cli_error.rs"]
 mod cli_error;
 #[path = "cli_required.rs"]
@@ -12,18 +12,24 @@ use std::{env, ffi::OsString, fs, path::PathBuf};
 const USAGE: &str = include_str!("cli_usage.txt");
 
 pub fn main_entry() -> CliExitCode {
-    match run(env::args_os().skip(1)) {
-        Ok(()) => CliExitCode::SUCCESS,
+    match run_with_outcome(env::args_os().skip(1)) {
+        Ok(result) => exit_with_code(result.outcome, result.strict),
         Err(error) => {
             eprintln!("{error}");
-            CliExitCode::FAILURE
+            exit_with_code(CliOutcome::ToolFailure, false)
         }
     }
 }
 
 pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), CliError> {
+    run_with_outcome(args).map(|_| ())
+}
+
+fn run_with_outcome(args: impl IntoIterator<Item = OsString>) -> Result<SuccessfulRun, CliError> {
     let command = Command::parse(args)?;
-    let json = command.run_json()?;
+    let strict = command.strict();
+    let result = command.run_json()?;
+    let (json, domain_finding) = result.into_parts();
     match command.output() {
         Some(path) => {
             let value = serde_json::from_str::<serde_json::Value>(&json)?;
@@ -33,12 +39,40 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), CliError> {
                     path: path.clone(),
                     source,
                 })
-            })
+            })?;
         }
         None => {
             println!("{json}");
-            Ok(())
         }
+    }
+    Ok(SuccessfulRun {
+        outcome: if domain_finding {
+            CliOutcome::DomainFinding
+        } else {
+            CliOutcome::Success
+        },
+        strict,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CliOutcome {
+    Success,
+    DomainFinding,
+    ToolFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SuccessfulRun {
+    outcome: CliOutcome,
+    strict: bool,
+}
+
+pub(crate) fn exit_with_code(outcome: CliOutcome, strict: bool) -> CliExitCode {
+    match outcome {
+        CliOutcome::ToolFailure => CliExitCode::FAILURE,
+        CliOutcome::DomainFinding if strict => CliExitCode::from(2_u8),
+        CliOutcome::Success | CliOutcome::DomainFinding => CliExitCode::SUCCESS,
     }
 }
 
@@ -75,10 +109,57 @@ impl Command {
         }
     }
 
-    fn run_json(&self) -> Result<String, CliError> {
+    fn strict(&self) -> bool {
         match self {
-            Self::Version => Ok(format!("casegraphen {}", env!("CARGO_PKG_VERSION"))),
+            Self::Version => false,
+            Self::Native(command) => command.strict(),
+        }
+    }
+
+    fn run_json(&self) -> Result<NativeCommandResult<String>, CliError> {
+        match self {
+            Self::Version => Ok(NativeCommandResult::success(format!(
+                "casegraphen {}",
+                env!("CARGO_PKG_VERSION")
+            ))),
             Self::Native(command) => command.run_json().map_err(CliError::from),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arbtest::arbitrary::Arbitrary;
+
+    #[test]
+    fn strict_exit_mapping_satisfies_the_fsl_invariants() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let outcome = *u.choose(&[
+                    CliOutcome::Success,
+                    CliOutcome::DomainFinding,
+                    CliOutcome::ToolFailure,
+                ])?;
+                let strict = bool::arbitrary(u)?;
+                let code = exit_with_code(outcome, strict);
+
+                assert!(
+                    matches!(code, CliExitCode::SUCCESS | CliExitCode::FAILURE)
+                        || code == CliExitCode::from(2_u8)
+                );
+                if !strict && outcome != CliOutcome::ToolFailure {
+                    assert_eq!(code, CliExitCode::SUCCESS);
+                }
+                if outcome == CliOutcome::ToolFailure {
+                    assert_eq!(code, CliExitCode::FAILURE);
+                }
+                assert_eq!(
+                    code == CliExitCode::from(2_u8),
+                    strict && outcome == CliOutcome::DomainFinding
+                );
+                Ok(())
+            },
+        );
     }
 }

@@ -4,7 +4,7 @@ use super::{
     case_reason,
     io::{provenance, timestamp, write_json},
     plan::{plan_path, read_stored_plan, verified_plan_review_status},
-    report, require_current_revision, NativeCliError, NativeReasonSection,
+    report, require_current_revision, NativeCliError, NativeCommandResult, NativeReasonSection,
     NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use crate::{
@@ -302,9 +302,9 @@ fn dispatch_step_worker(
         context.case_space_id,
         NativeReasonSection::Reason,
     )
-    .map_err(|error| {
-        WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
-    })?;
+    .map_err(|error| WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone())))?
+    .into_parts()
+    .0;
     write_json(&input_report_path, &input_report).map_err(|error| {
         WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
     })?;
@@ -361,7 +361,7 @@ fn dispatch_step_worker(
 pub(in crate::native_cli) fn run_step(
     store: &Path,
     options: NativeRunStepOptions<'_>,
-) -> Result<Value, NativeCliError> {
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(options.case_space_id)?;
     require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
@@ -421,7 +421,7 @@ pub(in crate::native_cli) fn run_step(
 pub(in crate::native_cli) fn run_frontier(
     store: &Path,
     options: NativeRunFrontierOptions<'_>,
-) -> Result<Value, NativeCliError> {
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
     if options.max_parallel == 0 {
         return Err(NativeCliError::usage("--max-parallel must be at least 1"));
     }
@@ -456,12 +456,17 @@ pub(in crate::native_cli) fn run_frontier(
     let binding_rejections = frontier_binding_rejections(store, &plan, &gate, &selection);
     limit_one_step_per_work_cell(&plan, &mut selection, &binding_rejections);
     if selection.step_indices.is_empty() {
+        let domain_finding = run_results_have_domain_finding(std::iter::once((
+            "no_dispatchable_step",
+            selection.obstructions.as_slice(),
+        )));
         return Ok(frontier_report(
             "no_dispatchable_step",
             Vec::new(),
             selection.step_reasons,
             Vec::new(),
             replay.current_revision_id,
+            domain_finding,
         ));
     }
 
@@ -504,6 +509,12 @@ pub(in crate::native_cli) fn run_frontier(
             }
         }
     }
+    let domain_finding = run_results_have_domain_finding(
+        execution
+            .steps
+            .iter()
+            .map(|step| (step.status.as_str(), step.trace.obstructions.as_slice())),
+    );
     let traces = execution
         .steps
         .into_iter()
@@ -524,6 +535,7 @@ pub(in crate::native_cli) fn run_frontier(
         selection.step_reasons,
         appended_entry_ids,
         final_replay.current_revision_id,
+        domain_finding,
     ))
 }
 
@@ -2092,17 +2104,24 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), NativeCliError> {
 fn no_dispatchable_report(
     obstructions: Vec<ExecutionObstruction>,
     step_reasons: Vec<Value>,
-) -> Value {
-    report(
-        "casegraphen run --step",
-        json!({
+) -> NativeCommandResult<Value> {
+    let domain_finding = run_results_have_domain_finding(std::iter::once((
+        "no_dispatchable_step",
+        obstructions.as_slice(),
+    )));
+    NativeCommandResult::with_domain_finding(
+        report(
+            "casegraphen run --step",
+            json!({
             "status": "no_dispatchable_step",
             "trace": null,
             "worker_report_summary": null,
             "appended_entry_ids": [],
             "obstructions": obstructions,
             "step_reasons": step_reasons,
-        }),
+            }),
+        ),
+        domain_finding,
     )
 }
 
@@ -2112,16 +2131,20 @@ fn frontier_report(
     step_reasons: Vec<Value>,
     appended_entry_ids: Vec<Id>,
     result_revision_id: Id,
-) -> Value {
-    report(
-        "casegraphen run --frontier",
-        json!({
+    domain_finding: bool,
+) -> NativeCommandResult<Value> {
+    NativeCommandResult::with_domain_finding(
+        report(
+            "casegraphen run --frontier",
+            json!({
             "status": status,
             "traces": traces,
             "step_reasons": step_reasons,
             "appended_entry_ids": appended_entry_ids,
             "result_revision_id": result_revision_id,
-        }),
+            }),
+        ),
+        domain_finding,
     )
 }
 
@@ -2130,7 +2153,7 @@ fn run_report(
     trace: Option<ExecutionTrace>,
     worker_report: Option<&WorkerReport>,
     step_reasons: Vec<Value>,
-) -> Value {
+) -> NativeCommandResult<Value> {
     let appended_entry_ids = trace
         .as_ref()
         .map(|trace| trace.appended_entry_ids.clone())
@@ -2145,16 +2168,37 @@ fn run_report(
             "trust_boundary": report.trust_boundary,
         })
     });
-    report(
-        "casegraphen run --step",
-        json!({
+    let domain_finding = run_results_have_domain_finding(std::iter::once((
+        status,
+        trace
+            .as_ref()
+            .map_or(&[][..], |trace| trace.obstructions.as_slice()),
+    )));
+    NativeCommandResult::with_domain_finding(
+        report(
+            "casegraphen run --step",
+            json!({
             "status": status,
             "trace": trace,
             "worker_report_summary": worker_report_summary,
             "appended_entry_ids": appended_entry_ids,
             "step_reasons": step_reasons,
-        }),
+            }),
+        ),
+        domain_finding,
     )
+}
+
+fn run_results_have_domain_finding<'a>(
+    results: impl IntoIterator<Item = (&'a str, &'a [ExecutionObstruction])>,
+) -> bool {
+    results.into_iter().any(|(status, obstructions)| {
+        status == "step_failed"
+            || (status == "no_dispatchable_step"
+                && obstructions
+                    .iter()
+                    .any(|obstruction| obstruction.obstruction_type == "retry_required"))
+    })
 }
 
 #[cfg(test)]

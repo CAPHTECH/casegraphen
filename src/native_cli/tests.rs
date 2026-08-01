@@ -6,6 +6,124 @@ fn args(values: &[&str]) -> Vec<OsString> {
 }
 
 #[test]
+fn strict_is_limited_to_finding_carrying_reports() {
+    for command in [
+        NativeCliCommand::parse(
+            "space",
+            args(&[
+                "reason",
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        ),
+        NativeCliCommand::parse(
+            "obstruction",
+            args(&[
+                "list",
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        ),
+        NativeCliCommand::parse(
+            "invariant",
+            args(&[
+                "check",
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        ),
+        NativeCliCommand::parse(
+            "invariant",
+            args(&[
+                "close-check",
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--base-revision-id",
+                "revision:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        ),
+    ] {
+        assert!(command.expect("strict report command").strict());
+    }
+
+    for mode in ["--step", "--frontier"] {
+        let command = NativeCliCommand::parse(
+            "run",
+            args(&[
+                mode,
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--plan-id",
+                "plan:demo",
+                "--base-revision-id",
+                "revision:demo",
+                "--actor-id",
+                "actor:demo",
+                "--operation-scope-id",
+                "case_space:demo",
+                "--audience",
+                "audit",
+                "--source-boundary-id",
+                "source_boundary:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        )
+        .expect("strict run command");
+        assert!(command.strict());
+    }
+
+    for (namespace, operation) in [
+        ("space", "frontier"),
+        ("space", "evidence"),
+        ("space", "inspect"),
+        ("completion", "candidates"),
+    ] {
+        let error = NativeCliCommand::parse(
+            namespace,
+            args(&[
+                operation,
+                "--store",
+                "store",
+                "--case-space-id",
+                "case_space:demo",
+                "--strict",
+                "--format",
+                "json",
+            ]),
+        )
+        .expect_err("strict must not apply to a report without domain findings");
+        assert!(matches!(
+            error,
+            NativeCliError::Usage(message) if message.contains("unsupported native argument")
+        ));
+    }
+}
+
+#[test]
 fn parses_space_commands_as_canonical_native_surface() {
     let command = NativeCliCommand::parse(
         "space",

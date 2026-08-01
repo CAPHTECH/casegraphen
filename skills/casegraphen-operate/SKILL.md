@@ -107,6 +107,10 @@ mutates nothing.
 Exit code 0 with obstructions in the payload is the normal shape of bad news.
 Only a stale revision or an integrity mismatch is a tool failure.
 
+That default is unchanged. For CI, pass `--strict` to a finding-carrying read or
+run command: exit 2 means the graph says no, while exit 1 means the tool broke;
+the report payload is unchanged.
+
 - `status: step_failed` with `worker_execution_failed` — the command ran and
   reported failure. Evidence was still attached; no transition was applied.
 - `status: no_dispatchable_step` with `retry_required` — a previous attempt

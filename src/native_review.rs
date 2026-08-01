@@ -198,6 +198,13 @@ pub fn check_native_close(
     case_space: &CaseSpace,
     request: NativeCloseCheckRequest,
 ) -> NativeReviewResult<NativeCloseCheck> {
+    check_native_close_with_finding(case_space, request).map(|(check, _)| check)
+}
+
+pub(crate) fn check_native_close_with_finding(
+    case_space: &CaseSpace,
+    request: NativeCloseCheckRequest,
+) -> NativeReviewResult<(NativeCloseCheck, bool)> {
     let evaluation = evaluate_native_case(case_space)?;
     let reviews = explicit_reviews(case_space);
     let invariant_results = close_invariants(case_space, &request, &evaluation, &reviews);
@@ -209,7 +216,7 @@ pub fn check_native_close(
             .flat_map(|result| result.witness_ids.iter().cloned())
             .collect(),
     );
-    Ok(NativeCloseCheck {
+    let check = NativeCloseCheck {
         check_id: generated_id(
             "close_check",
             &[
@@ -227,7 +234,11 @@ pub fn check_native_close(
         operation_gate: request.operation_gate,
         invariant_results,
         blocker_ids,
-    })
+    };
+    // A stale base revision is a close verdict, not a tool failure: close-check
+    // deliberately reports "cannot close at this revision" in the payload rather than raising.
+    let domain_finding = !check.closeable;
+    Ok((check, domain_finding))
 }
 
 pub fn check_operation_gate(

@@ -139,19 +139,19 @@ casegraphen space list --store <dir> --format json [--output <path>]
 casegraphen space inspect --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen space replay --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen space validate --store <dir> --case-space-id <id> --format json [--output <path>]
-casegraphen space reason --store <dir> --case-space-id <id> --format json [--output <path>]
+casegraphen space reason --store <dir> --case-space-id <id> [--strict] --format json [--output <path>]
 casegraphen space topology --store <dir> --case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen space topology diff --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen morphism propose --store <dir> --case-space-id <id> --input case_morphism.json --format json [--output <path>]
 casegraphen morphism check --store <dir> --case-space-id <id> --morphism-id <id> --format json [--output <path>]
 casegraphen morphism apply --store <dir> --case-space-id <id> --morphism-id <id> --base-revision-id <id> --reviewer-id <id> --reason <text> --format json [--output <path>]
 casegraphen morphism reject --store <dir> --case-space-id <id> --morphism-id <id> --reviewer-id <id> --reason <text> --revision-id <id> --format json [--output <path>]
-casegraphen obstruction list --store <dir> --case-space-id <id> --format json [--output <path>]
+casegraphen obstruction list --store <dir> --case-space-id <id> [--strict] --format json [--output <path>]
 casegraphen completion candidates --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen projection apply --store <dir> --case-space-id <id> --projection <projection.json> --format json [--output <path>]
 casegraphen equivalence check --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--output <path>]
-casegraphen invariant check --store <dir> --case-space-id <id> --format json [--output <path>]
-casegraphen invariant close-check --store <dir> --case-space-id <id> --base-revision-id <id> --validation-evidence-id <id> --format json [--output <path>]
+casegraphen invariant check --store <dir> --case-space-id <id> [--strict] --format json [--output <path>]
+casegraphen invariant close-check --store <dir> --case-space-id <id> --base-revision-id <id> --validation-evidence-id <id> [--strict] --format json [--output <path>]
 ```
 
 The legacy `casegraphen create`, `inspect`, `list`, `validate`, `coverage`,
@@ -171,6 +171,14 @@ proof, unresolved obstructions, unreviewed completions, invariant failures,
 projection loss, and non-equivalent correspondence should produce `ok` reports
 and exit `0`. Malformed input, invalid primitive values, unreadable files,
 schema mismatches, unsupported options, or output failures are tool failures.
+
+Strict exit behavior is opt-in on exactly `space reason`, `obstruction list`,
+`invariant check`, `invariant close-check`, `run --step`, and `run --frontier`.
+Exit `0` means a successful result, including a domain finding when `--strict`
+is absent; exit `1` means a tool failure, regardless of strict mode; exit `2`
+means exactly that `--strict` was supplied and the report carries a domain
+finding. Strict mode never changes report bytes. Commands whose reports do not
+carry these findings reject `--strict` as unsupported.
 
 ## Core Dependencies
 

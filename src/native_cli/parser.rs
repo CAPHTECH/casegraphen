@@ -67,7 +67,11 @@ impl NativeCliCommand {
         if topology_diff {
             args.remove(0);
         }
-        let options = NativeOptions::parse(args)?;
+        let options = if operation == "reason" {
+            NativeOptions::parse_with_strict(args)?
+        } else {
+            NativeOptions::parse(args)?
+        };
         match operation {
             "new" => Ok(Self::CaseNew {
                 store: options.require_store()?,
@@ -161,7 +165,7 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         match operation.to_str() {
             Some("list") => Self::parse_reason(
-                NativeOptions::parse(args)?,
+                NativeOptions::parse_with_strict(args)?,
                 NativeReasonSection::Obstructions,
             ),
             Some(_) | None => Err(NativeCliError::usage("unsupported obstruction command")),
@@ -222,11 +226,12 @@ impl NativeCliCommand {
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse_with_strict(args)?;
         match operation.to_str() {
             Some("check") => Ok(Self::InvariantCheck {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
+                strict: options.strict,
                 output: options.output,
             }),
             Some("close-check") => Self::parse_close_check(options),
@@ -252,6 +257,7 @@ impl NativeCliCommand {
                 audience: options.audience,
                 source_boundary_id: options.source_boundary_id,
             },
+            strict: options.strict,
             output: options.output,
         })
     }
@@ -264,6 +270,7 @@ impl NativeCliCommand {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
             section,
+            strict: options.strict,
             output: options.output,
         })
     }
@@ -382,7 +389,7 @@ impl NativeCliCommand {
     }
 
     fn parse_run(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse_with_strict(args)?;
         if options.run_step == options.run_frontier {
             return Err(NativeCliError::usage(
                 "run requires exactly one of --step or --frontier",
@@ -427,6 +434,7 @@ impl NativeCliCommand {
                 enabled_worker_kinds: options.enabled_worker_kinds,
                 retry_step_id: options.retry_step_ids.last().cloned(),
                 gate_options,
+                strict: options.strict,
                 output: options.output,
             })
         } else {
@@ -447,6 +455,7 @@ impl NativeCliCommand {
                 retry_step_ids: options.retry_step_ids,
                 max_parallel,
                 gate_options,
+                strict: options.strict,
                 output: options.output,
             })
         }
