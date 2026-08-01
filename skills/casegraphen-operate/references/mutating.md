@@ -146,6 +146,41 @@ attach recorded as covered goes live at once. `review accept` reports that set
 as `result.activated_coverage` — read it, and report it, because it is what the
 acceptance actually decided.
 
+## A CI run is an artifact; "the gate is green" is the claim
+
+Do not hand-write "CI passed" into an evidence cell. That records a claim about
+a run the tool never saw — a caller-declared trust value with extra steps. Hand
+the tool the run record instead and let it hash that:
+
+```sh
+gh run view <run-id> --repo <owner>/<repo> \
+  --json databaseId,workflowName,headSha,conclusion,status,createdAt,updatedAt,url \
+  > ci-run.json
+
+casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
+  --base-revision-id "$REV" \
+  --input gate-claim.json --satisfies <requirement-id> --artifact ci-run.json \
+  $GATE --format json --output "$ATTACH_REPORT"
+```
+
+The split is the one every artifact makes. `ci-run.json` is the observation:
+content-addressed, immutable, outside acceptability. `gate-claim.json` is the
+assertion someone reviews — "the release gate is green for this change" — and
+`review accept` lands on it, never on the run record.
+
+Two things the reviewer, not the tool, has to check:
+
+- **The head sha binds the run to the code under decision, and nothing else
+  does.** A green run for a different commit is the failure mode this recipe
+  exists to make visible, so put the sha in the claim body and check it against
+  what is actually being decided.
+- **`conclusion: success` is the run's own report of itself** — a fact about
+  what GitHub recorded, not a proof that the tests were adequate.
+
+The tool does not fetch. It hashes what it is handed, which needs no network
+client, no credentials, and no new trust surface — and it is more truthful than
+a fetch would be about who read what.
+
 ## Direct lifecycle change
 
 ```sh

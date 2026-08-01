@@ -143,11 +143,64 @@ constant-size log-head file independently anchors the unsnapshotted tail.
   belongs to the runtime/gateway. A runtime report that carries cost figures
   can be recorded today inside evidence `metadata` with no contract change —
   record, don't enforce.
-- **No model-identity pinning yet.** Extending a binding's content address to
-  model, version, prompt hash, and parameters is a wire-contract change plus a
-  security-policy amendment (`worker_kind` beyond `shell` requires a new
-  design review by policy). Deferred until an LLM worker kind is actually
-  proposed.
+- **No LLM worker kind, and no model-identity pinning.** This bullet used to
+  defer the question "until an LLM worker kind is actually proposed". It was
+  proposed — issue #26 asked whether registering `codex` or `claude` as the
+  execution subject would stop an agent working outside the ledger and
+  hand-writing evidence about it afterwards — and it is **refused**. Recorded
+  here so the next asker gets the argument rather than re-deriving it.
+
+  Registering an agent CLI as a `shell` worker works mechanically (`command`
+  takes an absolute path) and breaks three things:
+
+  1. **The content address keeps its form and loses its meaning.**
+     `command_content_hash` is the sha256 of the command file's bytes
+     (`src/exec/binding.rs`). For a pinned script that reads "the same program
+     runs, so the same behaviour follows". For an agent CLI the hash still pins
+     the binary while the behaviour differs on every invocation. Nothing
+     refuses; the promise evaporates while the field still looks satisfied,
+     which is worse than not having the field, because a reviewer reading a
+     hashed binding believes something.
+  2. **Credentials ride `env_allowlist`.** An API key is exactly residual
+     risk 3 of the worker execution policy — "a reviewer can still approve
+     another secret-bearing variable" — on every agent binding rather than as
+     an exception.
+  3. **The trust boundary would say `worker_output` where `inferred` is true.**
+     Decision 3's table maps *node output produced by an executed process* to
+     `worker_output` and *node output that is model reasoning* to `inferred`;
+     an agent CLI run as a shell worker produces the second and would be
+     labelled the first. To be precise about the severity rather than
+     overstate it: `src/evidence_trust.rs` handles `WorkerOutput` and
+     `Inferred` **identically** — both require an accepted review before
+     satisfying anything — so this opens no authority hole. It is an
+     audit-truth defect, not a weakened gate, and the refusal does not rest on
+     inflating it.
+
+  What decided it is the baseline, not those costs. `evidence attach
+  --artifact` (issue #18) makes an agent's diff, log, and test output
+  content-addressed cells **the tool hashed**, cited by a claim that review
+  lands on. "The agent works invisibly and self-reports" is already fixed. The
+  only delta a worker kind adds is that the tool saw the process start and
+  anchored its trace (ADR 0013) rather than hashing files handed over
+  afterwards — and that delta does not pay for a wire-contract change, the
+  security-policy design review this ADR requires for any `worker_kind` beyond
+  `shell`, and a content address advertising reproducibility it cannot deliver.
+
+  Registration would also buy less than the operator report that prompted it
+  asked for. Of the five things driven by hand — plan, binding, worker, retry,
+  evidence acceptance — it moves exactly one. Retry is an explicit act by
+  design (ADR 0004), review is the actor seam and cannot be delegated to the
+  agent that produced the claim (ADR 0015), and the loop is ADR 0016's subject.
+  The halts were never about who typed the command.
+
+  **What would reopen this:** a design that drops the pin instead of faking it
+  — pinning only what is observable (the invoked binary, prompt text,
+  arguments, environment allowlist), declaring in the binding contract that
+  behaviour is *not* reproducible from the content address, and entering output
+  at `inferred`. Model identity itself stays out regardless: the tool does not
+  make the API call, so a declared `model:` is a caller-declared trust value,
+  and putting one inside a content address would make the address carry exactly
+  the kind of claim the rest of this crate refuses.
 - **No typed step handoff.** The execution-plan contract intentionally has no
   step-input field. Any future decision must introduce and implement typed
   handoff through the contract-change process rather than advertise a
