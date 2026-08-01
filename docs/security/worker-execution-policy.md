@@ -271,7 +271,13 @@ then applies and anchors their results serially in plan-step order. One
 validated dispatch gate covers the round, but traces, attempts, obstructions,
 and anchors remain per-step. A per-step dispatch, reservation, or application
 failure is reported in the round result and does not suppress the report for
-other selected steps. `--retry-step` applies only to failed traces. A `started`
+other selected steps — **except when another process wins the same step**: a
+round whose worker ran and then lost the append exits non-zero with no report
+at all, discarding the results of steps that had already completed. Measured
+under contention, not hypothetical. The traces stay coherent and nothing is
+double-executed, so this is a reporting gap rather than an integrity one, but
+the sentence above is not true under contention and the round's own work is
+what goes unreported. `--retry-step` applies only to failed traces. A `started`
 trace can be superseded only when `--supersede-trace` names that exact trace;
 the superseding trace records the asserted id under
 `metadata.superseded_trace_ids`, covered by the anchored trace content hash. A
@@ -412,7 +418,14 @@ answer.
    migrating), which is deliberate: revocation is a source-boundary decision,
    not a runtime one.
 8. An operator who can write to the store can hold or repeatedly recreate a
-   case lock and deny writes. An empty pre-created run directory is not skipped:
+   case lock and deny writes. Lock contention is not only adversarial: the
+   lock is held across the evaluator's contract check, the snapshot, the
+   append and the head write, so hold time scales with the case space — 3.0 s
+   measured for one gated `cell transition` on a 4,000-cell space. The wait
+   budget is a 30 s deadline, chosen to outlast an ordinary append and to stay
+   well under the 60 s staleness threshold; a case space large enough to make
+   a single append exceed it will contend with itself, and the fixed budget is
+   a limit rather than a guarantee. An empty pre-created run directory is not skipped:
    it hard-errors that step's reservation. `run --frontier` records and reports
    that per-step failure while continuing the round when it can reserve a
    separate failure trace; `run --step` returns the reservation error. These are
