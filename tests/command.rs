@@ -2995,6 +2995,113 @@ fn native_run_step_records_tampered_binding_as_domain_obstruction() {
 }
 
 #[test]
+fn a_failed_anchor_append_leaves_the_trace_naming_only_what_was_written() {
+    // The trace file must be written before the anchor append, because the
+    // anchor hashes it — so it names an entry and a revision that do not exist
+    // yet. When the append does not commit, the file used to keep naming them,
+    // and "an anchored revision that is not in the store" is precisely the
+    // signal residual risk 2 tells an operator means history was erased.
+    // Ordinary lock contention was enough to produce it.
+    //
+    // Driven without timing: the anchor writes a snapshot at a path derived
+    // from its revision, and an unscheduled sequence still reads any file
+    // already there and requires it to agree
+    // (`require_existing_snapshot_agrees_with_candidate`, the sibling of
+    // `require_snapshot_absent`). Occupying that path with the genesis
+    // snapshot fails the append on the store's own invariant rather than on a
+    // serde message, which cannot change without the contract changing.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(&directory, "anchor-rewind", "printf 'rewind\\n'");
+    let inspected = stdout_json(&run_native_case_store_command(&directory, "inspect"));
+    let genesis_snapshot = directory.join(
+        inspected["result"]["record"]["nearest_snapshot_path"]
+            .as_str()
+            .expect("nearest snapshot path"),
+    );
+    let snapshots = genesis_snapshot
+        .parent()
+        .expect("snapshots directory")
+        .to_path_buf();
+
+    // The name mirrors `path_segment`, applied at each nesting level: the trace
+    // id embeds the escaped plan and step ids, the anchor revision embeds the
+    // escaped trace id, and the file name escapes that. Written out rather
+    // than learned because nothing reports it before the run that needs it to
+    // already exist — and the test fails loudly if it drifts, since an
+    // unoccupied path lets the append succeed.
+    let escape = |id: &str| {
+        id.chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                    character.to_string()
+                } else {
+                    format!("~{:02x}", character as u32)
+                }
+            })
+            .collect::<String>()
+    };
+    let trace_id = format!(
+        "execution_trace:{}:{}:1",
+        escape(&fixture.plan_id),
+        escape(&fixture.step_id)
+    );
+    let anchor_revision = format!("revision:execution-trace-anchor:{}", escape(&trace_id));
+    let occupied = snapshots.join(format!("{}.case.space.json", escape(&anchor_revision)));
+    fs::copy(&genesis_snapshot, &occupied).expect("occupy the anchor snapshot path");
+
+    let output = run_native_step(&directory, &fixture, true, None);
+    assert!(
+        !output.status.success(),
+        "the anchor append must fail with its snapshot path occupied; occupied={} stderr={}",
+        occupied.display(),
+        stderr(&output)
+    );
+
+    let trace = json_file(only_run_file(&directory, "execution.trace.json"));
+    let log_path = imported_native_log_path(&directory, &inspected);
+    let entries = fs::read_to_string(&log_path)
+        .expect("read log")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).expect("parse log entry"))
+        .collect::<Vec<_>>();
+    let entry_ids = entries
+        .iter()
+        .map(|entry| entry["entry_id"].clone())
+        .collect::<Vec<_>>();
+    let revisions = entries
+        .iter()
+        .map(|entry| entry["target_revision_id"].clone())
+        .collect::<Vec<_>>();
+
+    assert!(
+        !revisions.contains(&json!(anchor_revision)),
+        "the anchor must not have been appended"
+    );
+    for appended in trace["appended_entry_ids"]
+        .as_array()
+        .expect("appended entry ids")
+    {
+        assert!(
+            entry_ids.contains(appended),
+            "trace names an entry that is not in the log: {appended}"
+        );
+    }
+    // And the transition's revision — which really was appended — is restored
+    // rather than cleared: a trace still saying the transition applied must
+    // name the revision it produced, since that is the field the audit chain
+    // follows to the replay.
+    assert!(
+        revisions.contains(&trace["result_revision_id"]),
+        "result_revision_id {} is not a revision in the log",
+        trace["result_revision_id"]
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_run_step_detects_a_rewritten_anchored_trace() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

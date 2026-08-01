@@ -2423,17 +2423,14 @@ fn write_and_anchor_trace(
     ) {
         Ok(report) => report,
         Err(error) => {
-            // This branch has no automated test, deliberately rather than by
-            // omission: the only deterministic way found to fail the anchor
-            // append is to occupy the snapshot path it writes, and the anchor
-            // writes a snapshot only when its sequence lands on the snapshot
-            // interval, which the run fixtures do not reach. It is driven by
-            // hand instead — set up a store whose anchor falls on a snapshot
-            // point, write any non-case-space JSON at
-            // `snapshots/<escaped anchor revision>.case.space.json`, and
-            // dispatch: the append fails here and the trace must come back
-            // naming the transition's revision and no entry absent from the
-            // log. Verified that way twice, and independently by review.
+            // Covered by `a_failed_anchor_append_leaves_the_trace_naming_only_what_was_written`,
+            // which fails this append by occupying the snapshot path the
+            // anchor writes: an unscheduled sequence still reads a file
+            // already there and requires it to agree
+            // (`require_existing_snapshot_agrees_with_candidate`, the sibling
+            // of `require_snapshot_absent`). I removed that test once on the
+            // belief that only a scheduled sequence touches the path, having
+            // read one of those two and not the other.
             //
             // Restore, do not clear: the transition's revision was real and is
             // the store's current revision, and it is the field §2.6's audit
