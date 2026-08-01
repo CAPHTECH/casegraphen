@@ -207,6 +207,16 @@ structural rather than lucky: `record` writes the file and updates the hasher
 in one critical section, and `seal_capture` stops both together, so the
 published bytes and the finalised hash are the same bytes by construction.
 
+The new repair rule was then attacked in its own right, since accepting a
+head/log disagreement is a new way in. Five shapes, all refused: a head ahead
+of the log after a truncation, a forged `replay_checksum`, a forged
+`entry_hash`, a genuine crash state with the tail entry tampered, the entry
+the head names tampered, and a dropped middle entry. The last three are caught
+by the fold rather than by the new rule — `--adopt-existing-log` still
+verifies the hash chain and recomputes the replay checksum — which is the
+reason the rule is safe to relax at all: it decides only which head to write,
+never whether the log is believed.
+
 ## Where the next round should start
 
 Every issue open at `79e0d24` is closed, and so is #16, which this pass
