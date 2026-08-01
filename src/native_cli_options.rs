@@ -138,28 +138,49 @@ pub(super) struct NativeOptions {
     pub(super) min_persistence_stages: usize,
     pub(super) adopt_existing_log: bool,
     pub(super) strict: bool,
+    pub(super) format: NativeOutputFormat,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum NativeOutputFormat {
+    #[default]
+    Json,
+    Text,
 }
 
 impl NativeOptions {
     pub(super) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        Self::parse_internal(args, false)
+        Self::parse_internal(args, false, false)
     }
 
     pub(super) fn parse_with_strict(
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(args, true)
+        Self::parse_internal(args, true, false)
+    }
+
+    pub(super) fn parse_reason(
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        Self::parse_internal(args, true, true)
     }
 
     fn parse_internal(
         args: impl IntoIterator<Item = OsString>,
         strict_allowed: bool,
+        text_allowed: bool,
     ) -> Result<Self, NativeCliError> {
         let mut options = Self::default();
         let mut format_seen = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            options.consume_arg(&arg, &mut args, &mut format_seen, strict_allowed)?;
+            options.consume_arg(
+                &arg,
+                &mut args,
+                &mut format_seen,
+                strict_allowed,
+                text_allowed,
+            )?;
         }
         if !format_seen {
             return Err(NativeCliError::usage("--format json is required"));
@@ -173,10 +194,11 @@ impl NativeOptions {
         args: &mut impl Iterator<Item = OsString>,
         format_seen: &mut bool,
         strict_allowed: bool,
+        text_allowed: bool,
     ) -> Result<(), NativeCliError> {
         match arg.to_str() {
             Some("--format") => {
-                require_json_format(args)?;
+                self.format = require_format(args, text_allowed)?;
                 *format_seen = true;
             }
             Some("--store") => self.store = Some(require_path(args, "--store")?),
@@ -494,9 +516,13 @@ pub(super) fn required_segment(
         .ok_or_else(|| NativeCliError::usage(format!("{label} is required")))
 }
 
-fn require_json_format(args: &mut impl Iterator<Item = OsString>) -> Result<(), NativeCliError> {
+fn require_format(
+    args: &mut impl Iterator<Item = OsString>,
+    text_allowed: bool,
+) -> Result<NativeOutputFormat, NativeCliError> {
     match required_segment(args, "--format value")?.to_str() {
-        Some("json") => Ok(()),
+        Some("json") => Ok(NativeOutputFormat::Json),
+        Some("text") if text_allowed => Ok(NativeOutputFormat::Text),
         Some(_) | None => Err(NativeCliError::usage("--format json is required")),
     }
 }

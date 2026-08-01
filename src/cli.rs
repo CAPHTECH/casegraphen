@@ -1,4 +1,6 @@
-use crate::native_cli::{NativeCliCommand, NativeCliError, NativeCommandResult};
+use crate::native_cli::{
+    NativeCliCommand, NativeCliError, NativeCommandResult, NativeOutputFormat,
+};
 #[path = "cli_error.rs"]
 mod cli_error;
 #[path = "cli_required.rs"]
@@ -28,12 +30,18 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<(), CliError> {
 fn run_with_outcome(args: impl IntoIterator<Item = OsString>) -> Result<SuccessfulRun, CliError> {
     let command = Command::parse(args)?;
     let strict = command.strict();
-    let result = command.run_json()?;
-    let (json, domain_finding) = result.into_parts();
+    let format = command.format();
+    let result = command.run_rendered()?;
+    let (rendered, domain_finding) = result.into_parts();
     match command.output() {
         Some(path) => {
-            let value = serde_json::from_str::<serde_json::Value>(&json)?;
-            let text = serde_json::to_string_pretty(&value)?;
+            let text = match format {
+                NativeOutputFormat::Json => {
+                    let value = serde_json::from_str::<serde_json::Value>(&rendered)?;
+                    serde_json::to_string_pretty(&value)?
+                }
+                NativeOutputFormat::Text => rendered,
+            };
             fs::write(path, format!("{text}\n")).map_err(|source| {
                 CliError::from(NativeCliError::Io {
                     path: path.clone(),
@@ -42,7 +50,7 @@ fn run_with_outcome(args: impl IntoIterator<Item = OsString>) -> Result<Successf
             })?;
         }
         None => {
-            println!("{json}");
+            println!("{rendered}");
         }
     }
     Ok(SuccessfulRun {
@@ -116,13 +124,20 @@ impl Command {
         }
     }
 
-    fn run_json(&self) -> Result<NativeCommandResult<String>, CliError> {
+    fn run_rendered(&self) -> Result<NativeCommandResult<String>, CliError> {
         match self {
             Self::Version => Ok(NativeCommandResult::success(format!(
                 "casegraphen {}",
                 env!("CARGO_PKG_VERSION")
             ))),
-            Self::Native(command) => command.run_json().map_err(CliError::from),
+            Self::Native(command) => command.run_rendered().map_err(CliError::from),
+        }
+    }
+
+    fn format(&self) -> NativeOutputFormat {
+        match self {
+            Self::Version => NativeOutputFormat::Text,
+            Self::Native(command) => command.format(),
         }
     }
 }

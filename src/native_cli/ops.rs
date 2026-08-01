@@ -11,7 +11,7 @@ use crate::{
         native_morphism_check_result,
     },
     math_diagnostics::{native_close_temporal_diagnostics, native_morphism_temporal_diagnostics},
-    native_eval::evaluate_native_case,
+    native_eval::{evaluate_native_case, NativeCaseEvaluation},
     native_model::{
         apply_morphism, write_genesis_materialization, CaseCell, CaseCellLifecycle, CaseCellType,
         CaseMorphism, CaseMorphismType, CaseSpace, MorphismLogEntry, ProjectionAudience,
@@ -100,6 +100,16 @@ pub(super) fn case_reason(
     case_space_id: &Id,
     section: NativeReasonSection,
 ) -> Result<NativeCommandResult<Value>, NativeCliError> {
+    if section == NativeReasonSection::Reason {
+        return case_reason_evaluation(store, case_space_id).map(|result| {
+            result.map(|evaluation| {
+                report(
+                    "casegraphen space reason",
+                    json!({ "evaluation": evaluation }),
+                )
+            })
+        });
+    }
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let evaluation = evaluate_native_case(&replay.case_space)?;
@@ -108,10 +118,7 @@ pub(super) fn case_reason(
         NativeReasonSection::Reason | NativeReasonSection::Obstructions
     ) && evaluation_carries_domain_finding(&evaluation);
     let (command, result) = match section {
-        NativeReasonSection::Reason => (
-            "casegraphen space reason",
-            json!({ "evaluation": evaluation }),
-        ),
+        NativeReasonSection::Reason => unreachable!("space reason returned above"),
         NativeReasonSection::Frontier => (
             "casegraphen space frontier",
             json!({ "frontier_cell_ids": evaluation.frontier_cell_ids }),
@@ -138,6 +145,20 @@ pub(super) fn case_reason(
     };
     Ok(NativeCommandResult::with_domain_finding(
         report(command, result),
+        domain_finding,
+    ))
+}
+
+pub(super) fn case_reason_evaluation(
+    store: &Path,
+    case_space_id: &Id,
+) -> Result<NativeCommandResult<NativeCaseEvaluation>, NativeCliError> {
+    let replay =
+        NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
+    let evaluation = evaluate_native_case(&replay.case_space)?;
+    let domain_finding = evaluation_carries_domain_finding(&evaluation);
+    Ok(NativeCommandResult::with_domain_finding(
+        evaluation,
         domain_finding,
     ))
 }

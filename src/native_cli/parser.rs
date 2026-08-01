@@ -65,7 +65,7 @@ impl NativeCliCommand {
             args.remove(0);
         }
         let options = if operation == "reason" {
-            NativeOptions::parse_with_strict(args)?
+            NativeOptions::parse_reason(args)?
         } else {
             NativeOptions::parse(args)?
         };
@@ -266,6 +266,7 @@ impl NativeCliCommand {
             case_space_id: options.require_id("--case-space-id")?,
             section,
             strict: options.strict,
+            format: options.format,
             output: options.output,
         })
     }

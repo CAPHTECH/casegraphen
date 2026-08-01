@@ -664,6 +664,144 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
 }
 
 #[test]
+fn space_reason_text_renders_the_evaluation_without_changing_json_or_exit_semantics() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let graph_id = "workflow_graph:issue3-text";
+    let graph = workflow_attack_graph(graph_id, Vec::new());
+    let lifted = lift_workflow_graph(&directory, &graph, "issue3-text");
+    assert!(lifted.status.success(), "stderr: {}", stderr(&lifted));
+    let case_space_id = format!("case_space:{graph_id}");
+
+    let json_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(
+        json_report.status.success(),
+        "stderr: {}",
+        stderr(&json_report)
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&json_report.stdout)),
+        "bb34c4e1e88ca67a5afb3e40068812b2b0f0886489acf460d01938181ade014a",
+        "the JSON bytes changed from the pre-text-renderer baseline"
+    );
+    let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
+    let frontier_ids = evaluation["frontier_cell_ids"]
+        .as_array()
+        .expect("frontier ids");
+    assert!(!frontier_ids.is_empty());
+    let blocking_obstruction = evaluation["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .iter()
+        .find(|obstruction| obstruction["blocking"] == json!(true))
+        .expect("blocking obstruction");
+
+    let text_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "text",
+    ]);
+    assert!(
+        text_report.status.success(),
+        "stderr: {}",
+        stderr(&text_report)
+    );
+    let text = stdout(&text_report);
+    for frontier_id in frontier_ids {
+        assert!(
+            text.contains(frontier_id.as_str().expect("frontier id string")),
+            "text omitted frontier id {frontier_id}"
+        );
+    }
+    assert!(text.contains(
+        blocking_obstruction["explanation"]
+            .as_str()
+            .expect("obstruction explanation")
+    ));
+    for witness_id in blocking_obstruction["witness_ids"]
+        .as_array()
+        .expect("witness ids")
+    {
+        assert!(
+            text.contains(witness_id.as_str().expect("witness id string")),
+            "text omitted obstruction witness {witness_id}"
+        );
+    }
+
+    for format in ["json", "text"] {
+        let strict = run_cli(&[
+            "space",
+            "reason",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            &case_space_id,
+            "--strict",
+            "--format",
+            format,
+        ]);
+        assert_eq!(
+            strict.status.code(),
+            Some(2),
+            "strict {format} stderr: {}",
+            stderr(&strict)
+        );
+        if format == "text" {
+            assert_eq!(strict.stdout, text_report.stdout);
+        }
+    }
+
+    let refused = run_cli(&[
+        "space",
+        "inspect",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "text",
+    ]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(stderr(&refused).contains("--format json is required"));
+
+    let output_path = directory.join("reason.txt");
+    let written = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "text",
+        "--output",
+        output_path.to_str().expect("output path"),
+    ]);
+    assert!(written.status.success(), "stderr: {}", stderr(&written));
+    assert!(written.stdout.is_empty());
+    assert_eq!(
+        fs::read_to_string(output_path).expect("read text output"),
+        text
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn native_case_topology_emits_domain_report() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

@@ -62,13 +62,16 @@ REV="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"][
 |---|---|
 | What can proceed? | `space frontier` |
 | What blocks? | `obstruction list` |
+| What is the terminal status view? | `space reason --format text` |
 | What is the full folded state? | `space replay --output <path>` |
 | Where is it and how far has it advanced? | `space inspect` — revisions, paths, counts |
 
 `space inspect` answers *where and how far*: revisions, log and snapshot paths,
 counts. It carries no cells, so it cannot tell you what the space contains. The
 folded state comes from `space replay`, and `space frontier` / `space reason`
-derive from it — do not read an empty `inspect` payload as an empty space.
+derive from it — do not read an empty `inspect` payload as an empty space. The
+text reason view renders the same evaluator result as JSON; use it for a human
+terminal read, not as a second decision rule.
 
 **2. Every durable mutation needs a valid operation gate.** Five resolved values
 are checked against the case space. Put reusable values in a strict named JSON

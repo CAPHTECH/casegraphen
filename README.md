@@ -112,7 +112,9 @@ Integration tests validate the JSON contracts with `python3 -m jsonschema`.
 
 ## Command surface
 
-All commands take `--format json` and optionally `--output <path>`.
+All commands take `--format json` and optionally `--output <path>`. `space
+reason` alone also accepts `--format text` for a terminal view of the same
+evaluation.
 
 ```text
 casegraphen lift native|workflow|case-graph      # native and graph lifts
@@ -134,7 +136,7 @@ Domain findings exit `0` by default and remain in the report payload. For CI,
 `space reason`, `obstruction list`, `invariant check`, `invariant close-check`,
 `run --step`, and `run --frontier` accept `--strict`: a carried domain finding
 then exits `2`, while clean reports still exit `0` and tool failures always exit
-`1`. The flag changes only the exit code, never the JSON payload.
+`1`. The flag changes only the exit code, never the rendered payload.
 
 The former `workflow *` and `cg workflow *` evaluator surface was removed
 (ADR 0003): `lift workflow` materializes a workflow graph into a case space,

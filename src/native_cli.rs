@@ -12,12 +12,15 @@ use std::{
 mod ops;
 #[path = "native_cli_options.rs"]
 mod options;
+pub(crate) use options::NativeOutputFormat;
 pub use options::OPERATION_GATE_PROFILES_SCHEMA;
 mod parser;
 #[path = "native_cli_path.rs"]
 mod path_helpers;
 #[path = "native_cli_reporting.rs"]
 mod reporting;
+#[path = "native_cli_text.rs"]
+mod text;
 use ops::{
     binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
     case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
@@ -27,6 +30,7 @@ use ops::{
     NativeReviewApplyOptions, NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use reporting::report;
+use text::render_native_case_evaluation;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +58,13 @@ impl<T> NativeCommandResult<T> {
 
     pub(crate) fn into_parts(self) -> (T, bool) {
         (self.output, self.domain_finding)
+    }
+
+    fn map<U>(self, map: impl FnOnce(T) -> U) -> NativeCommandResult<U> {
+        NativeCommandResult {
+            output: map(self.output),
+            domain_finding: self.domain_finding,
+        }
     }
 }
 
@@ -127,6 +138,7 @@ pub(crate) enum NativeCliCommand {
         case_space_id: Id,
         section: NativeReasonSection,
         strict: bool,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     ProjectionApply {
@@ -337,6 +349,27 @@ impl NativeCliCommand {
             json,
             domain_finding,
         ))
+    }
+
+    pub fn run_rendered(&self) -> Result<NativeCommandResult<String>, NativeCliError> {
+        match self {
+            Self::CaseReason {
+                store,
+                case_space_id,
+                section: NativeReasonSection::Reason,
+                format: NativeOutputFormat::Text,
+                ..
+            } => ops::case_reason_evaluation(store, case_space_id)
+                .map(|result| result.map(|evaluation| render_native_case_evaluation(&evaluation))),
+            _ => self.run_json(),
+        }
+    }
+
+    pub fn format(&self) -> NativeOutputFormat {
+        match self {
+            Self::CaseReason { format, .. } => *format,
+            _ => NativeOutputFormat::Json,
+        }
     }
 
     pub fn strict(&self) -> bool {

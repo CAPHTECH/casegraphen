@@ -139,7 +139,7 @@ casegraphen space list --store <dir> --format json [--output <path>]
 casegraphen space inspect --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen space replay --store <dir> --case-space-id <id> --format json [--output <path>]
 casegraphen space validate --store <dir> --case-space-id <id> --format json [--output <path>]
-casegraphen space reason --store <dir> --case-space-id <id> [--strict] --format json [--output <path>]
+casegraphen space reason --store <dir> --case-space-id <id> [--strict] --format json|text [--output <path>]
 casegraphen space topology --store <dir> --case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen space topology diff --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>|--min-persistence-stages <n>]] [--output <path>]
 casegraphen morphism propose --store <dir> --case-space-id <id> --input case_morphism.json --format json [--output <path>]
@@ -162,9 +162,11 @@ surface. Their remaining value is represented by `lift case-graph`, `space
 validate`, `obstruction list`, `completion candidates`, `projection apply`,
 `equivalence check`, and `space topology`.
 
-Report-producing CLI commands must accept `--format json`. Human-readable text
-report output may be added later, but it must derive from the same report data.
-The `version` command is a plain text metadata command.
+Report-producing CLI commands must accept `--format json`. `space reason` also
+accepts `--format text`; its stable, id-sorted terminal view renders the same
+evaluation as JSON and does not derive readiness or obstructions independently.
+Other report commands refuse text. The `version` command is a plain text
+metadata command.
 
 Domain findings are successful command results. Missing evidence, missing
 proof, unresolved obstructions, unreviewed completions, invariant failures,
@@ -177,8 +179,9 @@ Strict exit behavior is opt-in on exactly `space reason`, `obstruction list`,
 Exit `0` means a successful result, including a domain finding when `--strict`
 is absent; exit `1` means a tool failure, regardless of strict mode; exit `2`
 means exactly that `--strict` was supplied and the report carries a domain
-finding. Strict mode never changes report bytes. Commands whose reports do not
-carry these findings reject `--strict` as unsupported.
+finding. Strict mode never changes report bytes for the selected format.
+Commands whose reports do not carry these findings reject `--strict` as
+unsupported.
 
 ### Named operation-gate profiles
 
