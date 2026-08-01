@@ -164,24 +164,72 @@ with `setsid` — is recorded in the residual risks, not in an open issue. A
 permanently open "nobody has attacked this" ticket makes it easy to read the
 absence of news as good news, which is the mistake it was filed to prevent.
 
+## The sixth round: crash paths
+
+A round scoped to the reader threads and crash paths found the worst defect of
+the day, and it was not in anything this pass wrote.
+
+**Ctrl-C between the log append and the head write bricked the store, and the
+documented recovery refused.** The two writes are separate operations, so a
+signal in between leaves the head naming an earlier entry of an intact log —
+reproduced on an ordinary gated `cell transition`, nine times out of nine, with
+SIGINT. Every command then refused, *including* `space rebuild
+--adopt-existing-log`, which only ever adopted a **missing** head. The only
+thing that worked was deleting the head file by hand — the exact primitive
+residual risk 2 calls an untraceable rollback, and indistinguishable from one
+afterwards. The tool's response to Ctrl-C forced the operator into the move its
+own threat model calls tampering.
+
+The three states are distinguishable and the code was not distinguishing them:
+a crashed head names an entry still in the log, before the tail, agreeing with
+it; a rolled-back head names a revision the log no longer contains; a rewritten
+head names a present revision with a different checksum. Only the first is
+repairable, and only through the flag that already means "the operator asserts
+this log is the record". Reordering to head-then-log was rejected: it leaves
+the head ahead of the log, which is the rollback signature.
+
+**A worker chose how much every later command cost.** The 4 MiB cap bounds what
+is retained in memory, not what reaches `runs/<trace>/stdout`, and anchor
+verification read all three artifacts of every anchored trace whole on every
+dispatch — 4.4 s and 113 MB resident for a `run --step` that dispatched
+nothing, after one worker wrote 100 MB. Streaming the hash makes it constant.
+The disk half is left as residual risk 9 rather than quietly fixed, because
+bounding the file would make the anchor cover a prefix instead of the stream,
+which is a different claim.
+
+**The hash reached the graph without its qualifier.** `incomplete` decides
+whether a stream hash means the complete stream, and it stopped at the worker
+report; the evidence cell carried a content hash and nothing saying what it
+covered. Now recorded and frozen with it.
+
+The reader-thread machinery itself held every attack, and the reason is
+structural rather than lucky: `record` writes the file and updates the hasher
+in one critical section, and `seal_capture` stops both together, so the
+published bytes and the finalised hash are the same bytes by construction.
+
 ## Where the next round should start
 
 Every issue open at `79e0d24` is closed, and so is #16, which this pass
 raised and then answered. Nothing is being tracked in an open ticket, which
 means the next round starts from two places rather than from a list:
 
-- **The residual risks** in `docs/security/worker-execution-policy.md`. Three
-  of the nine were written or rewritten today, and risk 9 is new: worker
-  execution is a Unix control surface and no non-Unix host has been driven.
-- **This document**, for the shape. Four earlier rounds and this one all
-  reduce to the same failure, and the four instances above were found by
-  looking for siblings — a rule enforced here and not there — rather than by
-  reading code for bugs.
+- **The residual risks** in `docs/security/worker-execution-policy.md`. Four
+  of the ten were written or rewritten today; risks 9 and 10 are new — a
+  worker chooses how much a store keeps with no path to prune it, and worker
+  execution is a Unix control surface no non-Unix host has driven.
+- **This document**, for the shape. Five earlier rounds and this one reduce to
+  the same failure, and most instances above were found by looking for
+  siblings — a rule enforced here and not there — rather than by reading code
+  for bugs. The sixth round is the exception worth noting: crash atomicity is
+  not a sibling problem, and it was found by asking what happens when the
+  process stops between two writes rather than by comparing two code paths.
 
-One coverage gap is worth repeating because no amount of review closes it:
-this host has no `setsid`, so the two real-binary containment tests take the
-"no utilities" branch and cannot fail here no matter how broken the code is.
-The property tests carry the rule; the platform coverage does not exist. A
-Linux CI job running those two tests would settle it, and would also let
-someone drive the three containment limits in residual risk 4, which are
-code-read only.
+Two coverage gaps are worth repeating because no amount of review closes them.
+This host has no `setsid`, so the two real-binary containment tests take the
+"no utilities" branch and cannot fail here no matter how broken the code is;
+the property tests carry the rule, the platform coverage does not exist, and a
+Linux CI job would settle it along with the three containment limits in
+residual risk 4 that are code-read only. And **nothing has been driven with
+two `casegraphen` processes against one store**, or with `--max-parallel > 1`
+— which is precisely where `--supersede-trace`'s rationale lives. Every
+concurrency claim in this document rests on single-process reproductions.
