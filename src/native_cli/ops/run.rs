@@ -1275,6 +1275,15 @@ fn decide_superseded_traces(
                 trace.step_id, plan.plan_id
             )));
         }
+        // This reads the trace FILE, which says `started` from `TraceGuard::start`
+        // until finish rewrites it — so between another process's transition
+        // committing and its finish landing, this test is reading a file that
+        // cannot yet know the transition applied. That window is not the only
+        // thing standing between a stale read and a double dispatch:
+        // `step_case_eligibility_reasons` reads the live case space, where a
+        // committed transition has already resolved the work cell, so the step
+        // is ineligible before anything spawns regardless of what this concluded.
+        // This guard is the second line, not the only one.
         if trace.transition_applied || trace.dispatch_state == ExecutionDispatchState::Completed {
             return Err(NativeCliError::invalid(format!(
                 "supersede trace {asserted_trace_id} was already applied; only a started trace can be superseded"
@@ -2354,6 +2363,9 @@ fn write_and_anchor_trace(
         "revision:execution-trace-anchor:{}",
         path_segment(&trace.trace_id)
     ))?;
+    // Kept so the rewind below can restore it: before the anchor, this names
+    // the transition's revision, which really was appended.
+    let pre_anchor_result_revision_id = trace.result_revision_id.clone();
     trace.result_revision_id = Some(target_revision_id.clone());
     trace.appended_entry_ids.push(anchor_entry_id.clone());
     write_trace(run_directory, &trace)?;
@@ -2411,9 +2423,28 @@ fn write_and_anchor_trace(
     ) {
         Ok(report) => report,
         Err(error) => {
-            trace.result_revision_id = None;
+            // This branch has no automated test, deliberately rather than by
+            // omission: the only deterministic way found to fail the anchor
+            // append is to occupy the snapshot path it writes, and the anchor
+            // writes a snapshot only when its sequence lands on the snapshot
+            // interval, which the run fixtures do not reach. It is driven by
+            // hand instead — set up a store whose anchor falls on a snapshot
+            // point, write any non-case-space JSON at
+            // `snapshots/<escaped anchor revision>.case.space.json`, and
+            // dispatch: the append fails here and the trace must come back
+            // naming the transition's revision and no entry absent from the
+            // log. Verified that way twice, and independently by review.
+            //
+            // Restore, do not clear: the transition's revision was real and is
+            // the store's current revision, and it is the field §2.6's audit
+            // chain follows to the replay. Clearing it swapped a false claim
+            // for a missing one on a trace still saying the transition applied.
+            trace.result_revision_id = pre_anchor_result_revision_id;
             trace.appended_entry_ids.retain(|id| *id != anchor_entry_id);
-            write_trace(run_directory, &trace)?;
+            // The append's error is the one the caller needs; a failure to
+            // rewind must not replace it, or the reason the anchor failed is
+            // lost behind an error about the rewind.
+            let _ = write_trace(run_directory, &trace);
             return Err(error);
         }
     };

@@ -928,6 +928,10 @@ fn import_rejects_existing_case_space_and_preserves_log() {
 
 #[test]
 fn append_fails_while_case_lock_is_held_without_corrupting_history() {
+    // This waits out LOCK_WAIT_BUDGET on purpose — nothing releases the lock,
+    // so the whole budget elapses. Do not "fix" the runtime by shrinking that
+    // constant: it is sized to outlast an ordinary append on a large case
+    // space, which is the defect it was raised to close.
     let root = temp_root("held-lock");
     let store = NativeCaseStore::new(root.clone());
     let case_space = fixture_space();
