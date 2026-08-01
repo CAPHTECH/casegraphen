@@ -7025,6 +7025,72 @@ fn rebuild_repairs_a_head_that_lags_the_log_and_refuses_one_that_does_not() {
         );
     }
 
+    // A lag of more than one is not a crash signature either: append_morphism
+    // holds the case lock across exactly one append and one head write, so a
+    // crash leaves the head behind by one entry and never more. Two entries
+    // appended with the head held back must refuse, or the repair is wider
+    // than the only thing that produces the state it repairs.
+    let advanced_head = fs::read_to_string(&head_path).expect("read head after repair");
+    for cell in ["work:review-native-contract", "work:review-native-contract"] {
+        let revision = stdout_json(&run_cli(&[
+            "space",
+            "inspect",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]))["result"]["record"]["current_revision_id"]
+            .as_str()
+            .expect("current revision")
+            .to_owned();
+        let stepped = run_cli_with_mutation_gate(
+            &[
+                "cell",
+                "transition",
+                "--store",
+                &store,
+                "--case-space-id",
+                native_case_space_id(),
+                "--base-revision-id",
+                &revision,
+                "--cell-id",
+                cell,
+                "--to",
+                "active",
+                "--format",
+                "json",
+            ],
+            "actor:native-transition-cli",
+        );
+        assert!(stepped.status.success(), "stderr: {}", stderr(&stepped));
+    }
+    fs::write(&head_path, &advanced_head).expect("hold the head two entries back");
+    let over_lagged = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !over_lagged.status.success(),
+        "a head two entries behind is not a crash signature and must be refused"
+    );
+    // Put it back where the repair left it so the rollback case below starts
+    // from a readable store.
+    let entries_now = fs::read_to_string(&log_path).expect("read log");
+    let tail = entries_now
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    assert!(tail >= 4, "expected the two extra appends to be in the log");
+
     // A head *ahead* of the log is the rollback signature, not a crash, and it
     // is what residual risk 2 exists to catch. Truncating the log to produce
     // it must keep refusing.

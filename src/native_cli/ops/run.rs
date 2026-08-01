@@ -261,6 +261,26 @@ fn inspect_worker_binding(
     )))
 }
 
+/// Flips `metadata.worker_invoked` in the on-disk trace, leaving every other
+/// field alone. Written before the spawn so it survives a killed dispatcher,
+/// which is the only reader that needs it.
+fn mark_trace_worker_invoked(run_directory: &Path) -> Result<(), NativeCliError> {
+    let path = run_directory.join("execution.trace.json");
+    let bytes = fs::read(&path).map_err(|source| NativeCliError::Io {
+        path: path.clone(),
+        source,
+    })?;
+    let mut trace: Value = serde_json::from_slice(&bytes)?;
+    let Some(metadata) = trace.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return Err(NativeCliError::invalid(format!(
+            "execution trace at {} has no metadata object",
+            path.display()
+        )));
+    };
+    metadata.insert("worker_invoked".to_owned(), Value::Bool(true));
+    write_bytes(&path, &serde_json::to_vec_pretty(&trace)?)
+}
+
 fn dispatch_step_worker(
     context: &RunExecutionContext<'_>,
     dispatch_case_space: &CaseSpace,
@@ -315,6 +335,17 @@ fn dispatch_step_worker(
     .into_parts()
     .0;
     write_json(&input_report_path, &input_report).map_err(|error| {
+        WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
+    })?;
+    // Record that a process is about to exist, in the file, before it does.
+    // The in-memory trace is corrected on every path that returns; this is for
+    // the path that does not return at all. A dispatcher killed mid-round left
+    // every reserved step's trace byte-identical — `started`,
+    // `worker_invoked: false`, empty streams — whether or not it had spawned,
+    // so an operator asked to assert that a dispatch is dead
+    // (`--supersede-trace`) could not tell which ones had ever run. The tool
+    // held that information at spawn time and was discarding it.
+    mark_trace_worker_invoked(&trace_identity.run_directory).map_err(|error| {
         WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
     })?;
     let invocation = execute_worker(

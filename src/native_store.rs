@@ -635,15 +635,24 @@ fn morphism_log_head(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult
     Ok(head)
 }
 
-/// Accepts exactly one shape of head/log disagreement: a head naming an entry
-/// that is still in the log, before the tail, and agreeing with that entry.
+/// Accepts exactly one shape of head/log disagreement: a head naming the
+/// entry immediately before the tail, and agreeing with it.
 ///
 /// That is what a crash between `append_verified_log_entry` and
 /// `write_log_head` leaves, and it is repairable because the log — the source
-/// of record — is whole. A head naming a revision the log no longer contains
-/// is the opposite: the log was truncated under it, which is the tail-rollback
-/// signature residual risk 2 exists to catch. A head naming a present revision
-/// with a different checksum is a rewrite. Both keep refusing.
+/// of record — is whole. The distance is part of the signature, not an
+/// incidental detail: `append_morphism` takes one entry and holds the case
+/// lock across exactly one append and one head write, and no path appends two
+/// entries under one lock — `run --step`'s three appends are three separate
+/// calls — so a crash can leave the head behind by one entry and never more.
+/// Accepting any lag, as this first did, made the condition wider than the
+/// only thing that produces it: saving a head, running one `run --step`, and
+/// restoring it left a lag of three that the repair blessed.
+///
+/// A head naming a revision the log no longer contains is the opposite: the
+/// log was truncated under it, which is the tail-rollback signature residual
+/// risk 2 exists to catch. A head naming a present revision with a different
+/// checksum is a rewrite. Both keep refusing.
 fn require_head_lags_log(path: &Path, entries: &[MorphismLogEntry]) -> NativeStoreResult<()> {
     let text = fs::read_to_string(path).map_err(|source| NativeStoreError::ReplayMismatch {
         path: path.to_owned(),
@@ -655,7 +664,7 @@ fn require_head_lags_log(path: &Path, entries: &[MorphismLogEntry]) -> NativeSto
             reason: format!("morphism log head is malformed: {source}"),
         })?;
     let stale = format!(
-        "morphism log head at revision {} does not name an earlier entry of this log",
+        "morphism log head at revision {} does not name the entry immediately before this log's tail",
         head.target_revision_id
     );
     let position = entries
@@ -665,9 +674,10 @@ fn require_head_lags_log(path: &Path, entries: &[MorphismLogEntry]) -> NativeSto
             path: path.to_owned(),
             reason: stale.clone(),
         })?;
-    if position + 1 == entries.len() {
-        // The head names the tail, so this is not a lagging head — whatever
-        // `require_log_head` refused it for stands.
+    if position + 2 != entries.len() {
+        // Either the head names the tail — so it is not lagging at all, and
+        // whatever `require_log_head` refused it for stands — or it lags by
+        // more than one entry, which no crash produces.
         return Err(NativeStoreError::ReplayMismatch {
             path: path.to_owned(),
             reason: stale,

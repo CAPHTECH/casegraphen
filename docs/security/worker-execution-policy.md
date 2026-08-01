@@ -282,7 +282,16 @@ Replay wins over any cache or snapshot. The log's constant-size head file is an
 independent witness for the current tail entry; a missing or stale head refuses
 the audit path rather than silently trusting the log. The audit path for an
 incident is: trace → worker report + raw output hashes → anchored log entries →
-revision replay.
+revision replay. A trace is anchored when its dispatch finishes, not when it
+starts, because its content includes the entry ids and result revision the
+dispatch has not produced yet — so between the evidence append and the
+transition append the evidence morphism is in the hash-chained log while the
+trace explaining it is still unverified. The fact of the evidence is
+tamper-evident there; the explanation is not. `metadata.worker_invoked` is
+written into the trace file at spawn rather than only at finish, so a
+dispatcher killed mid-round leaves a record that says which reserved steps
+had a real process — the question `--supersede-trace` asks an operator to
+answer.
 
 ## 3. Approval policy — what always needs a human
 
@@ -415,7 +424,10 @@ revision replay.
    verification hashes all three artifacts of every anchored trace on each
    dispatch — streamed since 2026-08-01, so memory is constant, but the CPU
    and the disk are proportional to what workers have produced, cumulatively
-   and permanently. There is no retention or GC path: truncating a stream to
+   and permanently. The cost that survives the streaming fix is **time**:
+   hashing is CPU-bound whether or not it is buffered, measured at 4.4 s for a
+   `run --step` that dispatched nothing after one worker wrote 100 MB, paid on
+   every dispatch from then on. There is no retention or GC path: truncating a stream to
    reclaim space makes the anchor verification refuse from then on, which is
    correct — the artifact no longer matches what was anchored — but leaves no
    supported way to prune. Operators running large-output workers should cap
