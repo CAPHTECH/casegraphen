@@ -55,8 +55,11 @@ preferences.
   before accepting them. Three rounds of that review each found real defects.
 - Driving an actual case space with the CLI (rather than changing this crate) —
   use the `casegraphen-operate` skill. It lives in `skills/` because it ships to
-  consumers; `.claude/skills/casegraphen-operate` is a symlink to it so that it is
-  discoverable here without a second copy. Do not replace that symlink with a copy.
+  consumers, and `install.sh` installs it into `~/.claude/skills` and
+  `~/.codex/skills`, which is where an agent working here picks it up. There is
+  no copy or link under this repository's `.claude/`: the source of truth is
+  `skills/`, and a second copy only drifts. After editing the skill, re-run
+  `sh install.sh` if you want the change in your own runtime.
 - Integration tests spawn the real binary via `CARGO_BIN_EXE_casegraphen`. A new
   command needs a test that exercises it through the binary, not only a unit test.
 - Fixtures are updated to match stricter behaviour. Never relax a check to keep an
