@@ -152,6 +152,8 @@ casegraphen projection apply --store <dir> --case-space-id <id> --projection <pr
 casegraphen equivalence check --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--output <path>]
 casegraphen invariant check --store <dir> --case-space-id <id> [--strict] --format json [--output <path>]
 casegraphen invariant close-check --store <dir> --case-space-id <id> --base-revision-id <id> --validation-evidence-id <id> [--strict] --format json [--output <path>]
+casegraphen run --step --store <dir> --case-space-id <id> --plan-id <id> --base-revision-id <id> [--retry-step <step-id>] [--supersede-trace <trace-id>]... [--strict] --format json [--output <path>]
+casegraphen run --frontier --store <dir> --case-space-id <id> --plan-id <id> --base-revision-id <id> [--max-parallel <n>] [--retry-step <step-id>]... [--supersede-trace <trace-id>]... [--strict] --format json [--output <path>]
 ```
 
 The legacy `casegraphen create`, `inspect`, `list`, `validate`, `coverage`,
@@ -182,6 +184,16 @@ means exactly that `--strict` was supplied and the report carries a domain
 finding. Strict mode never changes report bytes for the selected format.
 Commands whose reports do not carry these findings reject `--strict` as
 unsupported.
+
+For either run mode, one accepted step has at most one live dispatch. A
+`started` execution trace blocks that step regardless of later graph revisions;
+revision movement is never a liveness signal. `--retry-step` releases only the
+existing failed-attempt guard. The repeatable `--supersede-trace <trace-id>` is
+an operator assertion that releases only the exact named `started` trace. Each
+id must resolve to a trace of the requested plan and one of its steps, and its
+dispatch state must still be `started`; unknown, failed, completed/applied, or
+foreign trace ids are tool failures and leave selection unchanged. If another
+trace for the same step started after the named trace, it continues to block.
 
 ### Batch evidence attachment
 
@@ -244,6 +256,11 @@ and therefore a tool failure. A dispatch that does not invoke a process still
 writes and anchors a tool-generated report plus empty stdout and stderr files,
 so the three required fields are always backed by durable bytes rather than
 acting as optional placeholders.
+
+A dispatch made by `--supersede-trace` also records the asserted ids in
+`metadata.superseded_trace_ids`. Attribution comes from the already-required
+dispatch operation gate; no caller-supplied actor metadata is accepted. The
+anchored trace content hash covers the assertion record.
 
 ## Core Dependencies
 

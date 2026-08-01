@@ -127,7 +127,8 @@ mutates nothing.
 ## Reading results
 
 Exit code 0 with obstructions in the payload is the normal shape of bad news.
-Only a stale revision or an integrity mismatch is a tool failure.
+Stale revisions, integrity mismatches, and invalid `--supersede-trace`
+assertions are tool failures.
 
 That default is unchanged. For CI, pass `--strict` to a finding-carrying read or
 run command: exit 2 means the graph says no, while exit 1 means the tool broke;
@@ -137,6 +138,9 @@ the report payload is unchanged.
   reported failure. Evidence was still attached; no transition was applied.
 - `status: no_dispatchable_step` with `retry_required` — a previous attempt
   failed. Retrying is an explicit act: pass `--retry-step <step-id>`.
+- `dispatch_in_progress` — a `started` trace still blocks the step. Only after
+  externally establishing that exact dispatch is dead, pass
+  `--supersede-trace <trace-id>`; revision movement never releases it.
 - `transition_not_authorized` — the transition fell outside the accepted plan's
   `allowed_transition_classes` and was kept as an unreviewed proposal.
 - `binding_hash_mismatch` / `binding_identity_mismatch` — the plan or the

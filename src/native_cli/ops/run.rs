@@ -105,6 +105,7 @@ struct RunExecutionContext<'a> {
     actor_id: &'a Id,
     enabled_worker_kinds: &'a [String],
     gate: &'a NativeOperationGate,
+    superseded_trace_ids_by_step: &'a BTreeMap<Id, Vec<Id>>,
     pinned_application_case_space: Option<&'a CaseSpace>,
     continue_on_step_failure: bool,
 }
@@ -375,6 +376,7 @@ pub(in crate::native_cli) fn run_step(
     let gate = dispatch_gate(options.actor_id, options.gate_options);
     let evaluation = evaluate_native_case(&replay.case_space)?;
     let traces = read_execution_traces(store, &replay.case_space)?;
+    let supersede = decide_superseded_traces(&plan, &traces, options.supersede_trace_ids)?;
     let retry_step_ids = options.retry_step_id.into_iter().collect::<BTreeSet<_>>();
     let selection = select_steps(
         &plan,
@@ -382,6 +384,7 @@ pub(in crate::native_cli) fn run_step(
         &evaluation.frontier_cell_ids,
         &traces,
         &retry_step_ids,
+        &supersede.blocking_step_ids,
     );
     let Some(&step_index) = selection.step_indices.first() else {
         return Ok(no_dispatchable_report(
@@ -396,6 +399,7 @@ pub(in crate::native_cli) fn run_step(
         actor_id: options.actor_id,
         enabled_worker_kinds: options.enabled_worker_kinds,
         gate: &gate,
+        superseded_trace_ids_by_step: &supersede.trace_ids_by_step,
         pinned_application_case_space: Some(&replay.case_space),
         continue_on_step_failure: false,
     };
@@ -438,6 +442,7 @@ pub(in crate::native_cli) fn run_frontier(
     let gate = dispatch_gate(options.actor_id, options.gate_options);
     let evaluation = evaluate_native_case(&replay.case_space)?;
     let traces = read_execution_traces(store, &replay.case_space)?;
+    let supersede = decide_superseded_traces(&plan, &traces, options.supersede_trace_ids)?;
     let retry_step_ids = options.retry_step_ids.iter().collect::<BTreeSet<_>>();
     let mut selection = select_steps(
         &plan,
@@ -445,6 +450,7 @@ pub(in crate::native_cli) fn run_frontier(
         &evaluation.frontier_cell_ids,
         &traces,
         &retry_step_ids,
+        &supersede.blocking_step_ids,
     );
     if check_operation_gate(&replay.case_space, &gate, "dispatch").is_err() {
         for &step_index in &selection.step_indices {
@@ -480,6 +486,7 @@ pub(in crate::native_cli) fn run_frontier(
         actor_id: options.actor_id,
         enabled_worker_kinds: options.enabled_worker_kinds,
         gate: &gate,
+        superseded_trace_ids_by_step: &supersede.trace_ids_by_step,
         pinned_application_case_space: None,
         continue_on_step_failure: true,
     };
@@ -814,6 +821,13 @@ fn apply_step_result(
         .trace_guard
         .take()
         .expect("reserved step always has a trace guard");
+    let mut metadata = Map::from_iter([("worker_invoked".to_owned(), Value::Bool(true))]);
+    if let Some(superseded_trace_ids) = context.superseded_trace_ids_by_step.get(&step.step_id) {
+        metadata.insert(
+            "superseded_trace_ids".to_owned(),
+            json!(superseded_trace_ids),
+        );
+    }
     trace_guard.trace = ExecutionTrace {
         schema: EXECUTION_TRACE_SCHEMA.to_owned(),
         schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
@@ -845,7 +859,7 @@ fn apply_step_result(
         }],
         started_at: trace_started_at,
         finished_at: timestamp(),
-        metadata: Map::from_iter([("worker_invoked".to_owned(), Value::Bool(true))]),
+        metadata,
     };
     let final_replay = store_api.replay_current_case_space(context.case_space_id)?;
     let dispatch_state = if status == "step_executed" {
@@ -905,6 +919,10 @@ fn execute_selected_steps(
             binding_content_hash,
             context.gate,
             &trace_started_at,
+            context
+                .superseded_trace_ids_by_step
+                .get(&step.step_id)
+                .map_or(&[], Vec::as_slice),
         ) {
             Ok(trace_guard) => trace_guard,
             Err(error) if context.continue_on_step_failure => {
@@ -1082,6 +1100,10 @@ fn record_reservation_failure(
         binding_content_hash,
         context.gate,
         &trace_started_at,
+        context
+            .superseded_trace_ids_by_step
+            .get(&step.step_id)
+            .map_or(&[], Vec::as_slice),
     )?;
     finish_reserved_step_failure(
         context,
@@ -1176,6 +1198,85 @@ struct StepSelection {
     obstructions: Vec<ExecutionObstruction>,
 }
 
+#[derive(Debug, Default, Eq, PartialEq)]
+struct SupersedeDecision {
+    trace_ids_by_step: BTreeMap<Id, Vec<Id>>,
+    blocking_step_ids: BTreeSet<Id>,
+}
+
+fn decide_superseded_traces(
+    plan: &ExecutionPlan,
+    traces: &[ExecutionTrace],
+    asserted_trace_ids: &[Id],
+) -> Result<SupersedeDecision, NativeCliError> {
+    let plan_step_ids = plan
+        .steps
+        .iter()
+        .map(|step| &step.step_id)
+        .collect::<BTreeSet<_>>();
+    let asserted_trace_ids = asserted_trace_ids.iter().cloned().collect::<BTreeSet<_>>();
+    let mut trace_ids_by_step = BTreeMap::<Id, Vec<Id>>::new();
+
+    for asserted_trace_id in &asserted_trace_ids {
+        let mut matches = traces
+            .iter()
+            .filter(|trace| trace.trace_id == *asserted_trace_id);
+        let trace = matches.next().ok_or_else(|| {
+            NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} is unknown; --supersede-trace must name a started trace of plan {}",
+                plan.plan_id
+            ))
+        })?;
+        if matches.next().is_some() {
+            return Err(NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} is ambiguous because more than one trace has that id"
+            )));
+        }
+        if trace.plan_id != plan.plan_id {
+            return Err(NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} belongs to plan {}, not requested plan {}",
+                trace.plan_id, plan.plan_id
+            )));
+        }
+        if !plan_step_ids.contains(&trace.step_id) {
+            return Err(NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} belongs to step {}, which is not a step of plan {}",
+                trace.step_id, plan.plan_id
+            )));
+        }
+        if trace.transition_applied || trace.dispatch_state == ExecutionDispatchState::Completed {
+            return Err(NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} was already applied; only a started trace can be superseded"
+            )));
+        }
+        if trace.dispatch_state == ExecutionDispatchState::Failed {
+            return Err(NativeCliError::invalid(format!(
+                "supersede trace {asserted_trace_id} already failed; --retry-step {} retries that failed step",
+                trace.step_id
+            )));
+        }
+        trace_ids_by_step
+            .entry(trace.step_id.clone())
+            .or_default()
+            .push(trace.trace_id.clone());
+    }
+
+    let blocking_step_ids = traces
+        .iter()
+        .filter(|trace| {
+            trace.plan_id == plan.plan_id
+                && plan_step_ids.contains(&trace.step_id)
+                && trace.dispatch_state == ExecutionDispatchState::Started
+                && !asserted_trace_ids.contains(&trace.trace_id)
+        })
+        .map(|trace| trace.step_id.clone())
+        .collect();
+    Ok(SupersedeDecision {
+        trace_ids_by_step,
+        blocking_step_ids,
+    })
+}
+
 fn step_case_eligibility_reasons(
     step: &ExecutionStep,
     case_space: &CaseSpace,
@@ -1235,26 +1336,14 @@ fn select_steps(
     frontier_cell_ids: &[Id],
     traces: &[ExecutionTrace],
     retry_step_ids: &BTreeSet<&Id>,
+    blocking_started_step_ids: &BTreeSet<Id>,
 ) -> StepSelection {
     let mut selected = Vec::new();
     let mut step_reasons = Vec::new();
     let mut obstructions = Vec::new();
     for (index, step) in plan.steps.iter().enumerate() {
         let mut reasons = Vec::new();
-        let prior_started = traces.iter().any(|trace| {
-            let is_matching_started = trace.plan_id == plan.plan_id
-                && trace.step_id == step.step_id
-                && trace.dispatch_state == ExecutionDispatchState::Started;
-            let stale_retry = retry_step_ids.contains(&step.step_id)
-                && trace
-                    .metadata
-                    .get("reserved_base_revision_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|reserved_base_revision_id| {
-                        reserved_base_revision_id != case_space.revision.revision_id.as_str()
-                    });
-            is_matching_started && !stale_retry
-        });
+        let prior_started = blocking_started_step_ids.contains(&step.step_id);
         let prior_applied = traces.iter().any(|trace| {
             trace.plan_id == plan.plan_id
                 && trace.step_id == step.step_id
@@ -1675,6 +1764,7 @@ impl TraceGuard {
         binding_content_hash: String,
         operation_gate: &NativeOperationGate,
         started_at: &str,
+        superseded_trace_ids: &[Id],
     ) -> Result<Self, NativeCliError> {
         write_bytes(&identity.run_directory.join("stdout"), &[])?;
         write_bytes(&identity.run_directory.join("stderr"), &[])?;
@@ -1682,6 +1772,23 @@ impl TraceGuard {
             uninvoked_worker_report(plan, step, identity, &binding_content_hash, started_at);
         let worker_report_content_hash =
             write_worker_report(&identity.run_directory, &initial_worker_report)?;
+        let mut metadata = Map::from_iter([
+            (
+                "dispatch_status".to_owned(),
+                Value::String("started".to_owned()),
+            ),
+            ("worker_invoked".to_owned(), Value::Bool(false)),
+            (
+                "reserved_base_revision_id".to_owned(),
+                json!(case_space.revision.revision_id),
+            ),
+        ]);
+        if !superseded_trace_ids.is_empty() {
+            metadata.insert(
+                "superseded_trace_ids".to_owned(),
+                json!(superseded_trace_ids),
+            );
+        }
         let trace = ExecutionTrace {
             schema: EXECUTION_TRACE_SCHEMA.to_owned(),
             schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
@@ -1707,17 +1814,7 @@ impl TraceGuard {
             information_loss: Vec::new(),
             started_at: started_at.to_owned(),
             finished_at: started_at.to_owned(),
-            metadata: Map::from_iter([
-                (
-                    "dispatch_status".to_owned(),
-                    Value::String("started".to_owned()),
-                ),
-                ("worker_invoked".to_owned(), Value::Bool(false)),
-                (
-                    "reserved_base_revision_id".to_owned(),
-                    json!(case_space.revision.revision_id),
-                ),
-            ]),
+            metadata,
         };
         write_trace(&identity.run_directory, &trace)?;
         Ok(Self {
@@ -2360,9 +2457,84 @@ fn run_results_have_domain_finding<'a>(
 mod tests {
     use super::*;
     use crate::exec::binding::worker_binding_content_hash;
+    use arbtest::arbitrary::Arbitrary;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn supersede_decision_releases_only_the_exact_started_trace() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let state_codes = <[u8; 3]>::arbitrary(u)?;
+                let asserted_index = usize::from(u8::arbitrary(u)? % 3);
+                let plan: ExecutionPlan = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.plan.example.json"
+                ))
+                .expect("execution plan example");
+                let step_id = plan.steps[0].step_id.clone();
+                let trace_template: ExecutionTrace = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.trace.example.json"
+                ))
+                .expect("execution trace example");
+                let traces = state_codes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, state_code)| {
+                        let mut trace = trace_template.clone();
+                        trace.trace_id = Id::new(format!("execution_trace:property:{index}"))
+                            .expect("property trace id");
+                        trace.plan_id = plan.plan_id.clone();
+                        trace.step_id = step_id.clone();
+                        trace.dispatch_state = match state_code % 3 {
+                            0 => ExecutionDispatchState::Started,
+                            1 => ExecutionDispatchState::Failed,
+                            _ => ExecutionDispatchState::Completed,
+                        };
+                        trace.transition_applied =
+                            trace.dispatch_state == ExecutionDispatchState::Completed;
+                        trace
+                    })
+                    .collect::<Vec<_>>();
+                let baseline = decide_superseded_traces(&plan, &traces, &[])
+                    .expect("an empty assertion is always valid");
+                let asserted_trace = &traces[asserted_index];
+                let decision = decide_superseded_traces(
+                    &plan,
+                    &traces,
+                    std::slice::from_ref(&asserted_trace.trace_id),
+                );
+
+                if asserted_trace.dispatch_state == ExecutionDispatchState::Started {
+                    let decision = decision.expect("a started trace can be asserted dead");
+                    let released = decision
+                        .trace_ids_by_step
+                        .values()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    assert_eq!(released, vec![&asserted_trace.trace_id]);
+                    let other_started_exists = traces.iter().any(|trace| {
+                        trace.trace_id != asserted_trace.trace_id
+                            && trace.dispatch_state == ExecutionDispatchState::Started
+                    });
+                    assert_eq!(
+                        decision.blocking_step_ids.contains(&step_id),
+                        other_started_exists,
+                        "asserting trace A must not release a later trace B"
+                    );
+                } else {
+                    assert!(decision.is_err());
+                    assert_eq!(
+                        decide_superseded_traces(&plan, &traces, &[])
+                            .expect("refused assertion changes no decision"),
+                        baseline,
+                        "an assertion naming a non-started trace releases nothing"
+                    );
+                }
+                Ok(())
+            },
+        );
+    }
 
     #[test]
     fn verified_binding_snapshot_is_unchanged_after_the_file_is_swapped() {

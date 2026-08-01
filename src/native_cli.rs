@@ -252,6 +252,7 @@ pub(crate) enum NativeCliCommand {
         actor_id: Id,
         enabled_worker_kinds: Vec<String>,
         retry_step_id: Option<Id>,
+        supersede_trace_ids: Vec<Id>,
         gate_options: NativeRunGateOptions,
         strict: bool,
         output: Option<PathBuf>,
@@ -264,6 +265,7 @@ pub(crate) enum NativeCliCommand {
         actor_id: Id,
         enabled_worker_kinds: Vec<String>,
         retry_step_ids: Vec<Id>,
+        supersede_trace_ids: Vec<Id>,
         max_parallel: usize,
         gate_options: NativeRunGateOptions,
         strict: bool,
@@ -668,6 +670,7 @@ impl NativeCliCommand {
                 actor_id,
                 enabled_worker_kinds,
                 retry_step_id,
+                supersede_trace_ids,
                 gate_options,
                 ..
             } => {
@@ -680,6 +683,7 @@ impl NativeCliCommand {
                         actor_id,
                         enabled_worker_kinds,
                         retry_step_id: retry_step_id.as_ref(),
+                        supersede_trace_ids,
                         gate_options,
                     },
                 )
@@ -692,6 +696,7 @@ impl NativeCliCommand {
                 actor_id,
                 enabled_worker_kinds,
                 retry_step_ids,
+                supersede_trace_ids,
                 max_parallel,
                 gate_options,
                 ..
@@ -705,6 +710,7 @@ impl NativeCliCommand {
                         actor_id,
                         enabled_worker_kinds,
                         retry_step_ids,
+                        supersede_trace_ids,
                         max_parallel: *max_parallel,
                         gate_options,
                     },

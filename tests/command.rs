@@ -4405,13 +4405,15 @@ fn native_run_frontier_traces_record_each_application_base_revision() {
 
 #[cfg(unix)]
 #[test]
-fn native_run_frontier_retry_recovers_stale_started_trace() {
+fn native_run_frontier_supersedes_a_killed_dispatcher_trace() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let worker_started = directory.join("stale-started-worker-started");
+    let worker_finished = directory.join("stale-started-worker-finished");
     let script = format!(
-        "printf 'started\\n' > '{}'\nsleep 1\nprintf 'worker-output\\n'",
-        worker_started.display()
+        "printf 'started\\n' > '{}'\nsleep 1\nprintf 'finished\\n' > '{}'\nprintf 'worker-output\\n'",
+        worker_started.display(),
+        worker_finished.display()
     );
     let fixture = setup_native_frontier(
         &directory,
@@ -4439,8 +4441,16 @@ fn native_run_frontier_retry_recovers_stale_started_trace() {
     child.kill().expect("kill frontier round");
     let killed = child.wait_with_output().expect("wait for killed round");
     assert!(!killed.status.success());
+    wait_for_file(
+        &worker_finished,
+        "killed dispatcher's worker did not finish before supersession",
+    );
     let started_trace_path = only_run_file(&directory, "execution.trace.json");
     let started_trace = json_file(started_trace_path);
+    let started_trace_id = started_trace["trace_id"]
+        .as_str()
+        .expect("started trace id")
+        .to_owned();
     assert_eq!(started_trace["dispatch_state"], json!("started"));
     assert_eq!(
         started_trace["metadata"]["reserved_base_revision_id"],
@@ -4476,13 +4486,11 @@ fn native_run_frontier_retry_recovers_stale_started_trace() {
         .expect("intervening revision")
         .to_owned();
 
-    let recovered = run_native_frontier_with(
+    let recovered = run_native_frontier_with_superseded_traces(
         &directory,
         &fixture,
         &intervening_revision,
-        1,
-        &["capability:dispatch", "capability:native-run-worker"],
-        &[fixture.step_ids[0].as_str()],
+        &[started_trace_id.as_str()],
     );
 
     assert!(recovered.status.success(), "stderr: {}", stderr(&recovered));
@@ -4493,11 +4501,370 @@ fn native_run_frontier_retry_recovers_stale_started_trace() {
         json!(true)
     );
     assert_eq!(
+        recovered_json["result"]["traces"][0]["metadata"]["superseded_trace_ids"],
+        json!([started_trace_id])
+    );
+    assert_eq!(
         fs::read_dir(directory.join("runs"))
             .expect("read retry run directories")
             .count(),
         2
     );
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    let recovered_trace_id = recovered_json["result"]["traces"][0]["trace_id"]
+        .as_str()
+        .expect("recovered trace id");
+    let replayed_anchor = replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("replayed morphism log")
+        .iter()
+        .find(|entry| {
+            entry["morphism"]["morphism_type"] == json!("custom:execution_trace_anchor")
+                && entry["morphism"]["metadata"]["trace_id"] == json!(recovered_trace_id)
+        })
+        .expect("replayed superseding trace anchor");
+    let replayed_trace_path = replayed_anchor["morphism"]["metadata"]["trace_path"]
+        .as_str()
+        .expect("replayed trace path");
+    let replayed_trace = json_file(directory.join(replayed_trace_path));
+    assert_eq!(
+        replayed_trace["metadata"]["superseded_trace_ids"],
+        json!([started_trace_id])
+    );
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_retry_does_not_release_a_live_dispatch_after_revision_moves() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let slow_started = directory.join("live-slow-worker-started");
+    let slow_pids = directory.join("live-slow-worker-pids");
+    let slow_script = format!(
+        "printf '%s\\n' \"$$\" >> '{}'\nprintf 'started\\n' > '{}'\nsleep 3\nprintf 'slow-output\\n'",
+        slow_pids.display(),
+        slow_started.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "live-dispatch-retry",
+        &[
+            ("work:live-slow", slow_script.as_str()),
+            ("work:live-sibling", "printf 'sibling-output\\n'"),
+        ],
+    );
+    let live_run = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_step_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            None,
+            &[],
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn live slow run --step");
+    wait_for_file(&slow_started, "slow worker did not start before timeout");
+
+    let sibling = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_step_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            None,
+            &[],
+        ))
+        .output()
+        .expect("run sibling step");
+    assert!(sibling.status.success(), "stderr: {}", stderr(&sibling));
+    let sibling_json = stdout_json(&sibling);
+    assert_eq!(sibling_json["result"]["status"], json!("step_executed"));
+    assert_eq!(
+        sibling_json["result"]["trace"]["step_id"],
+        json!(fixture.step_ids[1])
+    );
+    let moved_revision = sibling_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("sibling result revision");
+
+    let refused = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_step_args(
+            &directory,
+            &fixture,
+            moved_revision,
+            Some(&fixture.step_ids[0]),
+            &[],
+        ))
+        .output()
+        .expect("retry live slow step");
+    assert!(refused.status.success(), "stderr: {}", stderr(&refused));
+    let refused_json = stdout_json(&refused);
+    assert_eq!(
+        refused_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert!(refused_json["result"]["obstructions"]
+        .as_array()
+        .expect("run obstructions")
+        .iter()
+        .any(|obstruction| obstruction["obstruction_type"] == json!("dispatch_in_progress")));
+    assert_eq!(
+        fs::read_to_string(&slow_pids)
+            .expect("read slow worker pids")
+            .lines()
+            .count(),
+        1,
+        "retry must not launch a second worker"
+    );
+    let slow_pid = fs::read_to_string(&slow_pids)
+        .expect("read slow worker pid")
+        .trim()
+        .parse::<u32>()
+        .expect("slow worker pid");
+    assert!(
+        process_exists(slow_pid),
+        "the original worker must still be live when retry is refused"
+    );
+
+    let live_output = live_run.wait_with_output().expect("wait for live slow run");
+    assert!(
+        !live_output.status.success(),
+        "the original run must observe the sibling's stale revision"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_refuses_invalid_supersede_trace_assertions() {
+    let unknown_directory = unique_temp_dir();
+    fs::create_dir_all(&unknown_directory).expect("create unknown temp directory");
+    let unknown_fixture = setup_native_run(
+        &unknown_directory,
+        "unknown-supersede",
+        "printf 'must-not-run\\n'",
+    );
+    let unknown = run_native_step_with_superseded_traces(
+        &unknown_directory,
+        &unknown_fixture,
+        &unknown_fixture.accepted_revision_id,
+        &["execution_trace:unknown"],
+    );
+    assert!(!unknown.status.success());
+    assert!(
+        stderr(&unknown).contains("is unknown"),
+        "{}",
+        stderr(&unknown)
+    );
+    fs::remove_dir_all(unknown_directory).expect("remove unknown temp directory");
+
+    let failed_directory = unique_temp_dir();
+    fs::create_dir_all(&failed_directory).expect("create failed temp directory");
+    let failed_fixture = setup_native_run(&failed_directory, "failed-supersede", "exit 7");
+    let failed_run = run_native_step(&failed_directory, &failed_fixture, true, None);
+    assert!(
+        failed_run.status.success(),
+        "stderr: {}",
+        stderr(&failed_run)
+    );
+    let failed_json = stdout_json(&failed_run);
+    let failed_trace_id = failed_json["result"]["trace"]["trace_id"]
+        .as_str()
+        .expect("failed trace id");
+    let failed_revision = failed_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("failed trace revision");
+    let failed = run_native_step_with_superseded_traces(
+        &failed_directory,
+        &failed_fixture,
+        failed_revision,
+        &[failed_trace_id],
+    );
+    assert!(!failed.status.success());
+    assert!(
+        stderr(&failed).contains("already failed"),
+        "{}",
+        stderr(&failed)
+    );
+
+    let failed_trace_path = only_run_file(&failed_directory, "execution.trace.json");
+    let mut different_step_trace = json_file(failed_trace_path);
+    different_step_trace["trace_id"] = json!("execution-trace-different-step");
+    different_step_trace["step_id"] = json!("step:different");
+    different_step_trace["dispatch_state"] = json!("started");
+    different_step_trace["transition_applied"] = json!(false);
+    different_step_trace["result_revision_id"] = Value::Null;
+    let different_step_directory = failed_directory
+        .join("runs")
+        .join("execution-trace-different-step");
+    fs::create_dir(&different_step_directory).expect("create different-step run directory");
+    fs::write(
+        different_step_directory.join("execution.trace.json"),
+        serde_json::to_vec_pretty(&different_step_trace).expect("serialize different-step trace"),
+    )
+    .expect("write different-step trace");
+    let different_step = run_native_step_with_superseded_traces(
+        &failed_directory,
+        &failed_fixture,
+        failed_revision,
+        &["execution-trace-different-step"],
+    );
+    assert!(!different_step.status.success());
+    assert!(
+        stderr(&different_step).contains("is not a step of plan"),
+        "{}",
+        stderr(&different_step)
+    );
+
+    different_step_trace["trace_id"] = json!("execution-trace-different-plan");
+    different_step_trace["plan_id"] = json!("plan:different");
+    different_step_trace["step_id"] = json!(failed_fixture.step_id);
+    let different_plan_directory = failed_directory
+        .join("runs")
+        .join("execution-trace-different-plan");
+    fs::create_dir(&different_plan_directory).expect("create different-plan run directory");
+    fs::write(
+        different_plan_directory.join("execution.trace.json"),
+        serde_json::to_vec_pretty(&different_step_trace).expect("serialize different-plan trace"),
+    )
+    .expect("write different-plan trace");
+    let different_plan = run_native_step_with_superseded_traces(
+        &failed_directory,
+        &failed_fixture,
+        failed_revision,
+        &["execution-trace-different-plan"],
+    );
+    assert!(!different_plan.status.success());
+    assert!(
+        stderr(&different_plan).contains("belongs to plan plan:different"),
+        "{}",
+        stderr(&different_plan)
+    );
+    fs::remove_dir_all(failed_directory).expect("remove failed temp directory");
+
+    let applied_directory = unique_temp_dir();
+    fs::create_dir_all(&applied_directory).expect("create applied temp directory");
+    let applied_fixture = setup_native_run(
+        &applied_directory,
+        "applied-supersede",
+        "printf 'applied\\n'",
+    );
+    let applied_run = run_native_step(&applied_directory, &applied_fixture, true, None);
+    assert!(
+        applied_run.status.success(),
+        "stderr: {}",
+        stderr(&applied_run)
+    );
+    let applied_json = stdout_json(&applied_run);
+    let applied_trace_id = applied_json["result"]["trace"]["trace_id"]
+        .as_str()
+        .expect("applied trace id");
+    let applied_revision = applied_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("applied trace revision");
+    let applied = run_native_step_with_superseded_traces(
+        &applied_directory,
+        &applied_fixture,
+        applied_revision,
+        &[applied_trace_id],
+    );
+    assert!(!applied.status.success());
+    assert!(
+        stderr(&applied).contains("already applied"),
+        "{}",
+        stderr(&applied)
+    );
+    fs::remove_dir_all(applied_directory).expect("remove applied temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_asserting_trace_a_does_not_release_later_trace_b() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let starts = directory.join("successive-dispatch-starts");
+    let finishes = directory.join("successive-dispatch-finishes");
+    let script = format!(
+        "printf '%s\\n' \"$$\" >> '{}'\nsleep 1\nprintf '%s\\n' \"$$\" >> '{}'\nprintf 'worker-output\\n'",
+        starts.display(),
+        finishes.display()
+    );
+    let fixture = setup_native_run(&directory, "successive-started", &script);
+    let mut first = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_step_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            true,
+            None,
+            &["capability:dispatch", "capability:native-run-worker"],
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn first dispatch");
+    wait_for_line_count(&starts, 1, "first dispatch did not start");
+    first.kill().expect("kill first dispatcher");
+    let killed = first.wait_with_output().expect("wait for first dispatcher");
+    assert!(!killed.status.success());
+    wait_for_line_count(&finishes, 1, "first worker did not finish");
+    let trace_a = json_file(only_run_file(&directory, "execution.trace.json"))["trace_id"]
+        .as_str()
+        .expect("trace A id")
+        .to_owned();
+
+    let mut second_args = native_step_args(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        true,
+        None,
+        &["capability:dispatch", "capability:native-run-worker"],
+    );
+    append_supersede_trace_args(&mut second_args, &[trace_a.as_str()]);
+    let second = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(second_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn second dispatch");
+    wait_for_line_count(&starts, 2, "second dispatch did not start");
+
+    let refused = run_native_step_with_superseded_traces(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        &[trace_a.as_str()],
+    );
+    assert!(refused.status.success(), "stderr: {}", stderr(&refused));
+    let refused_json = stdout_json(&refused);
+    assert_eq!(
+        refused_json["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    assert!(refused_json["result"]["obstructions"]
+        .as_array()
+        .expect("run obstructions")
+        .iter()
+        .any(|obstruction| obstruction["obstruction_type"] == json!("dispatch_in_progress")));
+    assert_eq!(
+        fs::read_to_string(&starts)
+            .expect("read dispatch starts")
+            .lines()
+            .count(),
+        2,
+        "asserting trace A must not start a third worker while trace B is live"
+    );
+
+    let second_output = second.wait_with_output().expect("wait for second dispatch");
+    assert!(
+        second_output.status.success(),
+        "stderr: {}",
+        stderr(&second_output)
+    );
+    assert_eq!(run_files(&directory, "execution.trace.json").len(), 2);
     assert_native_store_valid_and_rebuilds(&directory);
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -8479,6 +8846,27 @@ fn run_native_step_with_base(
     )
 }
 
+fn run_native_step_with_superseded_traces(
+    directory: &Path,
+    fixture: &NativeRunFixture,
+    base_revision_id: &str,
+    supersede_trace_ids: &[&str],
+) -> Output {
+    let mut args = native_step_args(
+        directory,
+        fixture,
+        base_revision_id,
+        true,
+        None,
+        &["capability:dispatch", "capability:native-run-worker"],
+    );
+    append_supersede_trace_args(&mut args, supersede_trace_ids);
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(args)
+        .output()
+        .expect("run casegraphen run --step with superseded traces")
+}
+
 fn run_native_step_with_gate_capabilities(
     directory: &Path,
     fixture: &NativeRunFixture,
@@ -8584,6 +8972,29 @@ fn run_native_frontier_with(
 }
 
 #[cfg(unix)]
+fn run_native_frontier_with_superseded_traces(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    base_revision_id: &str,
+    supersede_trace_ids: &[&str],
+) -> Output {
+    let mut args = native_frontier_args(
+        directory,
+        fixture,
+        base_revision_id,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+        true,
+    );
+    append_supersede_trace_args(&mut args, supersede_trace_ids);
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(args)
+        .output()
+        .expect("run casegraphen run --frontier with superseded traces")
+}
+
+#[cfg(unix)]
 fn run_native_frontier_without_worker_opt_in(
     directory: &Path,
     fixture: &NativeFrontierFixture,
@@ -8649,12 +9060,62 @@ fn native_frontier_args(
     args
 }
 
+fn append_supersede_trace_args(args: &mut Vec<String>, supersede_trace_ids: &[&str]) {
+    for trace_id in supersede_trace_ids {
+        args.extend(["--supersede-trace".to_owned(), (*trace_id).to_owned()]);
+    }
+}
+
+#[cfg(unix)]
+fn native_frontier_step_args(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    base_revision_id: &str,
+    retry_step_id: Option<&str>,
+    supersede_trace_ids: &[&str],
+) -> Vec<String> {
+    let mut args = native_frontier_args(
+        directory,
+        fixture,
+        base_revision_id,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+        true,
+    );
+    args[1] = "--step".to_owned();
+    let max_parallel = args
+        .iter()
+        .position(|argument| argument == "--max-parallel")
+        .expect("frontier args include max parallel");
+    args.drain(max_parallel..=max_parallel + 1);
+    if let Some(step_id) = retry_step_id {
+        args.extend(["--retry-step".to_owned(), step_id.to_owned()]);
+    }
+    append_supersede_trace_args(&mut args, supersede_trace_ids);
+    args
+}
+
 fn wait_for_file(path: &Path, timeout_message: &str) {
     let wait_started_at = Instant::now();
     while !path.is_file() && wait_started_at.elapsed() < Duration::from_secs(5) {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(path.is_file(), "{timeout_message}");
+}
+
+fn wait_for_line_count(path: &Path, expected: usize, timeout_message: &str) {
+    let wait_started_at = Instant::now();
+    while fs::read_to_string(path).map_or(0, |contents| contents.lines().count()) < expected
+        && wait_started_at.elapsed() < Duration::from_secs(5)
+    {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        fs::read_to_string(path).map_or(0, |contents| contents.lines().count()),
+        expected,
+        "{timeout_message}"
+    );
 }
 
 #[cfg(unix)]
@@ -8729,14 +9190,19 @@ fn assert_native_store_valid_and_rebuilds(directory: &Path) {
 }
 
 fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {
+    let mut matches = run_files(directory, file_name);
+    assert_eq!(matches.len(), 1, "expected one {file_name}");
+    matches.remove(0)
+}
+
+fn run_files(directory: &Path, file_name: &str) -> Vec<PathBuf> {
     let mut matches = fs::read_dir(directory.join("runs"))
         .expect("read runs directory")
         .map(|entry| entry.expect("run entry").path().join(file_name))
         .filter(|path| path.is_file())
         .collect::<Vec<_>>();
     matches.sort();
-    assert_eq!(matches.len(), 1, "expected one {file_name}");
-    matches.remove(0)
+    matches
 }
 
 fn assert_worker_artifact_tamper_detected(

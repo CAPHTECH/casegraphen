@@ -230,6 +230,11 @@ workers under a dedicated OS user or container is the operator's control.
   the complete stream whenever `incomplete` is false.
 - Worker exit codes and timeouts are domain findings (evidence +
   obstructions), never silent.
+- One accepted step has one live dispatch. A `started` trace remains blocking
+  across every graph revision and is released only by a named operator
+  assertion, `--supersede-trace <trace-id>`, against that exact trace. The tool
+  never infers process liveness from revision movement, process identity, or a
+  timeout.
 
 ### 2.5 Output trust boundary
 
@@ -258,10 +263,12 @@ then applies and anchors their results serially in plan-step order. One
 validated dispatch gate covers the round, but traces, attempts, obstructions,
 and anchors remain per-step. A per-step dispatch, reservation, or application
 failure is reported in the round result and does not suppress the report for
-other selected steps. A stale `started` trace can be superseded only by an
-explicit `--retry-step` after its recorded reserved base revision is no longer
-current; a `started` trace at the current revision remains protected as a
-concurrent dispatch.
+other selected steps. `--retry-step` applies only to failed traces. A `started`
+trace can be superseded only when `--supersede-trace` names that exact trace;
+the superseding trace records the asserted id under
+`metadata.superseded_trace_ids`, covered by the anchored trace content hash. A
+later dispatch for the same step remains protected even if an operator repeats
+an older assertion.
 
 Replay wins over any cache or snapshot. The log's constant-size head file is an
 independent witness for the current tail entry; a missing or stale head refuses

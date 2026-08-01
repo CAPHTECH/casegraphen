@@ -81,6 +81,7 @@ pub(super) struct NativeRunStepOptions<'a> {
     pub(super) actor_id: &'a Id,
     pub(super) enabled_worker_kinds: &'a [String],
     pub(super) retry_step_id: Option<&'a Id>,
+    pub(super) supersede_trace_ids: &'a [Id],
     pub(super) gate_options: &'a NativeRunGateOptions,
 }
 
@@ -91,6 +92,7 @@ pub(super) struct NativeRunFrontierOptions<'a> {
     pub(super) actor_id: &'a Id,
     pub(super) enabled_worker_kinds: &'a [String],
     pub(super) retry_step_ids: &'a [Id],
+    pub(super) supersede_trace_ids: &'a [Id],
     pub(super) max_parallel: usize,
     pub(super) gate_options: &'a NativeRunGateOptions,
 }

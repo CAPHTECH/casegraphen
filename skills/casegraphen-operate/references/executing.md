@@ -121,6 +121,23 @@ One invocation advances at most one step. Loop by re-reading the revision and
 calling again; there is no daemon, scheduler, or retry engine, and adding one is
 out of scope.
 
+A `started` trace always blocks its step; a later revision does not say whether
+its worker is alive. If external observation establishes that the dispatcher is
+dead, read the exact `trace_id` from its `execution.trace.json` and assert only
+that trace:
+
+```sh
+casegraphen run --step --store "$STORE" --case-space-id "$CS" --plan-id <id> \
+  --base-revision-id "$(cur)" --supersede-trace <trace-id> <the same gate and worker flags>
+```
+
+The flag is repeatable for both `--step` and `--frontier`. Unknown, failed,
+completed/applied, wrong-plan, and wrong-step ids are tool failures. A different
+`started` trace for the same step still blocks, so re-read rather than reusing a
+stale assertion. The new trace records the accepted assertion in
+`metadata.superseded_trace_ids`. `--retry-step` is separate and applies only to
+failed traces.
+
 ## 4. Read the outcome
 
 | `status` | Meaning | Next |

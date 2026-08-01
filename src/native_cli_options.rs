@@ -119,6 +119,7 @@ pub(super) struct NativeOptions {
     pub(super) gate_profile: Option<String>,
     pub(super) gate_profile_file: Option<PathBuf>,
     pub(super) retry_step_ids: Vec<Id>,
+    pub(super) supersede_trace_ids: Vec<Id>,
     pub(super) evidence_ids: Vec<Id>,
     pub(super) evidence_attachments: Vec<NativeEvidenceAttachment>,
     pub(super) capability_ids: Vec<Id>,
@@ -247,6 +248,9 @@ impl NativeOptions {
                 self.gate_profile_file = Some(require_path(args, "--gate-profile-file")?)
             }
             Some("--retry-step") => self.retry_step_ids.push(require_id(args, "--retry-step")?),
+            Some("--supersede-trace") => self
+                .supersede_trace_ids
+                .push(require_id(args, "--supersede-trace")?),
             Some("--evidence-id") => self.evidence_ids.push(require_id(args, "--evidence-id")?),
             Some("--satisfies") => self
                 .evidence_attachments

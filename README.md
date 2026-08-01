@@ -64,6 +64,13 @@ advances one whole eligible frontier round: workers run concurrently up to
 `--max-parallel` (default 4), then their results append serially in plan-step
 order. Neither form is a daemon, scheduler, retry engine, or event bus.
 
+A `started` trace blocks another dispatch for its step even when unrelated
+appends move the current revision. `--retry-step <step-id>` retries only a
+failed attempt. Recover a dispatcher known to be dead with repeatable
+`--supersede-trace <trace-id>`; each id must resolve to that plan's exact
+`started` trace, and the superseding trace records the assertion in
+`metadata.superseded_trace_ids`.
+
 1. Replay and pin the revision; a stale base revision is a failure, not a merge.
 2. Re-derive readiness.
 3. Verify the ExecutionPlan against the plan-review morphism that accepted it
@@ -85,8 +92,9 @@ order. Neither form is a daemon, scheduler, retry engine, or event bus.
     in the log. Frontier results take this application path serially in
     plan-step order, regardless of worker completion order.
 
-Anything that fails is a domain finding — an obstruction recorded in the trace —
-not a crash. Only stale revisions and integrity mismatches are tool failures.
+Execution outcomes are domain findings — obstructions recorded in the trace —
+not crashes. Stale revisions, integrity mismatches, and invalid
+`--supersede-trace` assertions are tool failures.
 
 Effectful workers are **off by default**: both run modes refuse a shell binding
 unless `--enable-worker shell` is passed on that invocation. Read
