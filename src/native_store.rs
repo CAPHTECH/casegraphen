@@ -173,6 +173,16 @@ impl NativeCaseStore {
                 ),
             });
         }
+        // The loader enforces this contract on every read; the writer did not,
+        // and the two disagreeing is how a store became unreadable. `retire`
+        // physically removes a relation, so retiring one that a projection still
+        // names left a dangling reference that `require_ids_exist` refuses —
+        // after it had been written. Every read path then failed, including
+        // `morphism propose`, so nothing in the CLI could repair it, while
+        // `space rebuild` still reported success because the fold verifies
+        // checksums rather than the materialization contract. Validate the
+        // resulting state against the same rule, before anything is written.
+        validate_materialized_log(&log_path, &next)?;
 
         let snapshot_path = self.resolve_snapshot_path(
             &self.relative_snapshot_path(&next.case_space_id, &next.revision.revision_id),

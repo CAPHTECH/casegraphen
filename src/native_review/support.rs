@@ -145,6 +145,21 @@ pub(super) fn evidence_requirement_blockers(
         .iter()
         .map(|cell| (cell.id.clone(), cell))
         .collect::<BTreeMap<_, _>>();
+    // The same coverage the evaluator reads, from the same derivation. Asking
+    // only whether the requirement is itself acceptable evidence meant a
+    // requirement satisfied by `evidence attach --satisfies` plus `review
+    // accept` still blocked the close, and the only way past it was to waive a
+    // requirement the tool had just seen met.
+    let covered = crate::native_eval::trusted_coverage_targets(case_space, |evidence_id| {
+        cells.values().any(|cell| {
+            cell.id.as_str() == evidence_id
+                && cell.cell_type == CaseCellType::Evidence
+                && evidence_is_acceptable(native_evidence_trust_input(
+                    cell,
+                    latest_review_for(reviews, &cell.id).map(|review| review.outcome),
+                ))
+        })
+    });
     let mut blockers = Vec::new();
     for relation in case_space
         .case_relations
@@ -162,7 +177,8 @@ pub(super) fn evidence_requirement_blockers(
                     cell,
                     latest_review_for(reviews, &cell.id).map(|review| review.outcome),
                 ))
-        });
+        }) || covered.contains(relation.to_id.as_str())
+            || covered.contains(relation.from_id.as_str());
         if !acceptable {
             blockers.push(relation.to_id.clone());
         }

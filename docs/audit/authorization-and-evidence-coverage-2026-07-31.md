@@ -142,7 +142,13 @@ Two further routes were demonstrated by the review and are not reproduced here:
 setting `evidence_ids` on the requirement relation through `updated_relations`,
 and the same `structure_ids` widening reached through the relation disjuncts.
 
-## 3. `updated_relations` has no reducer rule at all
+## 3. `updated_relations` has no reducer rule at all — **fixed**
+
+> **Resolved** in round four; see 5b. `relation_type`, `from_id`, `to_id`, and
+> `relation_strength` are immutable on update, so retyping a genesis `accepts`
+> relation into a `contradicts` — and the reverse, erasing a contradiction by
+> retyping the relation that caused it — are both refused.
+
 
 `apply_morphism` (`src/native_model.rs:468`) and `apply_morphism_indexed`
 (`:615`) look an updated relation up by id and overwrite it. Cells get
@@ -200,3 +206,44 @@ satisfaction and the obstruction reappears — fail-closed, the same direction a
 `8984e78`. And the five graph-reading disjuncts turned out not to be load-bearing
 for any legitimate shape: the whole suite passes with them gone, including the
 worker dispatch, workflow-lift, github-lift, and close-check paths.
+
+## 5. Round four: what closing section 2 exposed — all fixed
+
+Reviewing the coverage fix found three more, each reproduced by hand before
+being written down. All three are fixed; they are recorded because the pattern
+in them is the same one that produced sections 1 and 2.
+
+**5a. A gated morphism could leave a store no read path would load.**
+`append_morphism` validated the entry and the checksum but never the resulting
+case space, while every load ran `validate_materialized_log`. `retire` removes a
+relation outright, so retiring one that a genesis projection still named was
+written and then refused by `space validate`, `space replay`, `space inspect`,
+`space list`, and `morphism propose` — the last of which is the repair path, so
+there was none. `space rebuild`, documented as the recovery, exited 0 on the same
+store because the fold verifies checksums, not that contract. The writer now runs
+the loader's rule on the resulting state before writing anything.
+
+**5b. The requirement could be re-pointed at the evidence.** Section 2 stopped
+evidence being re-pointed at a requirement. `updated_relations` had no reducer
+rule of any kind, so one gated update moved the hard `requires_evidence` edge
+onto an already-accepted evidence cell and the obstruction cleared with no
+review — the coverage derivation never came into it, because the requirement id
+had become trusted evidence itself. `relation_type`, `from_id`, `to_id`, and
+`relation_strength` are immutable on update now; the same lever also demoted
+`hard` to `soft`, and that is refused too.
+
+**5c. Close-check answered the same question differently.** "Is this evidence
+requirement satisfied?" had three implementations: the evaluator's, the close
+check's, and `run --step`'s. The close check asked only whether the requirement
+was itself acceptable evidence, so a requirement satisfied through `evidence
+attach --satisfies` plus `review accept` passed `close:native-no-hard-obstructions`
+and failed `close:native-evidence-accepted-or-waived` on the same revision: the
+case could not be closed on merit, only by waiving a requirement the tool had
+just seen met. Both now call one `trusted_coverage_targets`.
+
+The recurring shape, across all four rounds: **a rule that exists in one place
+and not in its sibling.** The loader checked what the writer did not; cells had
+update rules and relations had none; evidence coverage was hardened in the
+evaluator and not in the close check; and the first fix of round three landed in
+one of the two reducer entry points. None of these was a missing idea — each was
+an idea applied once.

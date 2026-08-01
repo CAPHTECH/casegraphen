@@ -100,6 +100,24 @@ they already refused. A proposal file is written by the caller, so a type that
 is read back as proof that a command ran is a caller-declared trust value unless
 the tool is the only writer of it.
 
+A relation update may not change `relation_type`, `from_id`, `to_id`, or
+`relation_strength`. Those four are the identity of an edge, and leaving them
+writable meant the coverage hardening could be walked around from the other end:
+one gated update moved a hard `requires_evidence` edge onto an already-accepted
+evidence cell and the blocking obstruction disappeared, with no review recorded
+anywhere. Changing an edge is retire-plus-add, which the log shows as two
+operations rather than one silent rewrite. Annotation — metadata, source ids,
+provenance, evidence ids — stays mutable; the readiness decision does not read
+it.
+
+`append_morphism` validates the resulting case space against the same
+materialization contract the loader enforces, before it writes anything.
+Previously only the loader checked, so a gated `retire` of a relation that a
+projection still named was written and then refused by every read path,
+including the write paths that could have repaired it — and `space rebuild`, the
+documented recovery, reported success on it because the fold verifies checksums
+rather than that contract.
+
 The evidence-boundary rule is enforced in both reducer entry points, so it also
 runs during the fold that `space replay`, `space rebuild`, and `space validate`
 perform. A case

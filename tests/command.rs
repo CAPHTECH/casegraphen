@@ -1081,6 +1081,172 @@ fn generic_morphism_refuses_capability_self_grant() {
 }
 
 #[test]
+fn the_store_refuses_a_morphism_whose_result_it_could_not_load_back() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:loadable-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let morphism_path = directory.join("loadable.case_morphism.json");
+
+    // `retire` removes a relation outright, and the genesis projections still
+    // name this one. The loader has always refused a case space with a dangling
+    // reference; the writer did not check, so this used to be written and then
+    // every read path failed — including `morphism propose`, which left no way
+    // to repair it through the CLI, while `space rebuild` still reported
+    // success because the fold checks checksums rather than this contract.
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&json!({
+            "morphism_id": "morphism:retire-referenced-relation",
+            "morphism_type": "retire",
+            "source_revision_id": "revision:loadable-base",
+            "target_revision_id": "revision:retired-referenced-relation",
+            "added_ids": [], "updated_ids": [],
+            "retired_ids": ["relation:work-waits-for-review"],
+            "preserved_ids": [], "evidence_ids": [],
+            "source_ids": ["source:native-cli"],
+            "violated_invariant_ids": [], "review_status": "unreviewed",
+            "metadata": {}
+        }))
+        .expect("serialize morphism"),
+    )
+    .expect("write morphism");
+    let proposed = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(proposed.status.success(), "stderr: {}", stderr(&proposed));
+
+    let applied = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:retire-referenced-relation",
+            "--base-revision-id",
+            "revision:loadable-base",
+            "--reviewer-id",
+            "reviewer:tidy",
+            "--reason",
+            "tidy up",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(
+        !applied.status.success(),
+        "the store accepted a state it cannot load"
+    );
+    assert!(
+        stderr(&applied).contains("unknown referenced id relation:work-waits-for-review"),
+        "stderr: {}",
+        stderr(&applied)
+    );
+
+    // Nothing was written, so every read path still works.
+    for operation in ["validate", "replay", "inspect"] {
+        let read = run_cli(&[
+            "space",
+            operation,
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            read.status.success(),
+            "space {operation} stderr: {}",
+            stderr(&read)
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn a_relation_update_cannot_change_which_relation_it_is() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:relation-update-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let morphism_path = directory.join("relation-update.case_morphism.json");
+    let existing = json_file(native_case_fixture())["case_relations"]
+        .as_array()
+        .expect("fixture relations")
+        .iter()
+        .find(|relation| relation["id"] == json!("relation:work-waits-for-review"))
+        .expect("fixture relation")
+        .clone();
+
+    // Hardening evidence so it cannot be re-pointed at a requirement left the
+    // requirement free to be re-pointed at the evidence: the endpoints, the
+    // type, and the strength are what make an edge that edge.
+    for (field, mutation) in [
+        ("to_id", json!("evidence:native-schema-json-valid")),
+        ("from_id", json!("evidence:native-schema-json-valid")),
+        ("relation_type", json!("verifies")),
+        ("relation_strength", json!("soft")),
+    ] {
+        let mut updated = existing.clone();
+        updated[field] = mutation;
+        fs::write(
+            &morphism_path,
+            serde_json::to_string_pretty(&json!({
+                "morphism_id": "morphism:relation-update",
+                "morphism_type": "update",
+                "source_revision_id": "revision:relation-update-base",
+                "target_revision_id": "revision:relation-updated",
+                "added_ids": [], "updated_ids": ["relation:work-waits-for-review"],
+                "retired_ids": [], "preserved_ids": [], "evidence_ids": [],
+                "source_ids": ["source:native-cli"],
+                "violated_invariant_ids": [], "review_status": "unreviewed",
+                "metadata": {"payload": {
+                    "added_cells": [], "added_relations": [],
+                    "updated_cells": [], "updated_relations": [updated]
+                }}
+            }))
+            .expect("serialize morphism"),
+        )
+        .expect("write morphism");
+        let refused = run_cli(&[
+            "morphism",
+            "propose",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--input",
+            morphism_path.to_str().expect("morphism path"),
+            "--format",
+            "json",
+        ]);
+        assert!(!refused.status.success(), "{field} was accepted on update");
+        assert!(
+            stderr(&refused).contains(&format!("{field} is immutable")),
+            "stderr: {}",
+            stderr(&refused)
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn a_hard_evidence_requirement_is_satisfied_only_by_recorded_coverage() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

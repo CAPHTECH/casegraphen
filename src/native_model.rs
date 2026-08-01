@@ -476,6 +476,7 @@ pub fn apply_morphism(
                     morphism.morphism_id, relation.id
                 ))
             })?;
+        require_immutable_relation_update_fields(morphism, existing, &relation)?;
         *existing = relation;
     }
 
@@ -671,6 +672,11 @@ pub(crate) fn apply_morphism_indexed(
     }
     for relation in payload.updated_relations {
         let position = index.relation_positions[&relation.id];
+        require_immutable_relation_update_fields(
+            morphism,
+            &case_space.case_relations[position],
+            &relation,
+        )?;
         case_space.case_relations[position] = relation;
     }
 
@@ -902,6 +908,50 @@ fn require_untrusted_added_evidence(
             morphism.morphism_id, cell.id, declared
         ))),
     }
+}
+
+/// A relation update may not change which relation it is.
+///
+/// `updated_relations` was applied wholesale — look the id up, overwrite it —
+/// while `updated_cells` had three rules. That asymmetry was a hole in the same
+/// wall: hardening evidence so it cannot be re-pointed at a requirement left the
+/// requirement free to be re-pointed at the evidence. One gated update moved a
+/// hard `requires_evidence` edge onto an already-accepted evidence cell, and the
+/// blocking obstruction disappeared with no review in the log — the coverage
+/// derivation never came into it, because the requirement id had become trusted
+/// evidence itself.
+///
+/// Endpoints, type, and strength are the identity of an edge; changing them
+/// produces a different edge and must be retire-plus-add, which is visible in
+/// the log as two operations rather than one silent rewrite. What stays mutable
+/// is the annotation: metadata, source ids, provenance, and evidence ids, none
+/// of which the readiness decision reads.
+fn require_immutable_relation_update_fields(
+    morphism: &CaseMorphism,
+    existing: &CaseRelation,
+    updated: &CaseRelation,
+) -> Result<(), MorphismApplyError> {
+    for (field, unchanged) in [
+        (
+            "relation_type",
+            existing.relation_type == updated.relation_type,
+        ),
+        ("from_id", existing.from_id == updated.from_id),
+        ("to_id", existing.to_id == updated.to_id),
+        (
+            "relation_strength",
+            existing.relation_strength == updated.relation_strength,
+        ),
+    ] {
+        if !unchanged {
+            return Err(MorphismApplyError::new(format!(
+                "morphism {} cannot update relation {}: {field} is immutable, because it is what \
+                 makes this edge this edge; retire it and add the edge you mean",
+                morphism.morphism_id, existing.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn require_immutable_cell_update_fields(

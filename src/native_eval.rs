@@ -87,6 +87,32 @@ struct NativeEvaluationContext<'a> {
     trusted_coverage_targets: BTreeSet<String>,
 }
 
+/// Targets that trusted evidence is *recorded* as covering.
+///
+/// One implementation, because "is this evidence requirement satisfied?" is one
+/// question and it had three answers: the evaluator's, the close check's, and
+/// `run --step`'s. The close check used to ask only whether the requirement was
+/// itself an acceptable evidence cell, so a requirement satisfied through the
+/// tool's own `evidence attach --satisfies` + `review accept` path passed
+/// `close:native-no-hard-obstructions` and failed
+/// `close:native-evidence-accepted-or-waived` on the same revision — the case
+/// could never be closed on merit, only waived.
+///
+/// `is_trusted` is supplied by the caller because the two callers learn an
+/// evidence cell's review status from different places: the evaluator from the
+/// log-derived statuses it already indexed, the close check from the explicit
+/// review records it is already holding.
+pub(crate) fn trusted_coverage_targets(
+    case_space: &CaseSpace,
+    is_trusted: impl Fn(&str) -> bool,
+) -> BTreeSet<String> {
+    sections::canonical_evidence_coverage(case_space)
+        .into_iter()
+        .filter(|(evidence_id, _)| is_trusted(evidence_id))
+        .map(|(_, target_id)| target_id)
+        .collect()
+}
+
 struct CellEvaluation {
     cell_id: Id,
     lifecycle: CaseCellLifecycle,
@@ -120,11 +146,9 @@ impl<'a> NativeEvaluationContext<'a> {
                 trusted_evidence_ids.insert(cell.id.as_str());
             }
         }
-        let trusted_coverage_targets = sections::canonical_evidence_coverage(case_space)
-            .into_iter()
-            .filter(|(evidence_id, _)| trusted_evidence_ids.contains(evidence_id.as_str()))
-            .map(|(_, target_id)| target_id)
-            .collect();
+        let trusted_coverage_targets = trusted_coverage_targets(case_space, |evidence_id| {
+            trusted_evidence_ids.contains(evidence_id)
+        });
         Self {
             case_space,
             index,
