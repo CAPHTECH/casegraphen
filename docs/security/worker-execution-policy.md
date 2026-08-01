@@ -126,8 +126,17 @@ operations rather than one silent rewrite. Annotation — metadata, source ids,
 provenance, evidence ids — stays mutable; the readiness decision does not read
 it.
 
-`append_morphism` validates the resulting case space against the same
-materialization contract the loader enforces, before it writes anything.
+`append_morphism` validates the resulting case space against the loader's
+contract — the store's reference check *and* the evaluator's
+`validate_native_case_space` — before it writes anything. The second half was
+missing until 2026-08-01, and the gap was the same shape as the one it was
+meant to close: the writer checked a subset of what every read enforces. Three
+ordinary gated commands reached it. `evidence attach` never inspects a cell's
+`space_id` or `title`, so either one wrote a store where every derived command
+failed permanently; and a `retire` of any relation dangles the log entries that
+named it. All three wrote successfully, and `space validate` reported
+`valid: true` on the result while `space rebuild` reported success, because the
+fold verifies checksums rather than this contract.
 Previously only the loader checked, so a gated `retire` of a relation that a
 projection still named was written and then refused by every read path,
 including the write paths that could have repaired it — and `space rebuild`, the

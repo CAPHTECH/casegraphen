@@ -183,6 +183,22 @@ impl NativeCaseStore {
         // checksums rather than the materialization contract. Validate the
         // resulting state against the same rule, before anything is written.
         validate_materialized_log(&log_path, &next)?;
+        // And against the *whole* loader contract, not the store's narrower
+        // reference check. The import path already does this, for the reason
+        // stated above it; applying it there and not here left the same hole
+        // open on the path every gated mutation takes. Reproduced three ways
+        // through ordinary gated commands: an attached evidence cell whose
+        // space_id or title the attach path never inspects, and a `retire` of
+        // any relation, which dangles the entries that named it. Each was
+        // written, each then failed every derived command permanently, and
+        // `space validate` reported `valid: true` on all three because the
+        // fold verifies checksums rather than this contract.
+        crate::native_eval::validate_native_case_space(&next).map_err(|error| {
+            invalid_morphism(
+                &log_path,
+                format!("resulting case space is not evaluable: {error:?}"),
+            )
+        })?;
 
         let snapshot_path = self.resolve_snapshot_path(
             &self.relative_snapshot_path(&next.case_space_id, &next.revision.revision_id),

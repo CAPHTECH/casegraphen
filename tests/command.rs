@@ -1397,6 +1397,98 @@ fn the_store_refuses_a_morphism_whose_result_it_could_not_load_back() {
 }
 
 #[test]
+fn the_store_refuses_an_attached_cell_the_evaluator_could_not_read_back() {
+    // The writer used to check only the store's own reference rule, which is
+    // narrower than the loader's. `evidence attach` never inspects space_id or
+    // title, so either one wrote a store where every derived command failed
+    // permanently while `space validate` reported valid: true and
+    // `space rebuild` reported success — the two commands the policy names as
+    // audit and recovery, with no CLI repair path.
+    for (case, cell) in [
+        (
+            "mismatched space",
+            json!({
+                "id": "evidence:wrong-space", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": "space:somewhere-else", "title": "Wrong space",
+                "source_ids": ["source:native-cli"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "doc"}}
+            }),
+        ),
+        (
+            "blank title",
+            json!({
+                "id": "evidence:blank-title", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": json_file(native_case_fixture())["space_id"].clone(), "title": "   ",
+                "source_ids": ["source:native-cli"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "doc"}}
+            }),
+        ),
+    ] {
+        let directory = unique_temp_dir();
+        fs::create_dir_all(&directory).expect("create temp directory");
+        import_native_case_space(&directory, "revision:evaluable-base");
+        let store = directory.to_str().expect("temp path").to_owned();
+        let evidence_path = directory.join("unevaluable.evidence.json");
+        fs::write(
+            &evidence_path,
+            serde_json::to_string_pretty(&cell).expect("serialize evidence"),
+        )
+        .expect("write evidence");
+
+        let attached = run_cli_with_mutation_gate(
+            &[
+                "evidence",
+                "attach",
+                "--store",
+                &store,
+                "--case-space-id",
+                native_case_space_id(),
+                "--base-revision-id",
+                "revision:evaluable-base",
+                "--input",
+                evidence_path.to_str().expect("evidence path"),
+                "--format",
+                "json",
+            ],
+            "actor:native-evidence-cli",
+        );
+        assert!(
+            !attached.status.success(),
+            "{case}: the store accepted a state the evaluator cannot read"
+        );
+
+        // The read paths that would have broken, not only the ones that kept
+        // reporting success on a broken store.
+        for command in [
+            vec!["obstruction", "list"],
+            vec!["space", "frontier"],
+            vec!["invariant", "check"],
+            vec!["space", "validate"],
+        ] {
+            let mut args = command.clone();
+            args.extend([
+                "--store",
+                &store,
+                "--case-space-id",
+                native_case_space_id(),
+                "--format",
+                "json",
+            ]);
+            let read = run_cli(&args);
+            assert!(
+                read.status.success(),
+                "{case}: {command:?} stderr: {}",
+                stderr(&read)
+            );
+        }
+
+        fs::remove_dir_all(directory).expect("remove temp directory");
+    }
+}
+
+#[test]
 fn a_relation_update_cannot_change_which_relation_it_is() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
