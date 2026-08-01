@@ -249,14 +249,37 @@ time and discarded it; `worker_invoked` is now written to the trace file
 before the spawn.
 
 Concurrency was driven for the first time in this round, after every earlier
-claim in this document had rested on single-process reproductions. The
-integrity properties held: twelve concurrent `run --step` on one step produced
-exactly one dispatch and one worker invocation measured by side effect;
-`--max-parallel 4` ran genuinely parallel and applied all four transitions;
-and two concurrent `run --frontier` rounds left the loser recording
-reservation failures with no double execution. Two races remain undriven — a
-`--supersede-trace` against a live dispatch as that dispatch applies its
-result, and `run --step` racing `run --frontier` on one step.
+claim in this document had rested on single-process reproductions. **Every
+integrity property held, in every race run**: twelve concurrent `run --step`
+on one step produced exactly one dispatch and one worker invocation measured
+by side effect; `--max-parallel 4` ran genuinely parallel and applied all
+four transitions; two concurrent `run --frontier` rounds left the loser
+recording reservation failures with no double execution; a `--supersede-trace`
+issued against a live dispatch — including from inside the evidence-to-
+transition window — still produced exactly one transition; and `run --step`
+racing `run --frontier` dispatched each step once. The reason is one
+sentence: `run --step` pins its application to its startup replay, so the
+loser's append always carries a stale source revision and the store's
+sequence check refuses it. Two writers, one step, interleaved appends, and
+the log stays single-threaded.
+
+What contention *did* break was the record, not the state. A completed trace
+named an anchor entry id and a result revision that were never written — the
+trace file has to be written before the anchor append, since the anchor
+hashes it, and nothing rewound it when that append failed. The falsehood is
+specifically "an anchored revision that is not in the store", which is
+residual risk 2's rollback signature: ordinary contention manufactured the
+forensic signal that is supposed to mean history was erased.
+
+Its root cause is worth more than the defect. The lock wait was eight
+attempts capped at 40 ms — about 235 ms — while the lock is held across the
+contract check, the snapshot, the append and the head write, so hold time
+scales with the case space: 3.0 s measured for one `cell transition` on a
+4,000-cell space. Two ordinary writers were guaranteed to starve one of
+them. Residual risk 8 framed lock denial as something an adversary does; it
+is also what a large case space does to itself, and that framing is why a
+235 ms budget survived review. The wait is now a 30 s deadline, and the risk
+says plainly that a fixed budget is a limit rather than a guarantee.
 
 ## Where the next round should start
 
