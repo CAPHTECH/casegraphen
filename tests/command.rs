@@ -100,6 +100,24 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
         .iter()
         .all(|projection| projection["revision_id"] == json!("revision:native-cli-imported")));
 
+    // ADR 0011: the log is reported once, inside the folded case space. A
+    // caller wanting only the log runs `space history`, which is the command
+    // this assertion pairs with above.
+    assert!(
+        replay_json["result"]["replay"].get("history").is_none(),
+        "space replay must not echo the morphism log beside case_space.morphism_log"
+    );
+    assert_eq!(
+        replay_json["result"]["replay"]["case_space"]["morphism_log"]
+            .as_array()
+            .expect("replayed morphism log")
+            .len(),
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len()
+    );
+
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -2950,9 +2968,21 @@ fn native_run_step_records_failed_worker_evidence_without_transition() {
         "printf 'failed-output'; printf 'failed-error' >&2; exit 1",
     );
 
-    let output = run_native_step(&directory, &fixture, true, None);
+    let mut strict_args = native_step_args(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        true,
+        None,
+        &["capability:dispatch", "capability:native-run-worker"],
+    );
+    strict_args.push("--strict".to_owned());
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(strict_args)
+        .output()
+        .expect("run strict casegraphen run --step");
 
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
     let value = stdout_json(&output);
     assert_eq!(value["result"]["status"], json!("step_failed"));
     assert_eq!(value["result"]["trace"]["transition_applied"], json!(false));
@@ -3033,6 +3063,21 @@ fn native_run_step_records_failed_worker_evidence_without_transition() {
         without_retry_json["result"]["obstructions"][0]["obstruction_type"],
         json!("retry_required")
     );
+    let mut strict_retry_args = native_step_args(
+        &directory,
+        &fixture,
+        failed_revision,
+        true,
+        None,
+        &["capability:dispatch", "capability:native-run-worker"],
+    );
+    strict_retry_args.push("--strict".to_owned());
+    let strict_retry = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(strict_retry_args)
+        .output()
+        .expect("run strict retry-required casegraphen run --step");
+    assert_eq!(strict_retry.status.code(), Some(2));
+    assert_eq!(strict_retry.stdout, without_retry.stdout);
 
     let retried = run_native_step_with_base(
         &directory,
@@ -3317,9 +3362,22 @@ fn native_run_frontier_continues_after_one_worker_fails() {
         ],
     );
 
-    let output = run_native_frontier(&directory, &fixture, 2);
+    let mut strict_args = native_frontier_args(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        2,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+        true,
+    );
+    strict_args.push("--strict".to_owned());
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(strict_args)
+        .output()
+        .expect("run strict casegraphen run --frontier");
 
-    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(output.status.code(), Some(2), "stderr: {}", stderr(&output));
     let value = stdout_json(&output);
     assert_eq!(value["result"]["status"], json!("round_executed"));
     let traces = value["result"]["traces"]
@@ -5436,6 +5494,180 @@ fn lift_github_issues_materializes_the_snapshot_into_a_rebuildable_case_space() 
         stdout_json(&validation)["result"]["validation"]["valid"],
         json!(true)
     );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn strict_exit_codes_distinguish_domain_findings_from_tool_failures() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let graph_id = "workflow_graph:strict-exit";
+    let mut graph = workflow_attack_graph(graph_id, Vec::new());
+    graph["workflow_relations"] = json!([{
+        "id": "relation:strict-contradiction",
+        "relation_type": "contradicts",
+        "from_id": "task:goal",
+        "to_id": "proof:needed",
+        "evidence_ids": [],
+        "source_ids": ["source:s1"],
+        "provenance": {
+            "source": {"kind": "document"},
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        }
+    }]);
+    let lifted = lift_workflow_graph(&directory, &graph, "strict-exit");
+    assert!(lifted.status.success(), "stderr: {}", stderr(&lifted));
+    let case_space_id = format!("case_space:{graph_id}");
+    let current_revision_id = stdout_json(&lifted)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("lifted revision")
+        .to_owned();
+
+    let obstruction_args = [
+        "obstruction",
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ];
+    let lenient = run_cli(&obstruction_args);
+    assert_eq!(
+        lenient.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr(&lenient)
+    );
+    assert!(!stdout_json(&lenient)["result"]["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .is_empty());
+
+    let strict = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(strict.status.code(), Some(2), "stderr: {}", stderr(&strict));
+    assert_eq!(strict.stdout, lenient.stdout);
+
+    for (namespace, operation) in [("space", "reason"), ("invariant", "check")] {
+        let strict_report = run_cli(&[
+            namespace,
+            operation,
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            &case_space_id,
+            "--strict",
+            "--format",
+            "json",
+        ]);
+        assert_eq!(
+            strict_report.status.code(),
+            Some(2),
+            "{namespace} {operation} stderr: {}",
+            stderr(&strict_report)
+        );
+    }
+
+    let strict_close = run_cli(&[
+        "invariant",
+        "close-check",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--base-revision-id",
+        &current_revision_id,
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        strict_close.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr(&strict_close)
+    );
+
+    let clean_case_space_id = "case_space:strict-clean";
+    let created = run_cli(&[
+        "space",
+        "new",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        clean_case_space_id,
+        "--space-id",
+        "space:strict-clean",
+        "--title",
+        "Strict clean space",
+        "--revision-id",
+        "revision:strict-clean",
+        "--format",
+        "json",
+    ]);
+    assert!(created.status.success(), "stderr: {}", stderr(&created));
+    let clean = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        clean_case_space_id,
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(clean.status.code(), Some(0), "stderr: {}", stderr(&clean));
+    assert!(stdout_json(&clean)["result"]["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .is_empty());
+
+    let missing_store = directory.join("missing-store");
+    let tool_failure = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        missing_store.to_str().expect("missing store path"),
+        "--case-space-id",
+        "case_space:missing",
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        tool_failure.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&tool_failure)
+    );
+
+    let unsupported = run_cli(&[
+        "space",
+        "inspect",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        &case_space_id,
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(unsupported.status.code(), Some(1));
+    assert!(stderr(&unsupported).contains("unsupported native argument \"--strict\""));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }

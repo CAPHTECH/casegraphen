@@ -98,6 +98,10 @@ pub struct NativeCaseSpaceReplay {
     pub space_id: Id,
     pub current_revision_id: Id,
     pub case_space: CaseSpace,
+    // Folding state, not report content: these are the same entries as
+    // `case_space.morphism_log`, and `space history` is the command that
+    // answers for the log alone (ADR 0011).
+    #[serde(skip_serializing)]
     pub history: Vec<MorphismLogEntry>,
 }
 
