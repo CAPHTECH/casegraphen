@@ -24,18 +24,46 @@ For a worked example of every command below with its real output, read the
 
 ## The two rules that break every first attempt
 
-**1. Re-read the revision before every mutating command.** Each durable
+**1. Carry the revision returned by each mutating command.** Each durable
 mutation creates a new revision, and a stale `--base-revision-id` is refused,
-never merged. `run --step` alone appends up to three entries. So:
+never merged. Take the next base revision from
+`result.record.current_revision_id` in the response of the command that just
+wrote. `run --step` alone appends up to three entries; its response carries the
+revision after all of them.
+
+At the first command of a session, or after any refusal or failure, recover by
+re-reading instead:
 
 ```sh
-cur() { casegraphen space inspect --store "$STORE" --case-space-id "$CS" --format json |
-          python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["record"]["current_revision_id"])'; }
+cur() {
+  casegraphen space inspect --store "$STORE" --case-space-id "$CS" --format json \
+    --output inspect-report.json >/dev/null &&
+    python3 -c 'import json;print(json.load(open("inspect-report.json"))["result"]["record"]["current_revision_id"])'
+}
+REV="$(cur)"
 ```
 
-and pass `--base-revision-id "$(cur)"` every time. The same applies inside a
-morphism proposal: its `source_revision_id` must equal the current revision at
-apply time, so write the proposal file immediately before applying it.
+Pass `--base-revision-id "$REV"`. After each successful durable mutation, set
+`REV` from that command's response; do not call `cur()` between successful
+mutations. The same applies inside a morphism proposal: its `source_revision_id`
+must equal `$REV` at apply time, so write the proposal file immediately before
+applying it.
+
+Every command accepts `--output <path>`. It writes the full JSON report there
+and emits nothing on stdout — measured 0 bytes. For anything but the smallest
+report, use `--output`, then extract only the field you need:
+
+```sh
+REV="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["record"]["current_revision_id"])' write-report.json)"
+# or: REV="$(jq -r '.result.record.current_revision_id' write-report.json)"
+```
+
+| Question | Narrow read command |
+|---|---|
+| What can proceed? | `space frontier` |
+| What blocks? | `obstruction list` |
+| What is the full folded state? | `space replay --output <path>` |
+| Where is it and how far has it advanced? | `space inspect` — revisions, paths, counts |
 
 `space inspect` answers *where and how far*: revisions, log and snapshot paths,
 counts. It carries no cells, so it cannot tell you what the space contains. The
@@ -106,9 +134,9 @@ Only a stale revision or an integrity mismatch is a tool failure.
 ## Verify what you did
 
 ```sh
-casegraphen space validate --store "$STORE" --case-space-id "$CS" --format json   # log fold reproduces the snapshot
-casegraphen space history  --store "$STORE" --case-space-id "$CS" --format json   # actor + operation per entry
-casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format json # derived blockers now
+casegraphen space validate --store "$STORE" --case-space-id "$CS" --format json --output validate-report.json   # log fold reproduces the snapshot
+casegraphen space history  --store "$STORE" --case-space-id "$CS" --format json --output history-report.json    # actor + operation per entry
+casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format json --output obstruction-report.json # derived blockers now
 ```
 
 Report what the obstructions say, not what you intended. A case space whose

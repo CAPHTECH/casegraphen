@@ -1,8 +1,16 @@
 # Changing the graph
 
 Every change is an append to the morphism log. There is no in-place edit.
-Re-read the current revision before each command; `$STORE`, `$CS`, `$GATE`, and
-`cur()` below are from SKILL.md.
+Start a session with `REV="$(cur)"`. After each successful durable write, take
+the next revision from that command's report; do not re-read between successful
+writes. After a refusal or failure, recover with `REV="$(cur)"` before retrying.
+`$STORE`, `$CS`, `$GATE`, and `cur()` below are from SKILL.md.
+
+```sh
+next_revision() {
+  python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["record"]["current_revision_id"])' "$1"
+}
+```
 
 ## Which command for which change
 
@@ -35,8 +43,11 @@ The proposal is a `CaseMorphism` JSON document. The fields that must agree:
 ```sh
 casegraphen morphism propose --store "$STORE" --case-space-id "$CS" --input m.json --format json
 casegraphen morphism check   --store "$STORE" --case-space-id "$CS" --morphism-id <id> --format json
+APPLY_REPORT=apply-report.json
 casegraphen morphism apply   --store "$STORE" --case-space-id "$CS" --morphism-id <id> \
-  --base-revision-id "$(cur)" --reviewer-id <id> --reason "<why>" $GATE --format json
+  --base-revision-id "$REV" --reviewer-id <id> --reason "<why>" $GATE --format json \
+  --output "$APPLY_REPORT"
+REV="$(next_revision "$APPLY_REPORT")"
 ```
 
 `check` reports `applicable` plus diagnostics and mutates nothing. Run it: it
@@ -78,17 +89,23 @@ refuses input claiming `review_status: accepted`. `--satisfies <target-id>` adds
 not satisfy a hard requirement.
 
 ```sh
+ATTACH_REPORT=attach-report.json
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
-  --base-revision-id "$(cur)" --input evidence.json --satisfies <requirement-id> $GATE --format json
+  --base-revision-id "$REV" --input evidence.json --satisfies <requirement-id> $GATE \
+  --format json --output "$ATTACH_REPORT"
+REV="$(next_revision "$ATTACH_REPORT")"
 ```
 
 Expect the `missing_evidence` obstruction to survive this. To clear it, promote
 the requirement:
 
 ```sh
+REVIEW_REPORT=review-report.json
 casegraphen review accept --store "$STORE" --case-space-id "$CS" \
   --target-id <requirement-id> --reviewer-id <id> --reason "<what you verified>" \
-  --base-revision-id "$(cur)" --evidence-id <attached evidence id> $GATE --format json
+  --base-revision-id "$REV" --evidence-id <attached evidence id> $GATE --format json \
+  --output "$REVIEW_REPORT"
+REV="$(next_revision "$REVIEW_REPORT")"
 ```
 
 The review does **not** edit the target cell — its `provenance.review_status`
@@ -99,8 +116,11 @@ evidence cell's provenance is immutable and the update is refused.
 ## Direct lifecycle change
 
 ```sh
+TRANSITION_REPORT=transition-report.json
 casegraphen cell transition --store "$STORE" --case-space-id "$CS" \
-  --base-revision-id "$(cur)" --cell-id <id> --to <lifecycle> --reason "<why>" $GATE --format json
+  --base-revision-id "$REV" --cell-id <id> --to <lifecycle> --reason "<why>" $GATE \
+  --format json --output "$TRANSITION_REPORT"
+REV="$(next_revision "$TRANSITION_REPORT")"
 ```
 
 Capability-gated, so no human interaction is required if the acting actor holds
