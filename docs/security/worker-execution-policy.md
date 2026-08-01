@@ -241,6 +241,11 @@ workers under a dedicated OS user or container is the operator's control.
 
 ### 2.5 Output trust boundary
 
+The evidence cell carries `output_incomplete` and `output_truncated` beside
+its `content_hash`, because the hash means "the whole stream" only when the
+stream was whole — a reader seeing the hash alone could not tell it covered a
+prefix. Both are frozen on update alongside the hash they qualify.
+
 Worker output enters the space only as evidence cells with
 `review_status: unreviewed` provenance and recorded content hashes, under the
 trust boundary marker

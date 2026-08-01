@@ -2155,6 +2155,14 @@ fn evidence_morphism(
                 ),
             ),
             ("exit_status".to_owned(), json!(worker_report.exit_status)),
+            // What `content_hash` means depends on these. The hash covers the
+            // whole stream, but only when the stream was whole: `incomplete`
+            // says the reader never saw EOF, so the bytes on disk are a
+            // prefix of what the worker wrote. Recording the hash without its
+            // qualifier left a reviewer reading a content hash with nothing
+            // saying what it covers.
+            ("output_incomplete".to_owned(), json!(stdout.incomplete)),
+            ("output_truncated".to_owned(), json!(stdout.truncated)),
         ]),
     };
     let relations = requirement_ids

@@ -993,6 +993,11 @@ fn require_immutable_cell_update_fields(
         "content_hash",
         "trace_id",
         "worker_report_id",
+        // These qualify what `content_hash` covers, so they are the same kind
+        // of value: a caller who could flip them could make a prefix hash
+        // read as a hash of the whole stream.
+        "output_incomplete",
+        "output_truncated",
     ] {
         if existing.metadata.get(key) != updated.metadata.get(key) {
             return Err(MorphismApplyError::new(format!(
@@ -1593,6 +1598,8 @@ mod tests {
             "content_hash",
             "trace_id",
             "worker_report_id",
+            "output_incomplete",
+            "output_truncated",
         ] {
             let mut updated = evidence.clone();
             updated
