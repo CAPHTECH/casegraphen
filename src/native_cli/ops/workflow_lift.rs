@@ -232,16 +232,22 @@ fn work_item_cell(item: &WorkItem) -> Result<CaseCell, NativeCliError> {
     }
     let cell_type = cell_type(&item.item_type);
     let mut provenance = provenance(&item.provenance)?;
+    // Every lifted cell enters unreviewed, not only the evidence ones. The
+    // evaluator counts a cell as complete when its review status is
+    // `accepted`, so a graph declaring that on a work item satisfied every
+    // hard dependency on it before the work started — reproduced against the
+    // shipped example graph, with a control that stayed blocked. A review
+    // status in an imported graph is a claim the graph makes about itself,
+    // and promotion here happens through a canonical review morphism.
+    provenance.review_status = ReviewStatus::Unreviewed;
     if cell_type == CaseCellType::Evidence {
-        // An evidence-typed work item is evidence, so it enters on the same
-        // terms as an evidence record: an untrusted boundary and an unreviewed
-        // status. The workflow vocabulary has no boundary field here, so there
-        // is nothing to normalize — only a claim to refuse.
+        // An evidence-typed work item is evidence, so it also enters with an
+        // untrusted boundary. The workflow vocabulary has no boundary field
+        // here, so there is nothing to normalize — only a claim to refuse.
         metadata.insert(
             "evidence_boundary".to_owned(),
             json!(EvidenceTrustBoundary::Inferred.metadata_value()),
         );
-        provenance.review_status = ReviewStatus::Unreviewed;
     }
     Ok(CaseCell {
         id: item.id.clone(),
@@ -267,12 +273,36 @@ fn work_item_cell(item: &WorkItem) -> Result<CaseCell, NativeCliError> {
     })
 }
 
+/// A workflow graph is an imported document, not an authored genesis, so the
+/// boundary it declares is a claim rather than a measurement.
+/// `source_backed` is acceptable with no review at all, which made a hard
+/// evidence requirement satisfiable by typing a string into the input —
+/// reproduced against the shipped example graph, with an `ai_inference`
+/// control that stayed blocked. It is the same reason the reducer refuses a
+/// post-genesis added cell declaring that boundary.
+///
+/// Everything therefore enters `inferred`, the spelling that means "needs an
+/// accepted review" — except the boundaries that only ever restrict trust,
+/// which are kept, because normalizing those would loosen the import.
+fn imported_evidence_boundary(declared: EvidenceTrustBoundary) -> EvidenceTrustBoundary {
+    match declared {
+        EvidenceTrustBoundary::Rejected | EvidenceTrustBoundary::Contradicting => declared,
+        _ => EvidenceTrustBoundary::Inferred,
+    }
+}
+
 fn evidence_cell(space_id: &Id, record: &EvidenceRecord) -> Result<CaseCell, NativeCliError> {
-    let boundary: EvidenceTrustBoundary = record.evidence_boundary.into();
+    let declared: EvidenceTrustBoundary = record.evidence_boundary.into();
     let mut metadata = Map::new();
     metadata.insert(
         "evidence_boundary".to_owned(),
-        json!(boundary.metadata_value()),
+        json!(imported_evidence_boundary(declared).metadata_value()),
+    );
+    // The graph's own label is kept where a reader can see it and no decision
+    // reads it.
+    metadata.insert(
+        "workflow_evidence_boundary".to_owned(),
+        json!(declared.metadata_value()),
     );
     metadata.insert(
         "workflow_evidence_type".to_owned(),
@@ -284,9 +314,7 @@ fn evidence_cell(space_id: &Id, record: &EvidenceRecord) -> Result<CaseCell, Nat
     // The boundary label alone is not the barrier: the shared trust rule
     // accepts a review-promoted boundary when the cell's own review status is
     // accepted, and that status is caller-declared here. Force it unreviewed so
-    // promotion has to come from a gated review morphism. Genuinely
-    // source-backed evidence is unaffected — that boundary does not consult
-    // review status.
+    // promotion has to come from a gated review morphism.
     let mut provenance = provenance(&record.provenance)?;
     provenance.review_status = ReviewStatus::Unreviewed;
     Ok(CaseCell {

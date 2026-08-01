@@ -6747,11 +6747,44 @@ fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
         .expect("worker output evidence cell");
     assert_eq!(
         inference["metadata"]["evidence_boundary"],
+        json!("inferred")
+    );
+    assert_eq!(
+        inference["metadata"]["workflow_evidence_boundary"],
         json!("worker_output")
     );
     assert_eq!(
         inference["provenance"]["review_status"],
         json!("unreviewed")
+    );
+
+    // A graph declaring `source_backed_evidence` was declaring its own trust:
+    // that boundary is acceptable with no review at all, so it cleared a hard
+    // evidence requirement by typing a string into the import. The graph is a
+    // document, not an authored genesis, so its claim is kept where readers
+    // can see it and no decision reads it.
+    let declared_source_backed = cells
+        .iter()
+        .find(|cell| cell["id"] == json!("evidence:workflow-target-doc"))
+        .expect("source-backed evidence cell");
+    assert_eq!(
+        declared_source_backed["metadata"]["evidence_boundary"],
+        json!("inferred")
+    );
+    assert_eq!(
+        declared_source_backed["metadata"]["workflow_evidence_boundary"],
+        json!("source_backed")
+    );
+
+    // Every lifted cell enters unreviewed, not only the evidence ones: the
+    // evaluator counts a cell as complete when its review status is accepted,
+    // so a graph declaring that satisfied hard dependencies on it before the
+    // work started.
+    assert!(
+        cells
+            .iter()
+            .all(|cell| cell["provenance"]["review_status"] != json!("accepted")),
+        "a lifted cell kept the graph's accepted review status"
     );
 
     // A requirement target that named no declared record became an
@@ -6779,10 +6812,12 @@ fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
         "--format",
         "json",
     ]));
-    assert_eq!(
-        frontier["result"]["frontier_cell_ids"],
-        json!(["task:define-workflow-reasoning-contract"])
-    );
+    // Nothing is ready, and that is the honest reading of an imported graph:
+    // this tool has verified none of its evidence. The dependency structure is
+    // what the analysis space is for, and it still derives — the fixture used
+    // to show this item ready only because the graph declared its own evidence
+    // source-backed.
+    assert_eq!(frontier["result"]["frontier_cell_ids"], json!([]));
     let obstructions = stdout_json(&run_cli(&[
         "obstruction",
         "list",

@@ -6,10 +6,17 @@
 into a case space (ADR 0003): work items become cells, workflow relations become
 relations, evidence records become evidence cells. Nothing the graph declares
 about trust survives — `case_ids` does not become `structure_ids`, the
-evaluator-consulted metadata keys are stripped, and every lifted evidence cell
-enters `unreviewed`. A lifted space carries no capability cells, so it is an
-analysis space: to execute workflow-originated work, author a native genesis
-with explicit capabilities.
+evaluator-consulted metadata keys are stripped, **every** lifted cell enters
+`unreviewed`, and every lifted evidence cell enters at the `inferred` boundary
+whatever the graph called it. The graph's own label is kept as
+`metadata.workflow_evidence_boundary`, where no decision reads it.
+
+Expect a freshly lifted space to show every evidence requirement unmet. That is
+what it means: this tool has verified none of the imported evidence. The
+dependency and readiness structure is what the analysis space is for, and that
+derives normally. A lifted space carries no capability cells, so it is an
+analysis space — to execute workflow-originated work, or to review anything,
+author a native genesis with explicit capabilities.
 
 ## Use `lift native`, not `space new`
 

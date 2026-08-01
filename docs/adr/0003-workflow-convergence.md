@@ -76,6 +76,27 @@ family survives *because* the bridge is too weak to replace it.
    recorded source identity and the materialized cells cannot describe
    different documents.
 
+   **Amended 2026-08-01**, because two trust values were surviving while this
+   decision said none did. A work item declaring
+   `provenance.review_status: accepted` produced a cell the evaluator counts as
+   complete, satisfying every hard dependency on it before the work started;
+   and an evidence record declaring `source_backed_evidence` produced a cell
+   acceptable with no review at all, clearing a hard evidence requirement by
+   typing a string into the import. Both were reproduced against the shipped
+   example graph, each with a control that stayed blocked. The second was the
+   sibling of a rule already enforced here: `accepted_evidence` was refused for
+   exactly this reason while `source_backed_evidence` reached the same outcome
+   under a different label.
+
+   So *every* lifted cell now enters `unreviewed`, and every lifted evidence
+   cell enters at `inferred`; the boundaries that only restrict trust are kept,
+   because normalizing those would loosen the import, and the graph's own label
+   survives as `metadata.workflow_evidence_boundary` where no decision reads
+   it. A freshly lifted space consequently shows every evidence requirement
+   unmet, which is the honest reading — this tool has verified none of it — and
+   a lifted space has no capability cells, so there is nothing there to review
+   with either.
+
 ### Vocabulary mapping
 
 Cell types map 1:1 except where the native vocabulary has no counterpart:
