@@ -281,6 +281,23 @@ chain follows to the replay. The branch was reachable all along by occupying
 the snapshot path the anchor writes, which fails the append deterministically
 with no timing at all; I had been trying to win a race instead.
 
+And the argument I made for *not* testing that branch was the shape too. I
+removed the regression test believing the failure trick needed the anchor to
+land on the snapshot interval, which the run fixtures never reach — reasoning
+from `require_snapshot_absent` and never reading
+`require_existing_snapshot_agrees_with_candidate`, its sibling, which reads a
+file already at the path on every sequence the scheduled one does not. One
+question, "may this snapshot path be occupied?", answered in two places, and
+the argument consulted one. The test is cheap on the smallest fixture and is
+restored.
+
+That instance is worth more than the defect it failed to cover, because it
+is the first one that appeared in *reasoning* rather than in code. The
+mitigation this document credits — write the rule where both siblings have to
+read it — turns out to apply to arguments about the code as much as to the
+code, and nothing in a review process catches a premise nobody states out
+loud. It surfaced only because a reviewer checked a claim I made in prose.
+
 Its root cause is worth more than the defect. The lock wait was eight
 attempts capped at 40 ms — about 235 ms — while the lock is held across the
 contract check, the snapshot, the append and the head write, so hold time
