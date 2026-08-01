@@ -1,9 +1,18 @@
 # Issue sweep — 2026-08-01
 
 Date: 2026-08-01
-Scope: the fifteen issues open at `79e0d24`, worked as one pass. Implementation
-was delegated; every behavioural claim below was re-executed by hand against a
-real store before it was accepted, per the working agreements.
+Scope: the fifteen issues open at `79e0d24`, worked as one pass, plus the one
+this pass raised and answered (#16) and six adversarial rounds — three against
+the work below, one against the areas #14 recorded as never attacked, and two
+against the crash paths and the fixes themselves. Implementation was
+delegated; every behavioural claim here was re-executed by hand against a real
+store before it was accepted, per the working agreements.
+
+The single most useful thing in this document is not a defect. It is that the
+rounds run against *this pass's own fixes* found more than the rounds run
+against the code it started from — including one defect in a fix, caught by
+comparing its doc comment to the condition the code actually tested. Reviewing
+the repair as hard as the fault is what that cost, and what it bought.
 
 ## What changed, and why it is what it is
 
