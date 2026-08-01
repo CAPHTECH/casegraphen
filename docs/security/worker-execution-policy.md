@@ -16,7 +16,7 @@ Actors and trust levels:
 | CaseGraphen CLI itself | Trusted; the deterministic control plane |
 | LLM / agent proposing plans, morphisms, completions | Untrusted candidate generator |
 | Worker process output (stdout/stderr, side effects) | Untrusted until validated |
-| Files on disk between commands (plans, bindings, logs) | Tamper-evident, not tamper-proof |
+| Files on disk between commands (plans, bindings, logs) | Tamper-evident except at the log tail — see residual risk 2 |
 
 Primary risks:
 
@@ -257,8 +257,24 @@ revision replay.
    the operator-run environment (§2.2). Mitigation: run under a dedicated
    user/container; keep `--enable-worker` off in shared shells.
 2. Hash chains detect tampering but cannot prevent a writer with store access
-   from rewriting the whole log; the store directory must be access-controlled
-   and, for high-assurance use, backed up append-only.
+   from rewriting the log, and **a rollback of the tail is not detectable at
+   all**. Measured, not assumed: rewriting one middle entry is refused
+   (`log entry ... previous_entry_hash`), tampering with a snapshot alone is
+   refused (`snapshot checksum`), and truncating the log is refused by the head —
+   but deleting the last entry *and* rewriting the head leaves a store that
+   `space validate` reports as `valid: true`, with the erased decision gone and
+   no warning anywhere. Forging that head needs no computation: the entry being
+   deleted carries the required `entry_hash` in its own
+   `previous_entry_hash` field.
+
+   This is structural. The head is the only anchor for the tail and it lives in
+   the same directory, writable by the same principal, so no in-store mechanism
+   can distinguish a rollback from a store that simply has fewer revisions.
+   Detecting it requires an anchor the tool does not write: commit the store
+   directory to version control, or record `current_revision_id` and the head's
+   `replay_checksum` wherever the decision they represent is acted on, and
+   compare before trusting a later read. The store directory must be
+   access-controlled and, for high-assurance use, backed up append-only.
 3. `env_allowlist` review remains a human judgment beyond the built-in loader,
    path, and reserved-namespace deny-list; a reviewer can still approve another
    secret-bearing variable.
