@@ -39,13 +39,26 @@ pub(super) fn canonical_evidence_coverage(case_space: &CaseSpace) -> BTreeSet<(S
             continue;
         };
         if is_genesis {
+            // A genesis `structure_ids` entry is a coverage claim only when it
+            // names something genesis itself materialized. The field is a
+            // free-form string list — the shipped example uses file paths — so
+            // without this an entry naming an id that does not exist yet would
+            // silently cover whatever cell is created with that id later, and
+            // the requirement would be born satisfied with no review naming it.
+            let genesis_ids = payload
+                .added_cells
+                .iter()
+                .map(|cell| cell.id.to_string())
+                .collect::<BTreeSet<_>>();
             for cell in payload
                 .added_cells
                 .iter()
                 .filter(|cell| cell.cell_type == CaseCellType::Evidence)
             {
                 for target in &cell.structure_ids {
-                    coverage.insert((cell.id.to_string(), target.to_string()));
+                    if genesis_ids.contains(target.as_str()) {
+                        coverage.insert((cell.id.to_string(), target.to_string()));
+                    }
                 }
             }
         }

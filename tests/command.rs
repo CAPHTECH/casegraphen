@@ -5189,6 +5189,162 @@ fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
 }
 
 #[test]
+fn genesis_coverage_cannot_reserve_an_id_that_does_not_exist_yet() {
+    // `structure_ids` is a free-form string list — the shipped example uses
+    // file paths — and genesis is the declared trust root, so a genesis
+    // evidence cell naming an id nothing has created must not cover the cell
+    // that later takes that id. Reproduced against the walkthrough genesis
+    // before the fix: the requirement was born satisfied and `work:planned`
+    // never appeared as blocked.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let mut genesis: Value = serde_json::from_str(
+        &fs::read_to_string(repo_path(
+            "docs/guides/release-decision/genesis.case.space.json",
+        ))
+        .expect("read the walkthrough genesis"),
+    )
+    .expect("walkthrough genesis parses");
+    let space_id = genesis["case_cells"][0]["space_id"].clone();
+    genesis["case_cells"]
+        .as_array_mut()
+        .expect("genesis cells")
+        .push(json!({
+            "id": "evidence:planned-proof", "cell_type": "evidence", "lifecycle": "accepted",
+            "space_id": space_id, "title": "Proof claimed at genesis",
+            "source_ids": ["source:release-intent"],
+            "structure_ids": ["evidence:planned-need"],
+            "metadata": {"evidence_boundary": "source_backed"},
+            "provenance": {"confidence": 0.99, "review_status": "accepted",
+                           "source": {"kind": "document", "title": "release record"}}
+        }));
+    let genesis_path = directory.join("reserving-genesis.case.space.json");
+    fs::write(
+        &genesis_path,
+        serde_json::to_vec_pretty(&genesis).expect("serialize genesis"),
+    )
+    .expect("write genesis");
+    let imported =
+        import_native_case_space_from_input(&directory, &genesis_path, "revision:reserving");
+    let case_space_id = stdout_json(&imported)["result"]["record"]["case_space_id"]
+        .as_str()
+        .expect("case space id")
+        .to_owned();
+
+    // The id the genesis claim reserved is created now, as a placeholder for a
+    // hard requirement, exactly as an author would model planned work.
+    let morphism_path = directory.join("planned.case_morphism.json");
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&json!({
+            "morphism_id": "morphism:add-planned", "morphism_type": "create",
+            "source_revision_id": "revision:reserving", "target_revision_id": "revision:planned",
+            "added_ids": ["work:planned", "evidence:planned-need", "relation:planned-requires"],
+            "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+            "evidence_ids": [], "source_ids": ["source:release-intent"],
+            "violated_invariant_ids": [], "review_status": "unreviewed",
+            "metadata": {"payload": {
+                "added_cells": [
+                    {"id": "work:planned", "cell_type": "work", "lifecycle": "active",
+                     "space_id": space_id, "title": "Planned work",
+                     "source_ids": ["source:release-intent"], "structure_ids": [], "metadata": {},
+                     "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                                    "source": {"kind": "human", "title": "plan"}}},
+                    {"id": "evidence:planned-need", "cell_type": "evidence", "lifecycle": "proposed",
+                     "space_id": space_id, "title": "Required: the planned proof",
+                     "source_ids": ["source:release-intent"], "structure_ids": [], "metadata": {},
+                     "provenance": {"confidence": 0.3, "review_status": "unreviewed",
+                                    "source": {"kind": "human", "title": "plan"}}}
+                ],
+                "added_relations": [
+                    {"id": "relation:planned-requires", "relation_type": "requires_evidence",
+                     "relation_strength": "hard", "from_id": "work:planned",
+                     "to_id": "evidence:planned-need", "evidence_ids": [],
+                     "source_ids": ["source:release-intent"], "metadata": {},
+                     "provenance": {"confidence": 1.0, "review_status": "accepted",
+                                    "source": {"kind": "human", "title": "plan"}}}
+                ],
+                "updated_cells": [], "updated_relations": []
+            }}
+        }))
+        .expect("serialize morphism"),
+    )
+    .expect("write morphism");
+    let proposed = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        &case_space_id,
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(proposed.status.success(), "stderr: {}", stderr(&proposed));
+    let applied = run_cli(&[
+        "morphism",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        &case_space_id,
+        "--morphism-id",
+        "morphism:add-planned",
+        "--base-revision-id",
+        "revision:reserving",
+        "--reviewer-id",
+        "reviewer:release-manager",
+        "--reason",
+        "add the planned work and its requirement",
+        "--actor-id",
+        "actor:release-manager",
+        "--capability-id",
+        "capability:release-durable-mutation",
+        "--operation-scope-id",
+        &case_space_id,
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:release-0-9-0-intent",
+        "--format",
+        "json",
+    ]);
+    assert!(applied.status.success(), "stderr: {}", stderr(&applied));
+
+    let listed = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        &store,
+        "--case-space-id",
+        &case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(listed.status.success(), "stderr: {}", stderr(&listed));
+    assert!(
+        stdout_json(&listed)["result"]["obstructions"]
+            .as_array()
+            .expect("obstructions")
+            .iter()
+            .any(|obstruction| {
+                obstruction["obstruction_type"] == json!("missing_evidence")
+                    && obstruction["affected_ids"]
+                        .as_array()
+                        .expect("affected ids")
+                        .contains(&json!("work:planned"))
+            }),
+        "a genesis structure_ids entry naming a then-nonexistent id satisfied a later requirement"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn lift_workflow_materializes_the_graph_into_a_replayable_case_space() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -7044,6 +7200,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/worker.binding.example.json",
         "schemas/casegraphen/worker.report.example.json",
         "schemas/casegraphen/execution.trace.example.json",
+        "schemas/casegraphen/operation-gate-profiles.example.json",
         "schemas/casegraphen/report-schema-aliases.json",
         "schemas/casegraphen/case.graph.schema.json",
         "schemas/casegraphen/coverage.policy.schema.json",
@@ -7058,6 +7215,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/worker.binding.schema.json",
         "schemas/casegraphen/worker.report.schema.json",
         "schemas/casegraphen/execution.trace.schema.json",
+        "schemas/casegraphen/operation-gate-profiles.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
     ]
     .iter()
@@ -7094,6 +7252,10 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/execution.trace.schema.json",
             "schemas/casegraphen/execution.trace.example.json",
+        ),
+        (
+            "schemas/casegraphen/operation-gate-profiles.schema.json",
+            "schemas/casegraphen/operation-gate-profiles.example.json",
         ),
     ]
     .iter()

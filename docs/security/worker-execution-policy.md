@@ -100,6 +100,15 @@ hard requirement. Before this, any actor the gate admitted could point already
 promoted evidence at a requirement nobody reviewed it for, and the obstruction
 disappeared with no review anywhere in the log.
 
+A genesis coverage claim only counts for a target genesis itself materialized.
+`structure_ids` is a free-form string list — the shipped example uses file
+paths — so an entry naming an id nothing has created is not a coverage claim
+about a future cell. Without that restriction a genesis author could reserve an
+id, and the work created with it later would be born covered by trusted
+evidence with no review naming it; that was reproduced against the shipped
+walkthrough genesis, with a control run confirming the coverage claim was the
+only difference.
+
 Both keys the log is read by — `review` and `evidence_attach` — are therefore
 reserved: `morphism propose` and `morphism apply` refuse a generic morphism that
 declares either `morphism_type`, alongside the canonical review metadata keys
