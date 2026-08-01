@@ -6927,6 +6927,135 @@ fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
 }
 
 #[test]
+fn rebuild_repairs_a_head_that_lags_the_log_and_refuses_one_that_does_not() {
+    // A crash between the log append and the head write — Ctrl-C is enough,
+    // reproduced 9/9 — left the head one entry behind, and every command then
+    // refused, including `space rebuild --adopt-existing-log`, the documented
+    // recovery. The only thing that worked was deleting the head by hand,
+    // which is the primitive residual risk 2 calls an untraceable rollback and
+    // is indistinguishable from one afterwards.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:lagging-head-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let log_path = imported_native_log_path(&directory, &stdout_json(&imported));
+    let head_path = log_path.with_file_name("morphism_log.head.json");
+    let genesis_head = fs::read_to_string(&head_path).expect("read genesis head");
+
+    // Append a second entry the honest way, then put the head back to genesis:
+    // exactly the state a crash between the two writes leaves.
+    let transitioned = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:lagging-head-base",
+            "--cell-id",
+            "work:review-native-contract",
+            "--to",
+            "active",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
+    assert!(
+        transitioned.status.success(),
+        "stderr: {}",
+        stderr(&transitioned)
+    );
+    let current_head = fs::read_to_string(&head_path).expect("read advanced head");
+    fs::write(&head_path, &genesis_head).expect("rewind the head");
+
+    let refused_read = run_cli(&[
+        "space",
+        "validate",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !refused_read.status.success(),
+        "a lagging head must still stop every read"
+    );
+
+    let repaired = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(repaired.status.success(), "stderr: {}", stderr(&repaired));
+    assert_eq!(
+        stdout_json(&repaired)["result"]["rebuild"]["head_adopted"],
+        json!(true)
+    );
+    assert_eq!(
+        fs::read_to_string(&head_path).expect("read repaired head"),
+        current_head,
+        "the repaired head must name the log's tail"
+    );
+    for operation in ["validate", "inspect", "replay"] {
+        let read = run_cli(&[
+            "space",
+            operation,
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            read.status.success(),
+            "space {operation} stderr: {}",
+            stderr(&read)
+        );
+    }
+
+    // A head *ahead* of the log is the rollback signature, not a crash, and it
+    // is what residual risk 2 exists to catch. Truncating the log to produce
+    // it must keep refusing.
+    let entries = fs::read_to_string(&log_path).expect("read log");
+    let kept = entries
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&log_path, format!("{kept}\n")).expect("truncate the log");
+    let rolled_back = run_cli(&[
+        "space",
+        "rebuild",
+        "--adopt-existing-log",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !rolled_back.status.success(),
+        "a head ahead of the log is a rollback and must be refused"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn coverage_can_only_be_aimed_at_an_evidence_cell() {
     // The evaluator treats coverage recorded against a work cell as satisfying
     // every evidence and proof requirement that cell has, so `--satisfies` on a

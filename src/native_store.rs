@@ -420,12 +420,27 @@ impl NativeCaseStore {
         let log_path = self.log_path(case_space_id);
         let latest = latest_entry(&entries, &log_path)?;
         let head_path = self.head_path(case_space_id);
+        // `true` when the head must be written; `Repair` additionally means a
+        // head file is already there and this is the crash case.
+        let mut repair_lagging_head = false;
         let adopt_log_head = if adopt_existing_log {
             match fs::metadata(&head_path) {
-                Ok(_) => {
-                    require_log_head(&head_path, latest)?;
-                    false
-                }
+                Ok(_) => match require_log_head(&head_path, latest) {
+                    Ok(()) => false,
+                    // A head that lags the log is what a crash between the
+                    // append and the head write leaves, and it is the one
+                    // disagreement that is safe to repair: the log is intact
+                    // and the head names an entry still in it. Refusing it
+                    // sent an operator who pressed Ctrl-C to delete the head
+                    // by hand — the exact primitive residual risk 2 names as
+                    // an untraceable rollback, and indistinguishable from one
+                    // afterwards. Every other disagreement still refuses.
+                    Err(error) => {
+                        require_head_lags_log(&head_path, &entries).map_err(|_| error)?;
+                        repair_lagging_head = true;
+                        true
+                    }
+                },
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => true,
                 Err(source) => {
                     return Err(NativeStoreError::Io {
@@ -496,7 +511,11 @@ impl NativeCaseStore {
         }
 
         if adopt_log_head {
-            write_log_head_create_new(&head_path, latest)?;
+            if repair_lagging_head {
+                write_log_head(&head_path, latest)?;
+            } else {
+                write_log_head_create_new(&head_path, latest)?;
+            }
         }
         Ok(NativeCaseSpaceRebuild {
             schema: NATIVE_CASE_SPACE_REBUILD_SCHEMA.to_owned(),
@@ -614,6 +633,63 @@ fn morphism_log_head(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult
         replay_checksum: entry.replay_checksum.clone(),
     };
     Ok(head)
+}
+
+/// Accepts exactly one shape of head/log disagreement: a head naming an entry
+/// that is still in the log, before the tail, and agreeing with that entry.
+///
+/// That is what a crash between `append_verified_log_entry` and
+/// `write_log_head` leaves, and it is repairable because the log — the source
+/// of record — is whole. A head naming a revision the log no longer contains
+/// is the opposite: the log was truncated under it, which is the tail-rollback
+/// signature residual risk 2 exists to catch. A head naming a present revision
+/// with a different checksum is a rewrite. Both keep refusing.
+fn require_head_lags_log(path: &Path, entries: &[MorphismLogEntry]) -> NativeStoreResult<()> {
+    let text = fs::read_to_string(path).map_err(|source| NativeStoreError::ReplayMismatch {
+        path: path.to_owned(),
+        reason: format!("morphism log head is required and could not be read: {source}"),
+    })?;
+    let head: MorphismLogHead =
+        serde_json::from_str(&text).map_err(|source| NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!("morphism log head is malformed: {source}"),
+        })?;
+    let stale = format!(
+        "morphism log head at revision {} does not name an earlier entry of this log",
+        head.target_revision_id
+    );
+    let position = entries
+        .iter()
+        .position(|entry| entry.target_revision_id == head.target_revision_id)
+        .ok_or_else(|| NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: stale.clone(),
+        })?;
+    if position + 1 == entries.len() {
+        // The head names the tail, so this is not a lagging head — whatever
+        // `require_log_head` refused it for stands.
+        return Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: stale,
+        });
+    }
+    let entry = &entries[position];
+    let expected_hash = crate::native_hash::morphism_log_entry_hash(entry).map_err(|source| {
+        NativeStoreError::Json {
+            path: path.to_owned(),
+            source,
+        }
+    })?;
+    if head.entry_hash != expected_hash || head.replay_checksum != entry.replay_checksum {
+        return Err(NativeStoreError::ReplayMismatch {
+            path: path.to_owned(),
+            reason: format!(
+                "morphism log head at revision {} disagrees with the entry of that revision",
+                head.target_revision_id
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn require_log_head(path: &Path, latest: &MorphismLogEntry) -> NativeStoreResult<()> {

@@ -314,9 +314,22 @@ revision replay.
    deleted carries the required `entry_hash` in its own
    `previous_entry_hash` field.
 
-   This is structural. The head is the only anchor for the tail and it lives in
-   the same directory, writable by the same principal, so no in-store mechanism
-   can distinguish a rollback from a store that simply has fewer revisions.
+   One head/log disagreement is *not* tampering and must not be treated as it:
+   the log append and the head write are two operations, so a crash between
+   them — Ctrl-C is enough — leaves the head naming an earlier entry of an
+   otherwise intact log. That state used to refuse every command including
+   `space rebuild --adopt-existing-log`, the documented recovery, which left
+   deleting the head by hand as the only way out — the exact primitive this
+   risk calls an untraceable rollback, and indistinguishable from one
+   afterwards. `space rebuild --adopt-existing-log` now repairs a head that
+   verifies as an earlier entry of the log and rewrites it to the tail. A head
+   *ahead* of the log, or naming a present revision with a different checksum,
+   is the rollback or rewrite signature and still refuses, on every path.
+
+   The rest is structural. The head is the only anchor for the tail and it
+   lives in the same directory, writable by the same principal, so no in-store
+   mechanism can distinguish a rollback from a store that simply has fewer
+   revisions.
    Detecting it requires an anchor the tool does not write: commit the store
    directory to version control, or record `current_revision_id` and the head's
    `replay_checksum` wherever the decision they represent is acted on, and
