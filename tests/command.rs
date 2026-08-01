@@ -4643,6 +4643,281 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
 }
 
 #[test]
+fn gate_profile_supplies_all_fields_and_records_only_expanded_values() {
+    let directory = setup_profiled_evidence_attach("all-fields");
+    let profile_name = "audit-profile-name-must-not-be-recorded";
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([full_gate_profile(
+            profile_name,
+            "actor:native-evidence-cli",
+            "capability:durable-mutation"
+        )]),
+    );
+
+    let attach = run_profiled_evidence_attach(&directory, &profile_path, profile_name, &[]);
+
+    assert!(attach.status.success(), "stderr: {}", stderr(&attach));
+    let gate = replayed_attached_evidence_gate(&directory);
+    assert_eq!(
+        gate,
+        json!({
+            "actor_id": "actor:native-evidence-cli",
+            "operation": "evidence-attach",
+            "operation_scope_id": native_case_space_id(),
+            "audience": "audit",
+            "capability_ids": ["capability:durable-mutation"],
+            "source_boundary_id": "source_boundary:native-case-management-contract"
+        })
+    );
+    assert!(!serde_json::to_string(&gate)
+        .expect("serialize recorded gate")
+        .contains(profile_name));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn explicit_gate_flag_overrides_the_profile_for_that_field() {
+    let directory = setup_profiled_evidence_attach("flag-wins");
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([full_gate_profile(
+            "override",
+            "actor:native-mutation-cli",
+            "capability:durable-mutation"
+        )]),
+    );
+
+    let attach = run_profiled_evidence_attach(
+        &directory,
+        &profile_path,
+        "override",
+        &["--actor-id", "actor:native-evidence-cli"],
+    );
+
+    assert!(attach.status.success(), "stderr: {}", stderr(&attach));
+    assert_eq!(
+        replayed_attached_evidence_gate(&directory)["actor_id"],
+        json!("actor:native-evidence-cli")
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn profile_nonexistent_capability_is_refused_exactly_like_the_flag() {
+    let directory = setup_profiled_evidence_attach("bad-capability");
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([full_gate_profile(
+            "bad-capability",
+            "actor:native-evidence-cli",
+            "capability:not-present"
+        )]),
+    );
+
+    let from_profile =
+        run_profiled_evidence_attach(&directory, &profile_path, "bad-capability", &[]);
+    let from_flags = run_profiled_evidence_attach(
+        &directory,
+        &profile_path,
+        "bad-capability",
+        &[
+            "--capability-id",
+            "capability:not-present",
+            "--actor-id",
+            "actor:native-evidence-cli",
+            "--operation-scope-id",
+            native_case_space_id(),
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:native-case-management-contract",
+        ],
+    );
+
+    assert!(!from_profile.status.success());
+    assert!(!from_flags.status.success());
+    assert_eq!(stderr(&from_profile), stderr(&from_flags));
+    assert!(stderr(&from_profile)
+        .contains("capability capability:not-present does not resolve to an existing case cell"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn partial_gate_profile_combines_with_remaining_flags() {
+    let directory = setup_profiled_evidence_attach("partial");
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([{
+            "name": "partial",
+            "actor_id": "actor:native-evidence-cli",
+            "capability_ids": ["capability:durable-mutation"]
+        }]),
+    );
+
+    let attach = run_profiled_evidence_attach(
+        &directory,
+        &profile_path,
+        "partial",
+        &[
+            "--operation-scope-id",
+            native_case_space_id(),
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:native-case-management-contract",
+        ],
+    );
+
+    assert!(attach.status.success(), "stderr: {}", stderr(&attach));
+    assert_eq!(
+        replayed_attached_evidence_gate(&directory)["capability_ids"],
+        json!(["capability:durable-mutation"])
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn gate_field_missing_from_both_profile_and_flags_is_refused() {
+    let directory = setup_profiled_evidence_attach("missing");
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([{
+            "name": "missing-actor",
+            "capability_ids": ["capability:durable-mutation"],
+            "operation_scope_id": native_case_space_id(),
+            "audience": "audit",
+            "source_boundary_id": "source_boundary:native-case-management-contract"
+        }]),
+    );
+
+    let attach = run_profiled_evidence_attach(&directory, &profile_path, "missing-actor", &[]);
+
+    assert!(!attach.status.success());
+    assert!(stderr(&attach).contains("--actor-id <id> is required for evidence attach"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn gate_profile_file_strictly_refuses_unknown_fields_through_the_binary() {
+    let directory = setup_profiled_evidence_attach("unknown-field");
+    let profile_path = write_gate_profiles(
+        &directory,
+        json!([{
+            "name": "unknown-field",
+            "actor_id": "actor:native-evidence-cli",
+            "capability_ids": ["capability:durable-mutation"],
+            "operation_scope_id": native_case_space_id(),
+            "audience": "audit",
+            "source_boundary_id": "source_boundary:native-case-management-contract",
+            "trusted": true
+        }]),
+    );
+
+    let attach = run_profiled_evidence_attach(&directory, &profile_path, "unknown-field", &[]);
+
+    assert!(!attach.status.success());
+    assert!(stderr(&attach).contains("unknown field `trusted`"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+fn setup_profiled_evidence_attach(label: &str) -> PathBuf {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-evidence-base");
+    let input_path = directory.join("profiled-evidence-cell.json");
+    let mut evidence_cell = json_file(native_case_fixture())["case_cells"][3].clone();
+    evidence_cell["id"] = json!(format!("evidence:profile-{label}"));
+    evidence_cell["title"] = json!(format!("Profile evidence {label}"));
+    evidence_cell["lifecycle"] = json!("active");
+    evidence_cell["provenance"]["review_status"] = json!("unreviewed");
+    evidence_cell["source_ids"] = json!([format!("source:profile-{label}")]);
+    evidence_cell["metadata"] = json!({"evidence_boundary": "source_backed"});
+    fs::write(
+        input_path,
+        serde_json::to_string_pretty(&evidence_cell).expect("serialize evidence cell"),
+    )
+    .expect("write evidence cell");
+    directory
+}
+
+fn full_gate_profile(name: &str, actor_id: &str, capability_id: &str) -> Value {
+    json!({
+        "name": name,
+        "actor_id": actor_id,
+        "capability_ids": [capability_id],
+        "operation_scope_id": native_case_space_id(),
+        "audience": "audit",
+        "source_boundary_id": "source_boundary:native-case-management-contract"
+    })
+}
+
+fn write_gate_profiles(directory: &Path, profiles: Value) -> PathBuf {
+    let path = directory.join("operation-gate-profiles.json");
+    let document = json!({
+        "schema": "highergraphen.case.operation_gate_profiles.v1",
+        "schema_version": 1,
+        "profiles": profiles
+    });
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&document).expect("serialize gate profiles"),
+    )
+    .expect("write gate profiles");
+    path
+}
+
+fn run_profiled_evidence_attach(
+    directory: &Path,
+    profile_path: &Path,
+    profile_name: &str,
+    gate_flags: &[&str],
+) -> Output {
+    let input_path = directory.join("profiled-evidence-cell.json");
+    let mut args = vec![
+        "evidence".to_owned(),
+        "attach".to_owned(),
+        "--store".to_owned(),
+        directory.display().to_string(),
+        "--case-space-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--base-revision-id".to_owned(),
+        "revision:native-evidence-base".to_owned(),
+        "--input".to_owned(),
+        input_path.display().to_string(),
+        "--gate-profile".to_owned(),
+        profile_name.to_owned(),
+        "--gate-profile-file".to_owned(),
+        profile_path.display().to_string(),
+        "--format".to_owned(),
+        "json".to_owned(),
+    ];
+    args.extend(gate_flags.iter().map(|argument| (*argument).to_owned()));
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(args)
+        .output()
+        .expect("run profiled evidence attach")
+}
+
+fn replayed_attached_evidence_gate(directory: &Path) -> Value {
+    let replay = stdout_json(&run_native_case_store_command(directory, "replay"));
+    replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .rev()
+        .find(|entry| entry["morphism"]["morphism_type"] == json!("evidence_attach"))
+        .expect("evidence attach entry")["morphism"]["metadata"]["operation_gate"]
+        .clone()
+}
+
+#[test]
 fn native_cell_transition_delegates_lifecycle_legality_to_reducer() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -5183,6 +5458,102 @@ fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
     assert_eq!(
         stdout_json(&validation)["result"]["validation"]["valid"],
         json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn review_accept_reports_the_coverage_it_activates() {
+    // A reviewer is shown one target id, but accepting it makes every coverage
+    // pair the attach recorded live at once. The report echoes that set so the
+    // record shows what the decision actually covered.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let store = directory.to_str().expect("temp path").to_owned();
+    import_native_case_space_from_input(
+        &directory,
+        &repo_path("docs/guides/release-decision/genesis.case.space.json"),
+        "revision:coverage-report",
+    );
+    let case_space_id = "case_space:casegraphen-release-0-9-0";
+    let gate = |args: &[&str]| {
+        let mut gated = args.to_vec();
+        gated.extend([
+            "--actor-id",
+            "actor:release-manager",
+            "--capability-id",
+            "capability:release-durable-mutation",
+            "--operation-scope-id",
+            case_space_id,
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:release-0-9-0-intent",
+            "--format",
+            "json",
+        ]);
+        run_cli(&gated)
+    };
+
+    let evidence_path = directory.join("gate-run.evidence.json");
+    fs::write(
+        &evidence_path,
+        serde_json::to_string_pretty(&json!({
+            "id": "evidence:gate-run", "cell_type": "evidence", "lifecycle": "active",
+            "space_id": "space:casegraphen", "title": "Gate run output",
+            "source_ids": ["source:release-intent"], "structure_ids": [], "metadata": {},
+            "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                           "source": {"kind": "document", "title": "ci"}}
+        }))
+        .expect("serialize evidence"),
+    )
+    .expect("write evidence");
+    let attached = gate(&[
+        "evidence",
+        "attach",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--base-revision-id",
+        "revision:coverage-report",
+        "--input",
+        evidence_path.to_str().expect("evidence path"),
+        "--satisfies",
+        "evidence:schema-id-gate-clean",
+        "--satisfies",
+        "evidence:changelog-updated",
+    ]);
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+
+    let accepted = gate(&[
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--target-id",
+        "evidence:gate-run",
+        "--reviewer-id",
+        "reviewer:release-manager",
+        "--reason",
+        "verified the gate output",
+        "--base-revision-id",
+        &attached_revision,
+    ]);
+    assert!(accepted.status.success(), "stderr: {}", stderr(&accepted));
+    assert_eq!(
+        stdout_json(&accepted)["result"]["activated_coverage"],
+        json!([
+            "evidence:changelog-updated",
+            "evidence:schema-id-gate-clean"
+        ])
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");

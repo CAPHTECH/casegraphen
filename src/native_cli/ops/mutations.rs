@@ -62,13 +62,31 @@ pub(in crate::native_cli) fn review_apply(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,
     );
-    append_validated_morphism(
+    // What an acceptance activates is wider than the target id the command
+    // names: every coverage pair the target's attach morphism recorded goes
+    // live at once. Read from the same derivation the decision reads, and
+    // reported so the record shows what the reviewer's acceptance covered.
+    let activated_coverage = match options.action {
+        ReviewAction::Accept => crate::native_eval::recorded_coverage_targets(
+            &replay.case_space,
+            options.target_id.as_str(),
+        ),
+        _ => Vec::new(),
+    };
+    let mut result = append_validated_morphism(
         &store_api,
         &replay.case_space,
         morphism,
         Some(operation_gate.actor_id),
         command,
-    )
+    )?;
+    if let Some(object) = result["result"].as_object_mut() {
+        object.insert(
+            "activated_coverage".to_owned(),
+            serde_json::to_value(&activated_coverage)?,
+        );
+    }
+    Ok(result)
 }
 
 pub(in crate::native_cli) fn evidence_attach(

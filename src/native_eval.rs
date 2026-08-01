@@ -113,6 +113,19 @@ pub(crate) fn trusted_coverage_targets(
         .collect()
 }
 
+/// The coverage a review of `evidence_id` is about to make live, read from the
+/// same derivation the decision reads. `review accept` shows a reviewer one
+/// target id; the set of requirements their acceptance satisfies is wider than
+/// that, and a record of a decision is misleading when the decision was wider
+/// than what the command said it was.
+pub(crate) fn recorded_coverage_targets(case_space: &CaseSpace, evidence_id: &str) -> Vec<String> {
+    sections::canonical_evidence_coverage(case_space)
+        .into_iter()
+        .filter(|(covering_id, _)| covering_id == evidence_id)
+        .map(|(_, target_id)| target_id)
+        .collect()
+}
+
 struct CellEvaluation {
     cell_id: Id,
     lifecycle: CaseCellLifecycle,

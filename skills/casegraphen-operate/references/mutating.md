@@ -113,6 +113,11 @@ still reads `unreviewed` afterwards. Promotion lives in the review morphism and
 the evaluator consults the log. Do not "fix" that by updating the cell; an
 evidence cell's provenance is immutable and the update is refused.
 
+An acceptance is wider than the target id you passed: every requirement the
+attach recorded as covered goes live at once. `review accept` reports that set
+as `result.activated_coverage` — read it, and report it, because it is what the
+acceptance actually decided.
+
 ## Direct lifecycle change
 
 ```sh
