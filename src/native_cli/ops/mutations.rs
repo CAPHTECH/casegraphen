@@ -247,7 +247,7 @@ pub(in crate::native_cli) fn cell_transition(
 }
 
 fn evidence_cell_from_bytes(bytes: &[u8]) -> Result<CaseCell, NativeCliError> {
-    let mut cell: CaseCell = serde_json::from_slice(bytes)?;
+    let mut cell: CaseCell = super::io::parse_strict(serde_json::from_slice(bytes)?)?;
     if cell.cell_type != CaseCellType::Evidence {
         return Err(NativeCliError::invalid(format!(
             "evidence attach input cell {} has cell_type {}; expected evidence",

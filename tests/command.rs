@@ -5842,6 +5842,56 @@ fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
 }
 
 #[test]
+fn a_strict_parse_refusal_names_the_object_that_refused() {
+    // ADR 0010. Line and column say where in the file; they do not say which
+    // closed object rejected the field, which is what a caller has to fix —
+    // and the report that prompted this had a caller writing a normalization
+    // script to work it out.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let mut genesis: Value = serde_json::from_str(
+        &fs::read_to_string(repo_path(
+            "docs/guides/release-decision/genesis.case.space.json",
+        ))
+        .expect("read the walkthrough genesis"),
+    )
+    .expect("walkthrough genesis parses");
+    genesis["case_cells"][3]["provenance"]["source"]["bogus_field"] = json!("x");
+    let input = directory.join("unknown-field.case.space.json");
+    fs::write(
+        &input,
+        serde_json::to_vec_pretty(&genesis).expect("serialize genesis"),
+    )
+    .expect("write genesis");
+
+    let output = run_cli(&[
+        "lift",
+        "native",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        input.to_str().expect("input path"),
+        "--revision-id",
+        "revision:strict-parse",
+        "--format",
+        "json",
+    ]);
+
+    assert!(!output.status.success());
+    let message = stderr(&output);
+    assert!(
+        message.contains("case_cells[3].provenance.source.bogus_field"),
+        "refusal did not locate the field: {message}"
+    );
+    assert!(
+        message.contains("unknown field"),
+        "refusal did not keep serde's reason: {message}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn review_accept_reports_the_coverage_it_activates() {
     // A reviewer is shown one target id, but accepting it makes every coverage
     // pair the attach recorded live at once. The report echoes that set so the

@@ -25,6 +25,9 @@ higher-graphen-reasoning = "0.7.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+# ADR 0010: located strict-parse refusals. Measured delta: one crate beside
+# the serde stack already present.
+serde_path_to_error = "0.1"
 
 # ADR 0009: property testing. Measured tree: 2 crates (arbtest, arbitrary).
 [dev-dependencies]

@@ -45,7 +45,7 @@ pub(super) fn read_proposal(
             path.display()
         )));
     }
-    let morphism: CaseMorphism = serde_json::from_value(value["morphism"].clone())?;
+    let morphism: CaseMorphism = parse_strict(value["morphism"].clone())?;
     if morphism.morphism_id != *morphism_id {
         return Err(NativeCliError::invalid(format!(
             "{}: proposal morphism id mismatch",
@@ -67,11 +67,34 @@ pub(super) fn proposal_path(
 }
 
 pub(super) fn read_case_space(path: &Path) -> Result<CaseSpace, NativeCliError> {
-    serde_json::from_value(read_json(path)?).map_err(NativeCliError::from)
+    parse_strict(read_json(path)?)
 }
 
 pub(super) fn read_morphism(path: &Path) -> Result<CaseMorphism, NativeCliError> {
-    serde_json::from_value(read_json(path)?).map_err(NativeCliError::from)
+    parse_strict(read_json(path)?)
+}
+
+/// The one strict-parse entry point for the contracts this project owns.
+///
+/// Every input here is `additionalProperties: false` on purpose, so a refusal
+/// is the interface. Line and column say where in the file; they do not say
+/// which object refused, which is the thing a caller needs to fix. This
+/// prefixes the failing member's path, so a refusal reads
+/// `issues[47].closed_by_pull_requests[0]: unknown field "id"` (ADR 0010).
+/// Route new strict inputs through it; a raw `serde_json::from_*` on an owned
+/// contract is a review flag.
+pub(crate) fn parse_strict<T: serde::de::DeserializeOwned>(
+    value: Value,
+) -> Result<T, NativeCliError> {
+    serde_path_to_error::deserialize(value).map_err(|error| {
+        let path = error.path().to_string();
+        let inner = error.into_inner();
+        if path.is_empty() || path == "." {
+            NativeCliError::from(inner)
+        } else {
+            NativeCliError::invalid(format!("{path}: {inner}"))
+        }
+    })
 }
 
 pub(super) fn read_json(path: &Path) -> Result<Value, NativeCliError> {

@@ -268,7 +268,7 @@ fn refresh_lift_checksums(case_space: &mut CaseSpace) -> Result<(), NativeCliErr
 }
 
 fn parse_workflow_graph(bytes: &[u8]) -> Result<WorkflowCaseGraph, NativeCliError> {
-    let graph: WorkflowCaseGraph = serde_json::from_slice(bytes)?;
+    let graph: WorkflowCaseGraph = super::io::parse_strict(serde_json::from_slice(bytes)?)?;
     crate::workflow_model::validate_workflow_graph(&graph)
         .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     Ok(graph)
