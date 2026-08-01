@@ -193,13 +193,27 @@ workers under a dedicated OS user or container is the operator's control.
   directory.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
   are available, the worker is launched in a dedicated session and its process
-  group is signalled on every exit path, including clean exit, timeout, and
-  incomplete output. If the group `KILL` fails, a signal-zero probe distinguishes
-  a still-visible group from one with no signalable members.
-  `descendants_may_survive: false` means the group was signalled or was
-  verifiably empty; `true` means it was not, including every host without both
-  utilities. The probe cannot prove that an unsignalable group member is absent
-  (§4, residual risk 4).
+  group is signalled on all four exit paths: clean exit, timeout, incomplete
+  output, and poll failure. If the group `KILL` fails, a signal-zero probe
+  distinguishes a still-visible group from one with no signalable members, and
+  a probe that could not be spawned concludes nothing. Incomplete output never
+  reuses an earlier conclusive outcome — it is positive evidence that something
+  still holds the worker's pipe, so the group is re-signalled and re-probed.
+  On timeout and poll failure the direct child is killed unconditionally: it is
+  the one containment step that does not depend on the utilities being
+  trustworthy.
+- The launcher is resolved only from `/usr/bin/setsid` and `/bin/setsid`.
+  `/usr/local/bin` and `/opt/homebrew/bin` were candidates and are not, because
+  they are group-writable on a normal developer machine: the process actually
+  spawned is `setsid <pinned command>`, so a launcher an approved worker could
+  replace would defeat the command pinning it wraps. A host with no system
+  `setsid` loses containment and says so.
+- `descendants_may_survive: false` means the group was signalled, or a probe
+  that ran reported no signalable members. It is not a proof that nothing
+  survived: `kill(-pgid, SIGKILL)` succeeds when it reaches at least one
+  member, and a member it may not signal is invisible to both calls (§4,
+  residual risk 4). `true` means containment was not established, including
+  every host without both utilities.
 - Stdout/stderr reader waits are bounded by a two-second grace. Captured output
   records whether the stream was incomplete, so descendants holding a pipe
   cannot block dispatch indefinitely.
@@ -316,10 +330,28 @@ revision replay.
 4. Hosts without usable `setsid` and `kill` utilities cannot guarantee
    descendant termination. The direct child is killed, reader waits remain
    bounded, and `descendants_may_survive` makes that residual risk explicit.
-   Even with both utilities, a descendant that the group `KILL` cannot signal
-   and the signal-zero probe cannot see (for example, after a setuid boundary)
-   is indistinguishable from an empty group and can therefore be reported as
-   `descendants_may_survive: false`.
+
+   Three limits remain with both utilities present, and none of them is
+   detected:
+
+   - **A member the tool may not signal.** `kill(-pgid, SIGKILL)` returns
+     success when it reached at least one member, so a group holding one
+     ordinary process and one unsignalable one (a setuid boundary, say)
+     reports containment. The signal-zero probe is not run after a successful
+     `KILL`, deliberately: on the paths where the child is not yet reaped it
+     would see our own exiting group and report survivors on every healthy
+     run, making the field permanently `true`. Signalled is therefore what
+     `false` claims, not empty.
+   - **A `kill` that fails for a reason other than an absent group.** The
+     probe's verdict is a process exit status, so `EPERM` and a usage error
+     read the same as "no such process". A `kill` implementation that rejects
+     the `--` separator would make every run on that host conclude an empty
+     group having measured nothing.
+   - **A recycled process group id.** The group is signalled with the direct
+     child's pid, which the reaping `try_wait` has already released. POSIX
+     keeps a pgid reserved while the group has members, so this cannot produce
+     a false `false` — but on a pid-churning host the tool may deliver
+     `SIGKILL` to an unrelated group that recycled the number.
 5. Pinning a binding's executable identity proves nothing about an
    interpreter's arguments: a binding whose command is `/bin/sh` with a `-c`
    script, or any interpreter reading a script file, is fixed only in its

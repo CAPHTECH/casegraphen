@@ -18,13 +18,17 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const PROCESS_REAP_GRACE: Duration = Duration::from_millis(50);
 const READER_GRACE: Duration = Duration::from_secs(2);
 
+// System paths only, deliberately. The process actually spawned is
+// `setsid <pinned command>`, so whoever controls the launcher controls what
+// every dispatch executes — the binding's content hash covers the argument,
+// not the program wrapping it. `/usr/local/bin` and `/opt/homebrew/bin` are
+// group-writable on a normal developer machine (measured), which is the same
+// population `--enable-worker shell` admits, so resolving a launcher there
+// would let an approved worker choose the next one. A host without a system
+// `setsid` loses containment and reports `descendants_may_survive: true`,
+// which is the fail-closed direction.
 #[cfg(unix)]
-const SETSID_CANDIDATES: &[&str] = &[
-    "/usr/bin/setsid",
-    "/bin/setsid",
-    "/usr/local/bin/setsid",
-    "/opt/homebrew/bin/setsid",
-];
+const SETSID_CANDIDATES: &[&str] = &["/usr/bin/setsid", "/bin/setsid"];
 #[cfg(unix)]
 const KILL_CANDIDATES: &[&str] = &["/bin/kill", "/usr/bin/kill"];
 
@@ -282,11 +286,13 @@ fn wait_with_timeout(
                     WorkerExitKind::Timeout,
                     None,
                 );
-                if process_group.decision.descendants_may_survive {
-                    child.kill().map_err(|error| {
-                        WorkerError::new(format!("failed to kill timed-out shell worker: {error}"))
-                    })?;
-                }
+                // Unconditional: killing the direct child is the one
+                // containment step that does not depend on the group utilities
+                // being trustworthy, and it is idempotent against a member the
+                // group signal already reached.
+                child.kill().map_err(|error| {
+                    WorkerError::new(format!("failed to kill timed-out shell worker: {error}"))
+                })?;
                 let status = reap_bounded(child, PROCESS_REAP_GRACE)?;
                 return Ok(WaitOutcome {
                     status,
@@ -296,15 +302,16 @@ fn wait_with_timeout(
             }
             Ok(None) => thread::sleep(POLL_INTERVAL.min(timeout)),
             Err(error) => {
-                let process_group = finalize_process_group(
+                // Signal the group and kill the child even though this path
+                // returns an error and writes no report: containment is not
+                // conditional on there being somewhere to record it.
+                let _ = finalize_process_group(
                     process_group_kill,
                     child.id(),
                     WorkerExitKind::PollFailure,
                     None,
                 );
-                if process_group.decision.descendants_may_survive {
-                    let _ = child.kill();
-                }
+                let _ = child.kill();
                 return Err(WorkerError::new(format!(
                     "failed while polling shell worker: {error}"
                 )));
@@ -373,6 +380,13 @@ fn finalize_process_group(
     signal_outcome: Option<SignalOutcome>,
 ) -> ProcessGroupFinalization {
     let utilities_available = process_group_kill.is_some();
+    // Incomplete output is positive evidence that something still holds the
+    // worker's pipe, so a prior conclusive outcome is not reused there: it is
+    // the one exit path carrying proof against itself.
+    let signal_outcome = match exit_kind {
+        WorkerExitKind::IncompleteOutput => None,
+        _ => signal_outcome,
+    };
     let decision = process_group_exit_decision(utilities_available, exit_kind, signal_outcome);
     let signal_outcome = if decision.signal_process_group {
         process_group_kill.map(|kill| kill_process_group(kill, child_id))
@@ -758,27 +772,32 @@ mod tests {
                     WorkerExitKind::Clean,
                     WorkerExitKind::Timeout,
                     WorkerExitKind::IncompleteOutput,
+                    WorkerExitKind::PollFailure,
                 ])?;
+                // `None` is the load-bearing case: no signal was attempted at
+                // all. A property that only ever supplies `Some` passes even
+                // when the rule reports containment without measuring.
                 let signal_outcome = *u.choose(&[
-                    SignalOutcome::Terminated,
-                    SignalOutcome::GroupAlreadyEmpty,
-                    SignalOutcome::Failed,
+                    None,
+                    Some(SignalOutcome::Terminated),
+                    Some(SignalOutcome::GroupAlreadyEmpty),
+                    Some(SignalOutcome::Failed),
                 ])?;
 
-                let decision = process_group_exit_decision(
-                    utilities_available,
-                    exit_kind,
-                    Some(signal_outcome),
-                );
+                let decision =
+                    process_group_exit_decision(utilities_available, exit_kind, signal_outcome);
                 let conclusive = matches!(
                     signal_outcome,
-                    SignalOutcome::Terminated | SignalOutcome::GroupAlreadyEmpty
+                    Some(SignalOutcome::Terminated | SignalOutcome::GroupAlreadyEmpty)
                 );
 
                 assert_eq!(
                     !decision.descendants_may_survive,
                     utilities_available && conclusive
                 );
+                if signal_outcome.is_none() {
+                    assert!(decision.descendants_may_survive);
+                }
                 Ok(())
             },
         );
