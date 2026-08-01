@@ -18,7 +18,7 @@ For a worked example of every command below with its real output, read the
 | Task | Read |
 |---|---|
 | Create a case space, or model goals/work/evidence so readiness comes out right | `references/authoring.md` |
-| Change the graph: add, update, retire cells or relations; attach or promote evidence; transition a cell | `references/mutating.md` |
+| Change the graph: add, update, retire cells or relations; attach evidence and the artifacts it cites; promote evidence; transition a cell; drive attach → review → transition from one packet | `references/mutating.md` |
 | Have a worker do the work: binding, plan, `run --step`, reading the result | `references/executing.md` |
 | An agent runtime executes the graph and CaseGraphen records what was accepted: node granularity, mandates, taking runtime reports as evidence | `references/governing.md` |
 
@@ -153,6 +153,13 @@ the report payload is unchanged.
 - `binding_hash_mismatch` / `binding_identity_mismatch` — the plan or the
   binding's command changed after acceptance. Nothing ran. Do not re-register to
   make it pass; that discards the review.
+- `status: paused_for_review` from `packet apply` — not an error. The attach
+  landed; the packet stops there by design. Carry `completed_through` and read
+  `next_operations`.
+- `packet resume` refuses until **another actor** has accepted the claim, and
+  refuses a claim that is not the evidence the named `--completed-through`
+  revision attached. A stored `review_status: accepted` on the cell does not
+  count; only a review morphism does.
 
 ## Never do these
 
@@ -165,6 +172,12 @@ the report payload is unchanged.
 - **Do not try to create or amend a `custom:capability` cell.** It is refused at
   `morphism propose`. Capabilities enter only in the genesis materialization; a
   grant change means lifting a new case space.
+- **Do not author a `custom:artifact` cell, an `artifact:sha256-…` id, or any
+  change to an existing artifact.** That namespace is minted only by
+  `evidence attach --artifact`, from a file the tool hashed. Authoring one is
+  refused at propose and at lift, updating, transitioning, or retiring one is
+  refused, and `review accept` on one is refused — review the claim that cites
+  it instead.
 - **Do not relax a check to make a run pass.** A refusal means the model or the
   input is wrong.
 
