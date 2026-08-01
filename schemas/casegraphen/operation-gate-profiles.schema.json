@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.operation_gate_profiles.v1",
+  "title": "CaseGraphen Named Operation Gate Profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "profiles"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.operation_gate_profiles.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/profile"
+      }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "operation_scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audience": {
+          "enum": [
+            "human_review",
+            "ai_agent",
+            "audit",
+            "system",
+            "migration"
+          ]
+        },
+        "source_boundary_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -1743,24 +1743,27 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
         serde_json::to_string_pretty(&proposal).expect("serialize tampered proposal"),
     )
     .expect("tamper proposal");
-    let tampered_apply = run_cli(&[
-        "morphism",
-        "apply",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--morphism-id",
-        "morphism:apply-tamper",
-        "--base-revision-id",
-        "revision:forged-plan-base",
-        "--reviewer-id",
-        "reviewer:forged",
-        "--reason",
-        "Attempt reserved metadata at apply",
-        "--format",
-        "json",
-    ]);
+    let tampered_apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:apply-tamper",
+            "--base-revision-id",
+            "revision:forged-plan-base",
+            "--reviewer-id",
+            "reviewer:forged",
+            "--reason",
+            "Attempt reserved metadata at apply",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(!tampered_apply.status.success());
     assert!(stderr(&tampered_apply).contains("reserved canonical review metadata"));
 
@@ -4114,6 +4117,8 @@ fn native_run_step_and_frontier_are_mutually_exclusive() {
         "revision:unused",
         "--actor-id",
         "actor:unused",
+        "--capability-id",
+        "capability:unused",
         "--operation-scope-id",
         "case_space:unused",
         "--audience",
@@ -4460,45 +4465,51 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
             })
     );
 
-    let empty_reason = run_cli(&[
-        "review",
-        "reject",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--target-id",
-        "goal:native-case-contract",
-        "--reviewer-id",
-        "reviewer:native-review-cli",
-        "--reason",
-        "   ",
-        "--base-revision-id",
-        &current_revision,
-        "--format",
-        "json",
-    ]);
+    let empty_reason = run_cli_with_mutation_gate(
+        &[
+            "review",
+            "reject",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            "goal:native-case-contract",
+            "--reviewer-id",
+            "reviewer:native-review-cli",
+            "--reason",
+            "   ",
+            "--base-revision-id",
+            &current_revision,
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(!empty_reason.status.success());
     assert!(stderr(&empty_reason).contains("review reason must not be empty"));
 
-    let stale = run_cli(&[
-        "review",
-        "reopen",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--target-id",
-        "goal:native-case-contract",
-        "--reviewer-id",
-        "reviewer:native-review-cli",
-        "--reason",
-        "Exercise stale base handling",
-        "--base-revision-id",
-        "revision:native-review-base",
-        "--format",
-        "json",
-    ]);
+    let stale = run_cli_with_mutation_gate(
+        &[
+            "review",
+            "reopen",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            "goal:native-case-contract",
+            "--reviewer-id",
+            "reviewer:native-review-cli",
+            "--reason",
+            "Exercise stale base handling",
+            "--base-revision-id",
+            "revision:native-review-base",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(!stale.status.success());
     assert!(stderr(&stale).contains(&format!(
         "base revision revision:native-review-base is stale; current revision is {current_revision}"
@@ -5286,22 +5297,25 @@ fn native_cli_invalid_targets_exit_nonzero() {
         "stderr: {}",
         stderr(&propose_apply)
     );
-    let missing_apply_reason = run_cli(&[
-        "morphism",
-        "apply",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--morphism-id",
-        "morphism:native-cli-missing-review",
-        "--base-revision-id",
-        "revision:native-cli-imported",
-        "--reviewer-id",
-        "reviewer:native-cli",
-        "--format",
-        "json",
-    ]);
+    let missing_apply_reason = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:native-cli-missing-review",
+            "--base-revision-id",
+            "revision:native-cli-imported",
+            "--reviewer-id",
+            "reviewer:native-cli",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(!missing_apply_reason.status.success());
     assert!(stderr(&missing_apply_reason).contains("--reason <text> is required"));
 
@@ -5329,24 +5343,27 @@ fn native_cli_invalid_targets_exit_nonzero() {
         "stderr: {}",
         stderr(&propose_reject)
     );
-    let same_revision_reject = run_cli(&[
-        "morphism",
-        "reject",
-        "--store",
-        directory.to_str().expect("temp path"),
-        "--case-space-id",
-        native_case_space_id(),
-        "--morphism-id",
-        "morphism:native-cli-same-revision-reject",
-        "--reviewer-id",
-        "reviewer:native-cli",
-        "--reason",
-        "Reject without advancing revision",
-        "--revision-id",
-        "revision:native-cli-imported",
-        "--format",
-        "json",
-    ]);
+    let same_revision_reject = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "reject",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:native-cli-same-revision-reject",
+            "--reviewer-id",
+            "reviewer:native-cli",
+            "--reason",
+            "Reject without advancing revision",
+            "--revision-id",
+            "revision:native-cli-imported",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
     assert!(!same_revision_reject.status.success());
     assert!(stderr(&same_revision_reject).contains("must advance the revision"));
 

@@ -1,0 +1,21 @@
+{
+  "schema": "highergraphen.case.operation_gate_profiles.v1",
+  "schema_version": 1,
+  "profiles": [
+    {
+      "name": "native-audit",
+      "actor_id": "actor:native-evidence-cli",
+      "capability_ids": [
+        "capability:durable-mutation"
+      ],
+      "operation_scope_id": "case_space:native-case-management-contract",
+      "audience": "audit",
+      "source_boundary_id": "source_boundary:native-case-management-contract"
+    },
+    {
+      "name": "partial-system",
+      "audience": "system",
+      "source_boundary_id": "source_boundary:native-case-management-contract"
+    }
+  ]
+}

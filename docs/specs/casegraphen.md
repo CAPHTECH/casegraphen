@@ -180,6 +180,32 @@ means exactly that `--strict` was supplied and the report carries a domain
 finding. Strict mode never changes report bytes. Commands whose reports do not
 carry these findings reject `--strict` as unsupported.
 
+### Named operation-gate profiles
+
+The commands that construct an operation gate accept
+`--gate-profile <name> --gate-profile-file <path>`: `morphism apply`,
+`morphism reject`, `evidence attach`, `cell transition`, every `review` action,
+`plan accept`, `plan reject`, `run --step`, `run --frontier`, and the optional
+gate on `invariant close-check`.
+
+The file is a strict JSON input with schema id
+`highergraphen.case.operation_gate_profiles.v1`. It contains a `profiles` array
+of uniquely named records, each of which may supply only `actor_id`,
+`capability_ids`, `operation_scope_id`, `audience`, and `source_boundary_id`.
+Both profile-selection flags are per-invocation argv; the file is not copied
+into the store and selecting it never enables a worker or defaults a base
+revision or reviewer identity.
+
+Resolution occurs once at the CLI input boundary and independently for every
+field: an explicit flag is used when present, otherwise the selected profile's
+value is used. A required field absent from both sources is refused with the
+same missing-flag behavior as an invocation without a profile. The resolved
+values then follow the ordinary operation-gate validation path; profile origin
+does not grant trust and is not an input to authorization. No resolved value may
+be replaced after validation. A durable morphism records exactly the expanded
+gate in `metadata.operation_gate`, without the profile name or file path, so
+replay and audit never depend on the profile file.
+
 ## Core Dependencies
 
 `casegraphen` must reuse core primitives:

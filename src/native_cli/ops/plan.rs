@@ -192,18 +192,20 @@ fn resolve_plan_review_gate(
         actor_id: options
             .actor_id
             .clone()
-            .ok_or_else(|| NativeCliError::usage("--actor-id <id> is required for plan review"))?,
+            .expect("required gate resolution checked actor_id"),
         operation: "plan-review".to_owned(),
-        operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
-            NativeCliError::usage("--operation-scope-id <id> is required for plan review")
-        })?,
-        audience: options.audience.ok_or_else(|| {
-            NativeCliError::usage("--audience audit|system is required for plan review")
-        })?,
+        operation_scope_id: options
+            .operation_scope_id
+            .clone()
+            .expect("required gate resolution checked operation_scope_id"),
+        audience: options
+            .audience
+            .expect("required gate resolution checked audience"),
         capability_ids: options.capability_ids.clone(),
-        source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
-            NativeCliError::usage("--source-boundary-id <id> is required for plan review")
-        })?,
+        source_boundary_id: options
+            .source_boundary_id
+            .clone()
+            .expect("required gate resolution checked source_boundary_id"),
     })
 }
 

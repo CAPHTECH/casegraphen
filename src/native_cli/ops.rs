@@ -1,5 +1,6 @@
 use super::{
     evaluation_carries_domain_finding,
+    options::ResolvedOperationGateOptions,
     path_helpers::{id_lossy, path_segment, relative_store_path},
     reporting::report,
     NativeCliError, NativeCommandResult, NativeReasonSection,
@@ -67,7 +68,6 @@ pub(super) struct NativePlanReviewOptions<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeRunGateOptions {
-    pub(super) actor_id: Id,
     pub(super) capability_ids: Vec<Id>,
     pub(super) operation_scope_id: Id,
     pub(super) audience: ProjectionAudience,
@@ -235,30 +235,11 @@ pub(super) fn case_close_check(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NativeCloseGateOptions {
     pub(super) close_policy_id: Option<Id>,
-    pub(super) actor_id: Option<Id>,
-    pub(super) capability_ids: Vec<Id>,
-    pub(super) operation_scope_id: Option<Id>,
-    pub(super) audience: Option<ProjectionAudience>,
-    pub(super) source_boundary_id: Option<Id>,
+    pub(super) gate_options: ResolvedOperationGateOptions,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct NativePlanGateOptions {
-    pub(super) actor_id: Option<Id>,
-    pub(super) capability_ids: Vec<Id>,
-    pub(super) operation_scope_id: Option<Id>,
-    pub(super) audience: Option<ProjectionAudience>,
-    pub(super) source_boundary_id: Option<Id>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct NativeMutationGateOptions {
-    pub(super) actor_id: Option<Id>,
-    pub(super) capability_ids: Vec<Id>,
-    pub(super) operation_scope_id: Option<Id>,
-    pub(super) audience: Option<ProjectionAudience>,
-    pub(super) source_boundary_id: Option<Id>,
-}
+pub(crate) type NativePlanGateOptions = ResolvedOperationGateOptions;
+pub(crate) type NativeMutationGateOptions = ResolvedOperationGateOptions;
 
 struct ResolvedCloseGate {
     close_policy_id: Option<Id>,
@@ -371,12 +352,8 @@ pub(super) fn morphism_apply(
     let mut morphism = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
-    let operation_gate = validated_mutation_gate(
-        &replay.case_space,
-        gate_options,
-        "morphism-apply",
-        "morphism apply",
-    )?;
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, gate_options, "morphism-apply")?;
     morphism.review_status = ReviewStatus::Accepted;
     if let Some(reviewer_id) = reviewer_id {
         morphism
@@ -425,12 +402,8 @@ pub(super) fn morphism_reject(
         reviewer_id,
         reason,
     )?;
-    let operation_gate = validated_mutation_gate(
-        &replay.case_space,
-        gate_options,
-        "morphism-reject",
-        "morphism reject",
-    )?;
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, gate_options, "morphism-reject")?;
     review.metadata.insert(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,
@@ -642,7 +615,7 @@ fn close_operation_gate(
     case_space: &CaseSpace,
     options: NativeCloseGateOptions,
 ) -> Result<ResolvedCloseGate, NativeCliError> {
-    let source_boundary_id = match options.source_boundary_id {
+    let source_boundary_id = match options.gate_options.source_boundary_id {
         Some(id) => id,
         None => declared_source_boundary_id(case_space).ok_or_else(|| {
             NativeCliError::invalid(
@@ -651,12 +624,13 @@ fn close_operation_gate(
         })?,
     };
     let actor_id = options
+        .gate_options
         .actor_id
         .unwrap_or_else(|| id_lossy("actor:casegraphen-cli"));
-    let capability_ids = if options.capability_ids.is_empty() {
+    let capability_ids = if options.gate_options.capability_ids.is_empty() {
         vec![id_lossy("capability:casegraphen-cli:close-check")]
     } else {
-        options.capability_ids
+        options.gate_options.capability_ids
     };
     Ok(ResolvedCloseGate {
         close_policy_id: options.close_policy_id,
@@ -664,9 +638,13 @@ fn close_operation_gate(
             actor_id,
             operation: "close-check".to_owned(),
             operation_scope_id: options
+                .gate_options
                 .operation_scope_id
                 .unwrap_or_else(|| case_space.case_space_id.clone()),
-            audience: options.audience.unwrap_or(ProjectionAudience::Audit),
+            audience: options
+                .gate_options
+                .audience
+                .unwrap_or(ProjectionAudience::Audit),
             capability_ids,
             source_boundary_id,
         },
@@ -741,27 +719,25 @@ fn validated_mutation_gate(
     case_space: &CaseSpace,
     options: &NativeMutationGateOptions,
     operation: &str,
-    command: &str,
 ) -> Result<NativeOperationGate, NativeCliError> {
     let gate = NativeOperationGate {
-        actor_id: options.actor_id.clone().ok_or_else(|| {
-            NativeCliError::usage(format!("--actor-id <id> is required for {command}"))
-        })?,
+        actor_id: options
+            .actor_id
+            .clone()
+            .expect("required gate resolution checked actor_id"),
         operation: operation.to_owned(),
-        operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
-            NativeCliError::usage(format!(
-                "--operation-scope-id <id> is required for {command}"
-            ))
-        })?,
-        audience: options.audience.ok_or_else(|| {
-            NativeCliError::usage(format!("--audience audit|system is required for {command}"))
-        })?,
+        operation_scope_id: options
+            .operation_scope_id
+            .clone()
+            .expect("required gate resolution checked operation_scope_id"),
+        audience: options
+            .audience
+            .expect("required gate resolution checked audience"),
         capability_ids: options.capability_ids.clone(),
-        source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
-            NativeCliError::usage(format!(
-                "--source-boundary-id <id> is required for {command}"
-            ))
-        })?,
+        source_boundary_id: options
+            .source_boundary_id
+            .clone()
+            .expect("required gate resolution checked source_boundary_id"),
     };
     check_operation_gate(case_space, &gate, operation)
         .map_err(|error| NativeCliError::invalid(error.to_string()))?;

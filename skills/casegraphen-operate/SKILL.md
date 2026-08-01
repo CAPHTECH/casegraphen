@@ -70,19 +70,38 @@ counts. It carries no cells, so it cannot tell you what the space contains. The
 folded state comes from `space replay`, and `space frontier` / `space reason`
 derive from it — do not read an empty `inspect` payload as an empty space.
 
-**2. Every durable mutation needs a valid operation gate.** Five flags, and all
-five are checked against the case space. The reference files below pass them as
-`$GATE`, which is this:
+**2. Every durable mutation needs a valid operation gate.** Five resolved values
+are checked against the case space. Put reusable values in a strict named JSON
+profile and let the reference files below pass its argv selection as `$GATE`:
 
 ```sh
-GATE="--actor-id <id> --capability-id <id> \
---operation-scope-id $CS --audience audit --source-boundary-id <declared boundary id>"
+GATE_PROFILE_FILE="<path-to-operation-gate-profiles.json>"
+GATE="--gate-profile <name> --gate-profile-file $GATE_PROFILE_FILE"
 ```
 
 `$GATE` is written unquoted at the call sites, so the shell splits it into
 separate arguments. If you build argv yourself rather than through a shell, pass
-the five flags as separate elements; handing the whole string over as one
-argument is refused with `unsupported native argument "--actor-id …"`.
+the selection flags as separate elements. The profile document has schema
+`highergraphen.case.operation_gate_profiles.v1`, schema version `1`, and a
+`profiles` array. A complete entry looks like this:
+
+```json
+{
+  "name": "operator-audit",
+  "actor_id": "actor:operator",
+  "capability_ids": ["capability:durable-mutation"],
+  "operation_scope_id": "case_space:example",
+  "audience": "audit",
+  "source_boundary_id": "source_boundary:example"
+}
+```
+
+A profile may be partial. Add any remaining gate flags at the call site; an
+explicit `--actor-id`, `--capability-id`, `--operation-scope-id`, `--audience`,
+or `--source-boundary-id` overrides that profile field. Missing values are still
+refused, and every expanded value goes through the same case-space checks. The
+log records the expanded gate, never the profile name. Profiles cannot supply
+`--enable-worker`, `--base-revision-id`, or reviewer identity.
 
 | Requirement | How it fails |
 |---|---|

@@ -1,9 +1,6 @@
 use super::{
-    ops::{
-        NativeCloseGateOptions, NativeMutationGateOptions, NativePlanGateOptions,
-        NativeRunGateOptions,
-    },
-    options::{required_segment, NativeOptions},
+    ops::{NativeCloseGateOptions, NativeRunGateOptions},
+    options::{required_segment, NativeOptions, OperationGateRequirement},
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
 use crate::native_model::ReviewAction;
@@ -240,6 +237,8 @@ impl NativeCliCommand {
     }
 
     fn parse_close_check(options: NativeOptions) -> Result<Self, NativeCliError> {
+        let gate_options =
+            options.resolve_operation_gate_options(OperationGateRequirement::Optional)?;
         Ok(Self::CaseCloseCheck {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
@@ -251,11 +250,7 @@ impl NativeCliCommand {
             validation_evidence_ids: options.validation_evidence_ids,
             gate_options: NativeCloseGateOptions {
                 close_policy_id: options.close_policy_id,
-                actor_id: options.actor_id,
-                capability_ids: options.capability_ids,
-                operation_scope_id: options.operation_scope_id,
-                audience: options.audience,
-                source_boundary_id: options.source_boundary_id,
+                gate_options,
             },
             strict: options.strict,
             output: options.output,
@@ -296,30 +291,48 @@ impl NativeCliCommand {
                 morphism_id: options.require_id("--morphism-id")?,
                 output: options.output,
             }),
-            "apply" => Ok(Self::MorphismApply {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                morphism_id: options.require_id("--morphism-id")?,
-                base_revision_id: options
-                    .base_revision_id
-                    .clone()
-                    .or(options.revision_id.clone())
-                    .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-                reviewer_id: Some(options.require_id("--reviewer-id")?),
-                reason: Some(options.require_string("--reason")?),
-                gate_options: mutation_gate_options(&options),
-                output: options.output,
-            }),
-            "reject" => Ok(Self::MorphismReject {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                morphism_id: options.require_id("--morphism-id")?,
-                reviewer_id: options.require_id("--reviewer-id")?,
-                reason: options.require_string("--reason")?,
-                revision_id: options.require_id("--revision-id")?,
-                gate_options: mutation_gate_options(&options),
-                output: options.output,
-            }),
+            "apply" => {
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "morphism apply",
+                        operation: "morphism-apply",
+                        actor_command: Some("morphism apply"),
+                    })?;
+                Ok(Self::MorphismApply {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    morphism_id: options.require_id("--morphism-id")?,
+                    base_revision_id: options
+                        .base_revision_id
+                        .clone()
+                        .or(options.revision_id.clone())
+                        .ok_or_else(|| {
+                            NativeCliError::usage("--base-revision-id <id> is required")
+                        })?,
+                    reviewer_id: Some(options.require_id("--reviewer-id")?),
+                    reason: Some(options.require_string("--reason")?),
+                    gate_options,
+                    output: options.output,
+                })
+            }
+            "reject" => {
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "morphism reject",
+                        operation: "morphism-reject",
+                        actor_command: Some("morphism reject"),
+                    })?;
+                Ok(Self::MorphismReject {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    morphism_id: options.require_id("--morphism-id")?,
+                    reviewer_id: options.require_id("--reviewer-id")?,
+                    reason: options.require_string("--reason")?,
+                    revision_id: options.require_id("--revision-id")?,
+                    gate_options,
+                    output: options.output,
+                })
+            }
             _ => Err(NativeCliError::usage("unsupported native morphism command")),
         }
     }
@@ -345,30 +358,31 @@ impl NativeCliCommand {
                 plan_id: options.require_id("--plan-id")?,
                 output: options.output,
             }),
-            "accept" | "reject" => Ok(Self::PlanReview {
-                action: if operation == "accept" {
-                    ReviewAction::Accept
-                } else {
-                    ReviewAction::Reject
-                },
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                plan_id: options.require_id("--plan-id")?,
-                reviewer_id: options.require_id("--reviewer-id")?,
-                reason: options.require_string("--reason")?,
-                base_revision_id: options
-                    .base_revision_id
-                    .clone()
-                    .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-                gate_options: NativePlanGateOptions {
-                    actor_id: options.actor_id,
-                    capability_ids: options.capability_ids,
-                    operation_scope_id: options.operation_scope_id,
-                    audience: options.audience,
-                    source_boundary_id: options.source_boundary_id,
-                },
-                output: options.output,
-            }),
+            "accept" | "reject" => {
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "plan review",
+                        operation: "plan-review",
+                        actor_command: Some("plan review"),
+                    })?;
+                Ok(Self::PlanReview {
+                    action: if operation == "accept" {
+                        ReviewAction::Accept
+                    } else {
+                        ReviewAction::Reject
+                    },
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    plan_id: options.require_id("--plan-id")?,
+                    reviewer_id: options.require_id("--reviewer-id")?,
+                    reason: options.require_string("--reason")?,
+                    base_revision_id: options.base_revision_id.clone().ok_or_else(|| {
+                        NativeCliError::usage("--base-revision-id <id> is required")
+                    })?,
+                    gate_options,
+                    output: options.output,
+                })
+            }
             _ => Err(NativeCliError::usage("unsupported native plan command")),
         }
     }
@@ -395,7 +409,21 @@ impl NativeCliCommand {
                 "run requires exactly one of --step or --frontier",
             ));
         }
-        let actor_id = options.require_id("--actor-id")?;
+        let mode = if options.run_step {
+            "run --step"
+        } else {
+            "run --frontier"
+        };
+        let resolved_gate =
+            options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                command: mode,
+                operation: "dispatch",
+                actor_command: None,
+            })?;
+        let actor_id = resolved_gate
+            .actor_id
+            .clone()
+            .expect("required gate resolution checked actor_id");
         if let Some(gate_actor_id) = &options.gate_actor_id {
             if gate_actor_id != &actor_id {
                 return Err(NativeCliError::usage(
@@ -403,23 +431,17 @@ impl NativeCliCommand {
                 ));
             }
         }
-        let mode = if options.run_step {
-            "run --step"
-        } else {
-            "run --frontier"
-        };
         let gate_options = NativeRunGateOptions {
-            actor_id: actor_id.clone(),
-            capability_ids: options.capability_ids.clone(),
-            operation_scope_id: options.operation_scope_id.clone().ok_or_else(|| {
-                NativeCliError::usage(format!("--operation-scope-id <id> is required for {mode}"))
-            })?,
-            audience: options.audience.ok_or_else(|| {
-                NativeCliError::usage(format!("--audience audit|system is required for {mode}"))
-            })?,
-            source_boundary_id: options.source_boundary_id.clone().ok_or_else(|| {
-                NativeCliError::usage(format!("--source-boundary-id <id> is required for {mode}"))
-            })?,
+            capability_ids: resolved_gate.capability_ids,
+            operation_scope_id: resolved_gate
+                .operation_scope_id
+                .expect("required gate resolution checked operation_scope_id"),
+            audience: resolved_gate
+                .audience
+                .expect("required gate resolution checked audience"),
+            source_boundary_id: resolved_gate
+                .source_boundary_id
+                .expect("required gate resolution checked source_boundary_id"),
         };
         if options.run_step {
             Ok(Self::RunStep {
@@ -475,6 +497,12 @@ impl NativeCliCommand {
             }
         };
         let options = NativeOptions::parse(args)?;
+        let gate_options =
+            options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                command: "review",
+                operation: "review",
+                actor_command: Some("review"),
+            })?;
         Ok(Self::Review {
             action,
             store: options.require_store()?,
@@ -486,7 +514,7 @@ impl NativeCliCommand {
                 .base_revision_id
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-            gate_options: mutation_gate_options(&options),
+            gate_options,
             evidence_ids: options.evidence_ids,
             output: options.output,
         })
@@ -500,6 +528,12 @@ impl NativeCliCommand {
             return Err(NativeCliError::usage("unsupported native evidence command"));
         }
         let options = NativeOptions::parse(args)?;
+        let gate_options =
+            options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                command: "evidence attach",
+                operation: "evidence-attach",
+                actor_command: Some("evidence attach"),
+            })?;
         Ok(Self::EvidenceAttach {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
@@ -508,7 +542,7 @@ impl NativeCliCommand {
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
             input: options.require_path("--input")?,
-            gate_options: mutation_gate_options(&options),
+            gate_options,
             satisfies_ids: options.satisfies_ids,
             output: options.output,
         })
@@ -522,6 +556,12 @@ impl NativeCliCommand {
             return Err(NativeCliError::usage("unsupported native cell command"));
         }
         let options = NativeOptions::parse(args)?;
+        let gate_options =
+            options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                command: "cell transition",
+                operation: "cell-transition",
+                actor_command: Some("cell transition"),
+            })?;
         Ok(Self::CellTransition {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
@@ -531,19 +571,9 @@ impl NativeCliCommand {
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
             cell_id: options.require_id("--cell-id")?,
             lifecycle: options.require_string("--to")?,
-            gate_options: mutation_gate_options(&options),
+            gate_options,
             reason: options.reason,
             output: options.output,
         })
-    }
-}
-
-fn mutation_gate_options(options: &NativeOptions) -> NativeMutationGateOptions {
-    NativeMutationGateOptions {
-        actor_id: options.actor_id.clone(),
-        capability_ids: options.capability_ids.clone(),
-        operation_scope_id: options.operation_scope_id.clone(),
-        audience: options.audience,
-        source_boundary_id: options.source_boundary_id.clone(),
     }
 }

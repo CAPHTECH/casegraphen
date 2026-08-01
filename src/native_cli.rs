@@ -12,6 +12,7 @@ use std::{
 mod ops;
 #[path = "native_cli_options.rs"]
 mod options;
+pub use options::OPERATION_GATE_PROFILES_SCHEMA;
 mod parser;
 #[path = "native_cli_path.rs"]
 mod path_helpers;

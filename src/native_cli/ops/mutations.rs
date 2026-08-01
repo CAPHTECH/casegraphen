@@ -57,7 +57,7 @@ pub(in crate::native_cli) fn review_apply(
         ReviewAction::Waive | ReviewAction::Supersede => unreachable!("action checked above"),
     };
     let operation_gate =
-        validated_mutation_gate(&replay.case_space, options.gate_options, "review", "review")?;
+        validated_mutation_gate(&replay.case_space, options.gate_options, "review")?;
     morphism.metadata.insert(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,
@@ -161,12 +161,8 @@ pub(in crate::native_cli) fn evidence_attach(
         source_ids: cell.source_ids.clone(),
         metadata,
     };
-    let operation_gate = validated_mutation_gate(
-        &replay.case_space,
-        gate_options,
-        "evidence-attach",
-        "evidence attach",
-    )?;
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, gate_options, "evidence-attach")?;
     morphism.metadata.insert(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,
@@ -235,12 +231,8 @@ pub(in crate::native_cli) fn cell_transition(
         source_ids: updated_cell.source_ids.clone(),
         metadata,
     };
-    let operation_gate = validated_mutation_gate(
-        &replay.case_space,
-        gate_options,
-        "cell-transition",
-        "cell transition",
-    )?;
+    let operation_gate =
+        validated_mutation_gate(&replay.case_space, gate_options, "cell-transition")?;
     morphism.metadata.insert(
         "operation_gate".to_owned(),
         serde_json::to_value(&operation_gate)?,

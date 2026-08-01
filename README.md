@@ -44,6 +44,19 @@ An LLM or agent proposes; CaseGraphen decides. Concretely:
   a scope, an audience, and a source boundary. Commands validate the gate before
   building a morphism, and the store validates it again at the append boundary.
 
+The gated commands accept a named profile with
+`--gate-profile <name> --gate-profile-file <path>`. The file is a strict
+`highergraphen.case.operation_gate_profiles.v1` JSON document; it is selected
+on each invocation and is not store state or a persistent enablement. A profile
+may contain any subset of the five existing gate fields. An explicit gate flag
+wins over the profile for that field, and a field missing from both is refused
+as before. Validation always checks the expanded values against the replayed
+case space, and `morphism.metadata.operation_gate` records those values only —
+never the profile name or path. The profile cannot supply `--enable-worker`,
+`--base-revision-id`, or reviewer identity. See the shipped
+[`operation-gate-profiles` schema](schemas/casegraphen/operation-gate-profiles.schema.json)
+and [example](schemas/casegraphen/operation-gate-profiles.example.json).
+
 ## Execution control
 
 `run --step` advances exactly one work item per invocation. `run --frontier`
