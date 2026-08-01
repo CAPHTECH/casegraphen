@@ -195,11 +195,14 @@ workers under a dedicated OS user or container is the operator's control.
   `PATH`, every `LD_*`/`DYLD_*` loader namespace variable, and the reserved
   `CASEGRAPHEN_*` namespace are rejected even if listed.
 - `command` and `working_directory` must be absolute. Both are canonicalized
-  immediately before spawn; the command must resolve to an executable file (a
-  file carrying no execute bit is refused before spawning, so "could not be
-  executed" is classified the same way on every host rather than depending on
-  whether `setsid` is present) and the working directory must resolve to a
-  directory.
+  immediately before spawn; the command must resolve to a file and the working
+  directory to a directory. **On Unix** the command must additionally carry an
+  execute bit, and a file without one is refused before spawning, so "could
+  not be executed" is classified the same way on every Unix host rather than
+  depending on whether `setsid` is present. There is no such check off Unix —
+  `require_executable` is a no-op there — so on those hosts the refusal comes
+  from the spawn instead, and this control is Unix-only. Everything in §2.4
+  below is likewise Unix-only; see residual risk 9.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
   are available, the worker is launched in a dedicated session and its process
   group is signalled on all four exit paths: clean exit, timeout, incomplete
@@ -388,6 +391,15 @@ revision replay.
    separate failure trace; `run --step` returns the reservation error. These are
    availability, not integrity, risks and are bounded by store filesystem
    permissions.
+9. **Worker execution is a Unix control surface.** Off Unix, `require_executable`
+   and `process_group_utilities` are both stubs: there is no execute-bit check
+   before the spawn, the worker is never launched into a dedicated session, and
+   `descendants_may_survive` is unconditionally `true`. The crate compiles for a
+   non-Unix target (checked against `wasm32-unknown-unknown`) and the rest of
+   the tool — the gate, the reducer, evidence trust, the store contract — is
+   platform independent, so this bounds dispatch only. No non-Unix host has been
+   exercised end to end; the claims in §2.3 and §2.4 should be read as Unix
+   claims until one is.
 
 ## 5. Review provenance
 
