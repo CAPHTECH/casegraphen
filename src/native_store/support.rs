@@ -7,10 +7,22 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const LOCK_RETRY_ATTEMPTS: u32 = 8;
+/// How long to wait for the lock, as a deadline rather than a retry count.
+///
+/// The hold time scales with the case space — the lock is held across the
+/// evaluator's contract check, the snapshot, the append and the head write —
+/// while a fixed eight attempts capped at 40 ms was about 235 ms of patience.
+/// Measured: one gated `cell transition` on a 4,000-cell space takes 3.0 s, so
+/// two ordinary concurrent writers were guaranteed to fail one of them. That
+/// is not the adversarial lock denial residual risk 8 describes; it is what a
+/// large case space did to itself.
+///
+/// Kept well under `LOCK_STALE_AFTER` so a waiter gives up before it could
+/// mistake a live holder for an abandoned one.
+const LOCK_WAIT_BUDGET: Duration = Duration::from_secs(30);
 const LOCK_INITIAL_BACKOFF: Duration = Duration::from_millis(5);
 const LOCK_MAX_BACKOFF: Duration = Duration::from_millis(40);
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(60);
@@ -26,7 +38,8 @@ impl CaseLockGuard {
         let path = case_directory.join(".lock");
         let ownership_token = lock_ownership_token();
         let lock_contents = format!("token={ownership_token}\n");
-        let mut attempt = 0;
+        let mut attempt = 0_u32;
+        let deadline = Instant::now() + LOCK_WAIT_BUDGET;
         loop {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(mut file) => {
@@ -111,12 +124,14 @@ impl CaseLockGuard {
                             }
                         }
                     }
-                    if attempt == LOCK_RETRY_ATTEMPTS {
+                    if Instant::now() >= deadline {
                         return Err(NativeStoreError::LockUnavailable {
                             path,
                             reason: format!(
-                                "exclusive native case-space lock remained held after {} attempts",
-                                LOCK_RETRY_ATTEMPTS + 1
+                                "another process is writing to this case space; the exclusive \
+                                 lock remained held for {}s. Re-read the current revision and \
+                                 retry",
+                                LOCK_WAIT_BUDGET.as_secs()
                             ),
                         });
                     }

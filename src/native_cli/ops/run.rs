@@ -2395,13 +2395,28 @@ fn write_and_anchor_trace(
         ]),
     };
     let store_api = NativeCaseStore::new(store.to_path_buf());
-    let report = append_validated_morphism(
+    // The file has to be written first — the anchor's `trace_content_hash` is
+    // taken from it — so it names an entry and a revision that do not exist
+    // yet. If the append does not commit, rewind the file rather than leaving
+    // it claiming them: ordinary lock contention was enough to leave a
+    // `completed` trace naming an anchor revision absent from the log, which
+    // is exactly the signal residual risk 2's recipe tells an operator means
+    // history was erased.
+    let report = match append_validated_morphism(
         &store_api,
         case_space,
         anchor,
         Some(actor_id.clone()),
         "casegraphen run --step trace anchor",
-    )?;
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            trace.result_revision_id = None;
+            trace.appended_entry_ids.retain(|id| *id != anchor_entry_id);
+            write_trace(run_directory, &trace)?;
+            return Err(error);
+        }
+    };
     let entry = report_entry(&report)?;
     if entry.entry_id != anchor_entry_id || entry.target_revision_id != target_revision_id {
         return Err(NativeCliError::invalid(format!(
