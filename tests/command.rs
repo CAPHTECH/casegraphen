@@ -1081,6 +1081,66 @@ fn generic_morphism_refuses_capability_self_grant() {
 }
 
 #[test]
+fn a_capability_authorizes_only_the_operations_it_names() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:capability-scope-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let transition = |capability: &str| {
+        run_cli(&[
+            "cell",
+            "transition",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:capability-scope-base",
+            "--cell-id",
+            "work:review-native-contract",
+            "--to",
+            "waiting",
+            "--reason",
+            "capability scope test",
+            "--actor-id",
+            "actor:native-transition-cli",
+            "--capability-id",
+            capability,
+            "--operation-scope-id",
+            native_case_space_id(),
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:native-case-management-contract",
+            "--format",
+            "json",
+        ])
+    };
+
+    // `capability:plan-review` grants its actors plan review and nothing else.
+    // Before this, holding any capability admitted every gated operation, so the
+    // roles a genesis separates were four labels for one power.
+    let wrong_capability = transition("capability:plan-review");
+    assert!(!wrong_capability.status.success());
+    assert!(
+        stderr(&wrong_capability).contains(
+            "does not authorize operation cell-transition; metadata.operations must list it"
+        ),
+        "stderr: {}",
+        stderr(&wrong_capability)
+    );
+
+    let right_capability = transition("capability:durable-mutation");
+    assert!(
+        right_capability.status.success(),
+        "stderr: {}",
+        stderr(&right_capability)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn the_store_refuses_a_morphism_whose_result_it_could_not_load_back() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

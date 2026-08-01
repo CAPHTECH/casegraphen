@@ -14,7 +14,13 @@ grant authority the security policy says only a review grants.
 One finding from the same rounds — a caller-declared `evidence_boundary` on an
 added evidence cell — is fixed in `8984e78` and is not repeated here.
 
-## 1. A capability authorizes its holder, not an operation
+## 1. A capability authorizes its holder, not an operation — **fixed**
+
+> **Resolved** by ADR 0007, accepted 2026-08-01. `metadata.operations` on the
+> capability cell is required and checked against the operation being performed,
+> so the reproduction below is now refused: `capability
+> capability:release-dispatch does not authorize operation review`. The promise
+> in `authoring.md` that `f6a5c5e` had to withdraw is enforced again.
 
 `check_operation_gate` (`src/native_review.rs:298`) checks that each
 `--capability-id` resolves to a case cell, that the cell is `custom:capability`,

@@ -132,6 +132,9 @@
       "metadata": {
         "actor_ids": [
           "actor:release-manager"
+        ],
+        "operations": [
+          "plan-review"
         ]
       }
     },
@@ -157,6 +160,9 @@
       "metadata": {
         "actor_ids": [
           "actor:release-runner"
+        ],
+        "operations": [
+          "dispatch"
         ]
       }
     },
@@ -182,6 +188,9 @@
       "metadata": {
         "actor_ids": [
           "actor:release-runner"
+        ],
+        "operations": [
+          "dispatch"
         ]
       }
     },
@@ -207,6 +216,13 @@
       "metadata": {
         "actor_ids": [
           "actor:release-manager"
+        ],
+        "operations": [
+          "morphism-apply",
+          "morphism-reject",
+          "evidence-attach",
+          "cell-transition",
+          "review"
         ]
       }
     }
@@ -487,6 +503,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:release-manager"
+                  ],
+                  "operations": [
+                    "plan-review"
                   ]
                 }
               },
@@ -512,6 +531,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:release-runner"
+                  ],
+                  "operations": [
+                    "dispatch"
                   ]
                 }
               },
@@ -537,6 +559,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:release-runner"
+                  ],
+                  "operations": [
+                    "dispatch"
                   ]
                 }
               },
@@ -562,6 +587,13 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:release-manager"
+                  ],
+                  "operations": [
+                    "morphism-apply",
+                    "morphism-reject",
+                    "evidence-attach",
+                    "cell-transition",
+                    "review"
                   ]
                 }
               }

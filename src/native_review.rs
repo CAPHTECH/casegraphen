@@ -355,6 +355,35 @@ fn operation_gate_failures(
                 witness_ids: vec![capability_id.clone(), gate.actor_id.clone()],
             });
         }
+        // A capability names an authority, and an authority is over something.
+        // Without this the four cells the shipped walkthrough splits by role
+        // were four labels for one power: the dispatch-only runner could pass
+        // `review accept` with its dispatch capability, which is the opposite of
+        // what separating the roles was for (ADR 0007).
+        //
+        // `metadata.operations` is required rather than optional-and-permissive.
+        // An absent list would have to mean something, and "every operation" is
+        // the defect restated as a default. Capability cells enter only at
+        // genesis and there is no amendment path, so a space written before this
+        // is lifted again — which is how any capability change works here.
+        let grants_operation = capability
+            .metadata
+            .get("operations")
+            .and_then(Value::as_array)
+            .is_some_and(|operations| {
+                operations
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(expected_operation))
+            });
+        if !grants_operation {
+            failures.push(OperationGateFailure {
+                message: format!(
+                    "capability {capability_id} does not authorize operation \
+                     {expected_operation}; metadata.operations must list it"
+                ),
+                witness_ids: vec![capability_id.clone()],
+            });
+        }
     }
     if declared_source_boundary_id(case_space).as_ref() != Some(&gate.source_boundary_id) {
         failures.push(OperationGateFailure {

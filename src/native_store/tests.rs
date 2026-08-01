@@ -1265,7 +1265,10 @@ fn next_metadata_entry(case_space: &CaseSpace) -> MorphismLogEntry {
         "operation_gate".to_owned(),
         serde_json::json!({
             "actor_id": "actor:native-mutation-cli",
-            "operation": "store-test",
+            // A real operation string: the gate now checks it against the
+            // capability's `metadata.operations`, so a synthetic one would only
+            // be testing the new refusal.
+            "operation": "morphism-apply",
             "operation_scope_id": case_space.case_space_id,
             "audience": ProjectionAudience::Audit,
             "capability_ids": ["capability:durable-mutation"],

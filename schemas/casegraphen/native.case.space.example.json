@@ -154,6 +154,9 @@
           "actor:run-plan-review",
           "actor:unsatisfied-plan",
           "actor:run-plan-reject"
+        ],
+        "operations": [
+          "plan-review"
         ]
       }
     },
@@ -178,6 +181,9 @@
       "metadata": {
         "actor_ids": [
           "actor:native-run"
+        ],
+        "operations": [
+          "dispatch"
         ]
       }
     },
@@ -204,6 +210,13 @@
           "actor:native-mutation-cli",
           "actor:native-evidence-cli",
           "actor:native-transition-cli"
+        ],
+        "operations": [
+          "morphism-apply",
+          "morphism-reject",
+          "evidence-attach",
+          "cell-transition",
+          "review"
         ]
       }
     },
@@ -228,6 +241,9 @@
       "metadata": {
         "actor_ids": [
           "actor:native-run"
+        ],
+        "operations": [
+          "dispatch"
         ]
       }
     },
@@ -252,6 +268,9 @@
       "metadata": {
         "actor_ids": [
           "actor:native-integration"
+        ],
+        "operations": [
+          "dispatch"
         ]
       }
     },
@@ -273,7 +292,11 @@
         "confidence": 1.0,
         "review_status": "accepted"
       },
-      "metadata": {}
+      "metadata": {
+        "operations": [
+          "close-check"
+        ]
+      }
     }
   ],
   "case_relations": [
@@ -576,6 +599,9 @@
                     "actor:run-plan-review",
                     "actor:unsatisfied-plan",
                     "actor:run-plan-reject"
+                  ],
+                  "operations": [
+                    "plan-review"
                   ]
                 }
               },
@@ -600,6 +626,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:native-run"
+                  ],
+                  "operations": [
+                    "dispatch"
                   ]
                 }
               },
@@ -626,6 +655,13 @@
                     "actor:native-mutation-cli",
                     "actor:native-evidence-cli",
                     "actor:native-transition-cli"
+                  ],
+                  "operations": [
+                    "morphism-apply",
+                    "morphism-reject",
+                    "evidence-attach",
+                    "cell-transition",
+                    "review"
                   ]
                 }
               },
@@ -650,6 +686,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:native-run"
+                  ],
+                  "operations": [
+                    "dispatch"
                   ]
                 }
               },
@@ -674,6 +713,9 @@
                 "metadata": {
                   "actor_ids": [
                     "actor:native-integration"
+                  ],
+                  "operations": [
+                    "dispatch"
                   ]
                 }
               },
@@ -695,7 +737,11 @@
                   "confidence": 1.0,
                   "review_status": "accepted"
                 },
-                "metadata": {}
+                "metadata": {
+                  "operations": [
+                    "close-check"
+                  ]
+                }
               }
             ],
             "added_relations": [

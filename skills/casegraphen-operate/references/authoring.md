@@ -68,17 +68,24 @@ One `custom:capability` cell per distinct authority, `lifecycle: accepted`,
 the actors that hold it. Separate the roles: the actor that accepts plans should
 not be the actor that dispatches workers.
 
-**What that separation currently buys, and what it does not.** The gate checks
-that each `--capability-id` resolves to an accepted, active capability cell and
-that the cell grants the acting actor. It does **not** check that the capability
-has anything to do with the operation being performed: a capability cell carries
-no operation list, so any capability an actor holds admits every gated operation
-that actor attempts. An actor holding only a dispatch capability can pass
-`review accept` with it. Separating the roles therefore separates *actors*, and
-the ledger records which actor and which capability were named — it does not
-stop an actor from reaching outside its intended authority. Treat the actor, not
-the capability, as the boundary, and keep a compromised runner's actor id out of
-any cell you would not let it use.
+**`metadata.operations` is required and is what makes the separation real.**
+List the operation strings the capability authorizes; the gate refuses when the
+operation it is performing is not in that list, so a runner holding only a
+dispatch capability cannot pass `review accept` with it. An absent or empty list
+authorizes nothing — there is no permissive default, because a default that
+means "every operation" is the separation you just modelled, silently undone.
+
+```json
+"metadata": {
+  "actor_ids": ["actor:release-manager"],
+  "operations": ["morphism-apply", "morphism-reject", "evidence-attach",
+                 "cell-transition", "review"]
+}
+```
+
+The strings are the ones the commands mint, listed under rule 2 in `SKILL.md`:
+`plan-review`, `dispatch`, `morphism-apply`, `morphism-reject`,
+`evidence-attach`, `cell-transition`, `review`, and `close-check`.
 
 There is no CLI path to add, amend, or revoke one afterwards. Decide the grants
 before lifting.

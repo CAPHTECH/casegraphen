@@ -2,10 +2,9 @@
 
 ## Status
 
-Proposed on 2026-07-31. Raised by finding 1 of
-`docs/audit/authorization-and-evidence-coverage-2026-07-31.md`. Nothing is
-implemented; this records the decision that has to be made and what each answer
-costs.
+Accepted on 2026-08-01, as option (a) with "absent means none". Raised by
+finding 1 of `docs/audit/authorization-and-evidence-coverage-2026-07-31.md`, and
+implemented after the evidence-coverage class it defers to was closed.
 
 ## Context
 
@@ -36,12 +35,13 @@ correction is a holding action, not the answer.
 
 ## Decision
 
-Not yet made. **Recommended: (a) with "absent means none".** The reasoning is
-under the options; the short form is that the cost that made (b) attractive —
-a contract change — turned out not to exist, and the cost that remains is one
-every operator of this tool already pays whenever a grant changes.
+**(a), with "absent means none."** `check_operation_gate` requires the operation
+it is performing to appear in `metadata.operations` of one of the presented
+capabilities. The cost that made (b) attractive — a contract change — did not
+exist, and the cost that remains is one every operator here already pays
+whenever a grant changes.
 
-The options, with what each costs:
+The options as they were weighed:
 
 **(a) Scope capabilities to operations.** Add `metadata.operations` to the
 capability cell — a list of the operation strings from the per-command table in
@@ -105,6 +105,15 @@ than they buy in coverage.
 
 ## Consequences
 
-Undecided until this ADR is accepted. One thing holds in the meantime: the
-gate's other five checks are enforced and were re-verified during the audit.
-This is not a hole in the gate, it is a missing dimension of it.
+The audit's finding 1 no longer reproduces: the walkthrough's dispatch-only
+runner is refused with `capability capability:release-dispatch does not
+authorize operation review`, and the release manager performs the same review
+with the capability whose title says so. `authoring.md` states the enforced rule
+again, having been corrected in `f6a5c5e` to stop promising it.
+
+Every shipped fixture carrying capability cells was lifted with the field —
+`schemas/casegraphen/native.case.space.example.json` and the walkthrough genesis
+— and a case space written before this must be lifted again, which is how any
+capability change works here. There is no migration path and deliberately no
+permissive default: a space whose capabilities carry no `operations` authorizes
+nothing, and fails at its next gated command with a message naming the field.

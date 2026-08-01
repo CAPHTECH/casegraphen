@@ -63,6 +63,7 @@ argument is refused with `unsupported native argument "--actor-id …"`.
 | `--source-boundary-id` equals the boundary declared in `metadata.source_boundary.id` | `violates: source_boundary_id` |
 | each `--capability-id` resolves to an accepted, active `custom:capability` cell | `does not resolve to an existing case cell` |
 | that cell's `metadata.actor_ids` contains `--actor-id` | `does not grant acting actor` |
+| that cell's `metadata.operations` lists the operation below | `does not authorize operation <op>` |
 
 The operation string is chosen by the command, not by you:
 `plan accept`/`plan reject` → `plan-review`, `run --step` → `dispatch`,

@@ -490,9 +490,15 @@ fn fixture_space() -> CaseSpace {
     space.case_cells[0]
         .metadata
         .insert("actor_ids".to_owned(), json!(["actor:plan-review"]));
+    space.case_cells[0]
+        .metadata
+        .insert("operations".to_owned(), json!(["plan-review"]));
     space.case_cells[1]
         .metadata
         .insert("actor_ids".to_owned(), json!(["actor:native-review-test"]));
+    space.case_cells[1]
+        .metadata
+        .insert("operations".to_owned(), json!(["review", "close-check"]));
     refresh_added_ids(&mut space);
     space
 }

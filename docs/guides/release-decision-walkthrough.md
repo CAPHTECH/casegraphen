@@ -23,7 +23,11 @@ capability:release-{plan-review,dispatch,worker-exec,durable-mutation}
 ```
 
 `capability:*` cells are the authorization trust root and can only enter at
-lift time. Two actors exist: `actor:release-manager` reviews, and
+lift time. Each carries `metadata.operations`, so the split below is enforced
+rather than descriptive: `capability:release-dispatch` lists `dispatch` and
+nothing else, and presenting it for a `review accept` is refused with
+`does not authorize operation review` (ADR 0007). Two actors exist:
+`actor:release-manager` reviews, and
 `actor:release-runner` dispatches. Neither can do the other's job.
 
 ## Setup

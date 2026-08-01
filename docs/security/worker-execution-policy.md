@@ -58,8 +58,15 @@ file and does not mutate durable case state. Applying or rejecting that
 proposal is gated.
 
 Every capability id must resolve to an active/accepted
-`custom:capability` cell with accepted provenance, and that cell's
-`metadata.actor_ids` must name the acting actor. Capability cells are a
+`custom:capability` cell with accepted provenance, that cell's
+`metadata.actor_ids` must name the acting actor, and its `metadata.operations`
+must list the operation being performed (ADR 0007). The last of those is what
+makes a role split enforced rather than descriptive: without it, any capability
+an actor held admitted every gated operation, and the walkthrough's dispatch-only
+runner could promote evidence with its dispatch capability. There is no
+permissive default — an absent or empty `operations` list authorizes nothing,
+because a default meaning "every operation" is the separation an author just
+modelled, silently undone. Capability cells are a
 source-boundary trust root: they may enter a case space only in the
 materialized genesis supplied at lift/import time. The shared morphism reducer
 rejects generic addition, update, or retirement of capability cells, and
