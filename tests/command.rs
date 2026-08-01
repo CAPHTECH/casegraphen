@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use arbtest::arbitrary::Arbitrary;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -5015,6 +5016,564 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
 }
 
 #[test]
+fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:batch-evidence-base");
+    let first_path = directory.join("batch-first.evidence.json");
+    let second_path = directory.join("batch-second.evidence.json");
+    write_json_value(
+        &first_path,
+        &native_attached_evidence("evidence:batch-first", "unreviewed"),
+    );
+    write_json_value(
+        &second_path,
+        &native_attached_evidence("evidence:batch-second", "unreviewed"),
+    );
+
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:batch-evidence-base",
+            "--input",
+            first_path.to_str().expect("first evidence path"),
+            "--satisfies",
+            "goal:native-case-contract",
+            "--input",
+            second_path.to_str().expect("second evidence path"),
+            "--satisfies",
+            "case:native-contract-example",
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let entry = &stdout_json(&attached)["result"]["entry"];
+    let payload = &entry["morphism"]["metadata"]["payload"];
+    assert_eq!(
+        entry["morphism"]["morphism_id"],
+        json!("morphism:evidence-attach:evidence~3abatch-first:2")
+    );
+    assert_eq!(
+        entry["morphism"]["target_revision_id"],
+        json!("revision:evidence-attach:evidence~3abatch-first:2")
+    );
+    assert_eq!(
+        entry["morphism"]["added_ids"],
+        json!([
+            "evidence:batch-first",
+            "relation:evidence:evidence~3abatch-first:1",
+            "evidence:batch-second",
+            "relation:evidence:evidence~3abatch-second:1"
+        ])
+    );
+    assert_eq!(
+        entry["morphism"]["evidence_ids"],
+        json!(["evidence:batch-first", "evidence:batch-second"])
+    );
+    assert_eq!(
+        payload["added_cells"]
+            .as_array()
+            .expect("attached cells")
+            .len(),
+        2
+    );
+    assert_eq!(
+        payload["added_relations"],
+        json!([
+            {
+                "id": "relation:evidence:evidence~3abatch-first:1",
+                "relation_type": "satisfies_evidence_requirement",
+                "relation_strength": "diagnostic",
+                "from_id": "evidence:batch-first",
+                "to_id": "goal:native-case-contract",
+                "evidence_ids": ["evidence:batch-first"],
+                "source_ids": ["source:native-cli"],
+                "provenance": payload["added_cells"][0]["provenance"],
+                "metadata": {}
+            },
+            {
+                "id": "relation:evidence:evidence~3abatch-second:1",
+                "relation_type": "satisfies_evidence_requirement",
+                "relation_strength": "diagnostic",
+                "from_id": "evidence:batch-second",
+                "to_id": "case:native-contract-example",
+                "evidence_ids": ["evidence:batch-second"],
+                "source_ids": ["source:native-cli"],
+                "provenance": payload["added_cells"][1]["provenance"],
+                "metadata": {}
+            }
+        ])
+    );
+    for (cell, path) in payload["added_cells"]
+        .as_array()
+        .expect("attached cells")
+        .iter()
+        .zip([&first_path, &second_path])
+    {
+        assert_eq!(cell["metadata"]["evidence_boundary"], json!("inferred"));
+        assert_eq!(cell["metadata"]["content_hash"], json!(sha256_file(path)));
+    }
+    let history = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        2,
+        "genesis plus one batch attach must be the whole log"
+    );
+    let validation = run_native_case_store_command(&directory, "validate");
+    assert_eq!(
+        stdout_json(&validation)["result"]["validation"]["valid"],
+        json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn batch_coverage_is_read_per_evidence_by_the_evaluator() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:batch-coverage-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let setup_path = directory.join("batch-coverage-setup.case_morphism.json");
+    write_json_value(
+        &setup_path,
+        &json!({
+            "morphism_id": "morphism:batch-coverage-setup",
+            "morphism_type": "create",
+            "source_revision_id": "revision:batch-coverage-base",
+            "target_revision_id": "revision:batch-coverage-setup",
+            "added_ids": [
+                "work:batch-coverage-a", "work:batch-coverage-b",
+                "evidence:batch-requirement-a", "evidence:batch-requirement-b",
+                "relation:batch-requires-a", "relation:batch-requires-b"
+            ],
+            "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+            "evidence_ids": [], "source_ids": ["source:native-cli"],
+            "violated_invariant_ids": [], "review_status": "unreviewed",
+            "metadata": {"payload": {
+                "added_cells": [
+                    native_work_cell("work:batch-coverage-a", "Batch coverage A"),
+                    native_work_cell("work:batch-coverage-b", "Batch coverage B"),
+                    native_evidence_requirement(
+                        "evidence:batch-requirement-a",
+                        "Batch requirement A"
+                    ),
+                    native_evidence_requirement(
+                        "evidence:batch-requirement-b",
+                        "Batch requirement B"
+                    )
+                ],
+                "added_relations": [
+                    native_requires_evidence_relation(
+                        "relation:batch-requires-a",
+                        "work:batch-coverage-a",
+                        "evidence:batch-requirement-a"
+                    ),
+                    native_requires_evidence_relation(
+                        "relation:batch-requires-b",
+                        "work:batch-coverage-b",
+                        "evidence:batch-requirement-b"
+                    )
+                ],
+                "updated_cells": [], "updated_relations": []
+            }}
+        }),
+    );
+    let proposed = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        setup_path.to_str().expect("setup path"),
+        "--format",
+        "json",
+    ]);
+    assert!(proposed.status.success(), "stderr: {}", stderr(&proposed));
+    let applied = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:batch-coverage-setup",
+            "--base-revision-id",
+            "revision:batch-coverage-base",
+            "--reviewer-id",
+            "reviewer:batch-coverage",
+            "--reason",
+            "install two independent evidence requirements",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(applied.status.success(), "stderr: {}", stderr(&applied));
+
+    let first_path = directory.join("coverage-a.evidence.json");
+    let second_path = directory.join("coverage-b.evidence.json");
+    write_json_value(
+        &first_path,
+        &native_attached_evidence("evidence:batch-coverage-a", "unreviewed"),
+    );
+    write_json_value(
+        &second_path,
+        &native_attached_evidence("evidence:batch-coverage-b", "unreviewed"),
+    );
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:batch-coverage-setup",
+            "--input",
+            first_path.to_str().expect("first evidence path"),
+            "--satisfies",
+            "evidence:batch-requirement-a",
+            "--input",
+            second_path.to_str().expect("second evidence path"),
+            "--satisfies",
+            "evidence:batch-requirement-b",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+    let accepted = run_cli_with_mutation_gate(
+        &[
+            "review",
+            "accept",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            "evidence:batch-coverage-a",
+            "--reviewer-id",
+            "reviewer:batch-coverage",
+            "--reason",
+            "reviewed only evidence A",
+            "--base-revision-id",
+            &attached_revision,
+            "--evidence-id",
+            "evidence:batch-coverage-a",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(accepted.status.success(), "stderr: {}", stderr(&accepted));
+    assert_eq!(
+        stdout_json(&accepted)["result"]["activated_coverage"],
+        json!(["evidence:batch-requirement-a"])
+    );
+
+    let listed = run_cli(&[
+        "obstruction",
+        "list",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(listed.status.success(), "stderr: {}", stderr(&listed));
+    let missing_witnesses = stdout_json(&listed)["result"]["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .iter()
+        .filter(|obstruction| obstruction["obstruction_type"] == json!("missing_evidence"))
+        .flat_map(|obstruction| {
+            obstruction["witness_ids"]
+                .as_array()
+                .expect("witness ids")
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    assert!(!missing_witnesses.contains(&"evidence:batch-requirement-a".to_owned()));
+    assert!(missing_witnesses.contains(&"evidence:batch-requirement-b".to_owned()));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn batch_evidence_attach_refuses_everything_when_the_second_input_is_invalid() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:batch-refusal-base");
+    let first_path = directory.join("valid-first.evidence.json");
+    let second_path = directory.join("invalid-second.evidence.json");
+    write_json_value(
+        &first_path,
+        &native_attached_evidence("evidence:valid-first", "unreviewed"),
+    );
+    fs::write(&second_path, b"{").expect("write invalid evidence");
+
+    let attach = |second_target: &str| {
+        run_cli_with_mutation_gate(
+            &[
+                "evidence",
+                "attach",
+                "--store",
+                directory.to_str().expect("temp path"),
+                "--case-space-id",
+                native_case_space_id(),
+                "--base-revision-id",
+                "revision:batch-refusal-base",
+                "--input",
+                first_path.to_str().expect("first evidence path"),
+                "--satisfies",
+                "goal:native-case-contract",
+                "--input",
+                second_path.to_str().expect("second evidence path"),
+                "--satisfies",
+                second_target,
+                "--format",
+                "json",
+            ],
+            "actor:native-evidence-cli",
+        )
+    };
+    let refused = attach("case:native-contract-example");
+
+    assert!(!refused.status.success());
+    assert!(
+        stderr(&refused).contains(second_path.to_str().expect("second evidence path")),
+        "stderr: {}",
+        stderr(&refused)
+    );
+    write_json_value(
+        &second_path,
+        &native_attached_evidence("relation:evidence:evidence~3avalid-first:1", "unreviewed"),
+    );
+    let collision = attach("case:native-contract-example");
+    assert!(!collision.status.success());
+    assert!(
+        stderr(&collision).contains(second_path.to_str().expect("second evidence path")),
+        "stderr: {}",
+        stderr(&collision)
+    );
+    write_json_value(
+        &second_path,
+        &native_attached_evidence("evidence:valid-second", "unreviewed"),
+    );
+    let non_cell_target = attach("relation:case-covers-goal");
+    assert!(!non_cell_target.status.success());
+    assert!(
+        stderr(&non_cell_target).contains(second_path.to_str().expect("second evidence path")),
+        "stderr: {}",
+        stderr(&non_cell_target)
+    );
+    let inspect = run_native_case_store_command(&directory, "inspect");
+    assert_eq!(
+        stdout_json(&inspect)["result"]["record"]["current_revision_id"],
+        json!("revision:batch-refusal-base")
+    );
+    let history = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn evidence_attach_refuses_satisfies_before_any_input() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:satisfies-order-base");
+    let input_path = directory.join("ordered.evidence.json");
+    write_json_value(
+        &input_path,
+        &native_attached_evidence("evidence:ordered", "unreviewed"),
+    );
+
+    let refused = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:satisfies-order-base",
+            "--satisfies",
+            "goal:native-case-contract",
+            "--input",
+            input_path.to_str().expect("evidence path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+
+    assert!(!refused.status.success());
+    assert!(
+        stderr(&refused).contains("--satisfies must follow the --input it belongs to"),
+        "stderr: {}",
+        stderr(&refused)
+    );
+    let inspect = run_native_case_store_command(&directory, "inspect");
+    assert_eq!(
+        stdout_json(&inspect)["result"]["record"]["current_revision_id"],
+        json!("revision:satisfies-order-base")
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn evidence_attach_appends_exactly_one_revision_or_none_for_any_input_list() {
+    arbtest::arbtest(
+        |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+            let selectors = Vec::<u8>::arbitrary(u)?;
+            let selectors = selectors.into_iter().take(4).collect::<Vec<_>>();
+            let directory = unique_temp_dir();
+            fs::create_dir_all(&directory).expect("create temp directory");
+            import_native_case_space(&directory, "revision:batch-property-base");
+            let mut args = vec![
+                "evidence".to_owned(),
+                "attach".to_owned(),
+                "--store".to_owned(),
+                directory.to_string_lossy().into_owned(),
+                "--case-space-id".to_owned(),
+                native_case_space_id().to_owned(),
+                "--base-revision-id".to_owned(),
+                "revision:batch-property-base".to_owned(),
+            ];
+            let mut every_input_valid = !selectors.is_empty();
+            for (index, selector) in selectors.iter().enumerate() {
+                let path = directory.join(format!("property-{index}.evidence.json"));
+                let target = match selector % 4 {
+                    0 => {
+                        fs::write(&path, b"{").expect("write invalid JSON");
+                        every_input_valid = false;
+                        "goal:native-case-contract"
+                    }
+                    1 => {
+                        write_json_value(
+                            &path,
+                            &native_attached_evidence(
+                                &format!("evidence:property-{index}"),
+                                "unreviewed",
+                            ),
+                        );
+                        every_input_valid = false;
+                        "goal:does-not-exist"
+                    }
+                    2 => {
+                        write_json_value(
+                            &path,
+                            &native_attached_evidence(
+                                &format!("evidence:property-{index}"),
+                                "accepted",
+                            ),
+                        );
+                        every_input_valid = false;
+                        "goal:native-case-contract"
+                    }
+                    _ => {
+                        write_json_value(
+                            &path,
+                            &native_attached_evidence(
+                                &format!("evidence:property-{index}"),
+                                "unreviewed",
+                            ),
+                        );
+                        "goal:native-case-contract"
+                    }
+                };
+                args.extend([
+                    "--input".to_owned(),
+                    path.to_string_lossy().into_owned(),
+                    "--satisfies".to_owned(),
+                    target.to_owned(),
+                ]);
+            }
+            args.extend([
+                "--actor-id".to_owned(),
+                "actor:native-evidence-cli".to_owned(),
+                "--capability-id".to_owned(),
+                "capability:durable-mutation".to_owned(),
+                "--operation-scope-id".to_owned(),
+                native_case_space_id().to_owned(),
+                "--audience".to_owned(),
+                "audit".to_owned(),
+                "--source-boundary-id".to_owned(),
+                "source_boundary:native-case-management-contract".to_owned(),
+                "--format".to_owned(),
+                "json".to_owned(),
+            ]);
+
+            let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+                .args(&args)
+                .output()
+                .expect("run property evidence attach");
+            assert_eq!(
+                output.status.success(),
+                every_input_valid,
+                "stderr: {}",
+                stderr(&output)
+            );
+            let history = run_native_case_store_command(&directory, "history");
+            let appended = stdout_json(&history)["result"]["entries"]
+                .as_array()
+                .expect("history entries")
+                .len()
+                - 1;
+            assert_eq!(appended, usize::from(every_input_valid));
+            let inspect = run_native_case_store_command(&directory, "inspect");
+            let current_revision =
+                &stdout_json(&inspect)["result"]["record"]["current_revision_id"];
+            if every_input_valid {
+                assert_ne!(current_revision, &json!("revision:batch-property-base"));
+            } else {
+                assert_eq!(current_revision, &json!("revision:batch-property-base"));
+            }
+
+            fs::remove_dir_all(directory).expect("remove temp directory");
+            Ok(())
+        },
+    )
+    .budget_ms(1_200)
+    .size_max(32);
+}
+
+#[test]
 fn gate_profile_supplies_all_fields_and_records_only_expanded_values() {
     let directory = setup_profiled_evidence_attach("all-fields");
     let profile_name = "audit-profile-name-must-not-be-recorded";
@@ -7957,6 +8516,89 @@ fn replayed_work_lifecycle(replay: &Value) -> &str {
         .find(|cell| cell["id"] == json!("work:review-native-contract"))
         .and_then(|cell| cell["lifecycle"].as_str())
         .expect("work lifecycle")
+}
+
+fn native_attached_evidence(id: &str, review_status: &str) -> Value {
+    json!({
+        "id": id,
+        "cell_type": "evidence",
+        "lifecycle": "active",
+        "space_id": "space:higher-graphen-casegraphen",
+        "title": format!("Attached evidence {id}"),
+        "source_ids": ["source:native-cli"],
+        "structure_ids": [],
+        "metadata": {
+            "evidence_boundary": "source_backed",
+            "content_hash": "caller-bogus-hash"
+        },
+        "provenance": {
+            "confidence": 0.6,
+            "review_status": review_status,
+            "source": {"kind": "document", "title": "Batch evidence fixture"}
+        }
+    })
+}
+
+fn native_work_cell(id: &str, title: &str) -> Value {
+    json!({
+        "id": id,
+        "cell_type": "work",
+        "lifecycle": "active",
+        "space_id": "space:higher-graphen-casegraphen",
+        "title": title,
+        "source_ids": ["source:native-cli"],
+        "structure_ids": [],
+        "metadata": {},
+        "provenance": {
+            "confidence": 0.8,
+            "review_status": "unreviewed",
+            "source": {"kind": "human", "title": "Batch coverage fixture"}
+        }
+    })
+}
+
+fn native_evidence_requirement(id: &str, title: &str) -> Value {
+    json!({
+        "id": id,
+        "cell_type": "evidence",
+        "lifecycle": "proposed",
+        "space_id": "space:higher-graphen-casegraphen",
+        "title": title,
+        "source_ids": ["source:native-cli"],
+        "structure_ids": [],
+        "metadata": {},
+        "provenance": {
+            "confidence": 0.8,
+            "review_status": "unreviewed",
+            "source": {"kind": "human", "title": "Batch coverage fixture"}
+        }
+    })
+}
+
+fn native_requires_evidence_relation(id: &str, from_id: &str, to_id: &str) -> Value {
+    json!({
+        "id": id,
+        "relation_type": "requires_evidence",
+        "relation_strength": "hard",
+        "from_id": from_id,
+        "to_id": to_id,
+        "evidence_ids": [],
+        "source_ids": ["source:native-cli"],
+        "metadata": {},
+        "provenance": {
+            "confidence": 1.0,
+            "review_status": "accepted",
+            "source": {"kind": "human", "title": "Batch coverage fixture"}
+        }
+    })
+}
+
+fn write_json_value(path: &Path, value: &Value) {
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(value).expect("serialize JSON fixture"),
+    )
+    .expect("write JSON fixture");
 }
 
 fn invalid_core_extensions(target_id: &str) -> Value {

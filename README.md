@@ -144,6 +144,12 @@ and the native derived commands answer what those commands answered.
 
 `casegraphen` with no arguments prints the full usage text.
 
+`evidence attach` may repeat the positional group `--input <path>
+[--satisfies <target-id>]...`. Each `--satisfies` belongs to the most recent
+`--input`. One invocation validates and normalizes every input before appending
+one morphism and one revision; a refusal in any group appends nothing. A single
+group retains the original command and report shape.
+
 ## Driving it from an agent
 
 [`skills/casegraphen-operate`](skills/) is an agent skill for operating a case

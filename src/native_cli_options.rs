@@ -1,4 +1,4 @@
-use super::{parse_projection_audience, NativeCliError};
+use super::{parse_projection_audience, NativeCliError, NativeEvidenceAttachment};
 use crate::native_model::ProjectionAudience;
 use crate::topology::TopologyReportOptions;
 use higher_graphen_core::Id;
@@ -120,7 +120,7 @@ pub(super) struct NativeOptions {
     pub(super) gate_profile_file: Option<PathBuf>,
     pub(super) retry_step_ids: Vec<Id>,
     pub(super) evidence_ids: Vec<Id>,
-    pub(super) satisfies_ids: Vec<Id>,
+    pub(super) evidence_attachments: Vec<NativeEvidenceAttachment>,
     pub(super) capability_ids: Vec<Id>,
     pub(super) operation_scope_id: Option<Id>,
     pub(super) audience: Option<ProjectionAudience>,
@@ -204,7 +204,14 @@ impl NativeOptions {
             Some("--store") => self.store = Some(require_path(args, "--store")?),
             Some("--left-store") => self.left_store = Some(require_path(args, "--left-store")?),
             Some("--right-store") => self.right_store = Some(require_path(args, "--right-store")?),
-            Some("--input") => self.input = Some(require_path(args, "--input")?),
+            Some("--input") => {
+                let input = require_path(args, "--input")?;
+                self.input = Some(input.clone());
+                self.evidence_attachments.push(NativeEvidenceAttachment {
+                    input,
+                    satisfies_ids: Vec::new(),
+                });
+            }
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
             Some("--output") => self.output = Some(require_path(args, "--output")?),
             Some("--case-space-id") => {
@@ -241,7 +248,14 @@ impl NativeOptions {
             }
             Some("--retry-step") => self.retry_step_ids.push(require_id(args, "--retry-step")?),
             Some("--evidence-id") => self.evidence_ids.push(require_id(args, "--evidence-id")?),
-            Some("--satisfies") => self.satisfies_ids.push(require_id(args, "--satisfies")?),
+            Some("--satisfies") => self
+                .evidence_attachments
+                .last_mut()
+                .ok_or_else(|| {
+                    NativeCliError::usage("--satisfies must follow the --input it belongs to")
+                })?
+                .satisfies_ids
+                .push(require_id(args, "--satisfies")?),
             Some("--capability-id") => self
                 .capability_ids
                 .push(require_id(args, "--capability-id")?),

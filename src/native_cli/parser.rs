@@ -535,6 +535,7 @@ impl NativeCliCommand {
                 operation: "evidence-attach",
                 actor_command: Some("evidence attach"),
             })?;
+        options.require_path("--input")?;
         Ok(Self::EvidenceAttach {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
@@ -542,9 +543,8 @@ impl NativeCliCommand {
                 .base_revision_id
                 .clone()
                 .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-            input: options.require_path("--input")?,
+            attachments: options.evidence_attachments,
             gate_options,
-            satisfies_ids: options.satisfies_ids,
             output: options.output,
         })
     }

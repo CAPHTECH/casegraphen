@@ -429,6 +429,12 @@ fn parses_native_mutation_command_families() {
             "evidence.json",
             "--satisfies",
             "goal:demo",
+            "--satisfies",
+            "case:demo",
+            "--input",
+            "second-evidence.json",
+            "--satisfies",
+            "work:demo",
             "--actor-id",
             "actor:demo",
             "--capability-id",
@@ -446,8 +452,20 @@ fn parses_native_mutation_command_families() {
     .expect("evidence attach command");
     assert!(matches!(
         evidence,
-        NativeCliCommand::EvidenceAttach { satisfies_ids, .. }
-            if satisfies_ids == vec![Id::new("goal:demo").expect("goal id")]
+        NativeCliCommand::EvidenceAttach { attachments, .. }
+            if attachments == vec![
+                NativeEvidenceAttachment {
+                    input: PathBuf::from("evidence.json"),
+                    satisfies_ids: vec![
+                        Id::new("goal:demo").expect("goal id"),
+                        Id::new("case:demo").expect("case id"),
+                    ],
+                },
+                NativeEvidenceAttachment {
+                    input: PathBuf::from("second-evidence.json"),
+                    satisfies_ids: vec![Id::new("work:demo").expect("work id")],
+                },
+            ]
     ));
 
     let transition = NativeCliCommand::parse(

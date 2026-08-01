@@ -16,9 +16,13 @@ use crate::{
 };
 use higher_graphen_core::{Id, ReviewStatus};
 use serde_json::{json, Map, Value};
-use std::{fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
-use super::super::{path_helpers::path_segment, NativeCliError};
+use super::super::{path_helpers::path_segment, NativeCliError, NativeEvidenceAttachment};
 
 pub(in crate::native_cli) fn review_apply(
     store: &Path,
@@ -93,72 +97,72 @@ pub(in crate::native_cli) fn evidence_attach(
     store: &Path,
     case_space_id: &Id,
     base_revision_id: &Id,
-    input: &Path,
-    satisfies_ids: &[Id],
+    attachments: &[NativeEvidenceAttachment],
     gate_options: &NativeMutationGateOptions,
 ) -> Result<Value, NativeCliError> {
     let store_api = NativeCaseStore::new(store.to_path_buf());
     let replay = store_api.replay_current_case_space(case_space_id)?;
     require_current_revision(&replay.current_revision_id, base_revision_id)?;
-    for target_id in satisfies_ids {
-        if !reviewable_target_exists(&replay.case_space, target_id) {
-            return Err(NativeCliError::invalid(format!(
-                "unknown satisfies target {target_id}"
-            )));
-        }
-    }
-
-    let bytes = fs::read(input).map_err(|source| NativeCliError::Io {
-        path: input.to_path_buf(),
-        source,
-    })?;
-    let cell = evidence_cell_from_bytes(&bytes)?;
+    let prepared = prepare_evidence_attachments(&replay.case_space, attachments)?;
+    let first_cell = &prepared
+        .first()
+        .ok_or_else(|| NativeCliError::usage("--input <path> is required"))?
+        .cell;
     let sequence = replay.case_space.morphism_log.len() + 1;
-    let relations = satisfies_ids
+    let cells = prepared
         .iter()
-        .enumerate()
-        .map(|(index, target_id)| {
-            Ok(CaseRelation {
-                id: Id::new(format!(
-                    "relation:evidence:{}:{}",
-                    path_segment(&cell.id),
-                    index + 1
-                ))?,
-                relation_type: CaseRelationType::SatisfiesEvidenceRequirement,
-                relation_strength: RelationStrength::Diagnostic,
-                from_id: cell.id.clone(),
-                to_id: target_id.clone(),
-                evidence_ids: vec![cell.id.clone()],
-                source_ids: cell.source_ids.clone(),
-                provenance: cell.provenance.clone(),
-                metadata: Map::new(),
-            })
+        .map(|attachment| attachment.cell.clone())
+        .collect::<Vec<_>>();
+    let relations = prepared
+        .iter()
+        .flat_map(|attachment| attachment.relations.iter().cloned())
+        .collect::<Vec<_>>();
+    let added_ids = prepared
+        .iter()
+        .flat_map(|attachment| {
+            std::iter::once(attachment.cell.id.clone()).chain(
+                attachment
+                    .relations
+                    .iter()
+                    .map(|relation| relation.id.clone()),
+            )
         })
-        .collect::<Result<Vec<_>, NativeCliError>>()?;
-    let mut added_ids = vec![cell.id.clone()];
-    added_ids.extend(relations.iter().map(|relation| relation.id.clone()));
+        .collect();
+    let preserved_ids = attachments
+        .iter()
+        .flat_map(|attachment| attachment.satisfies_ids.iter().cloned())
+        .collect();
+    let evidence_ids = cells.iter().map(|cell| cell.id.clone()).collect();
+    let source_ids = cells
+        .iter()
+        .flat_map(|cell| cell.source_ids.iter().cloned())
+        .collect();
     let mut metadata = Map::new();
     metadata.insert(
         "payload".to_owned(),
         serde_json::to_value(MorphismPayload {
-            added_cells: vec![cell.clone()],
+            added_cells: cells,
             added_relations: relations,
             ..MorphismPayload::default()
         })?,
     );
     let mut morphism = CaseMorphism {
-        morphism_id: generated_operation_id("morphism:evidence-attach", &cell.id, sequence)?,
+        morphism_id: generated_operation_id("morphism:evidence-attach", &first_cell.id, sequence)?,
         morphism_type: CaseMorphismType::EvidenceAttach,
         source_revision_id: Some(replay.current_revision_id.clone()),
-        target_revision_id: generated_operation_id("revision:evidence-attach", &cell.id, sequence)?,
+        target_revision_id: generated_operation_id(
+            "revision:evidence-attach",
+            &first_cell.id,
+            sequence,
+        )?,
         added_ids,
         updated_ids: Vec::new(),
         retired_ids: Vec::new(),
-        preserved_ids: satisfies_ids.to_vec(),
+        preserved_ids,
         violated_invariant_ids: Vec::new(),
         review_status: ReviewStatus::Accepted,
-        evidence_ids: vec![cell.id.clone()],
-        source_ids: cell.source_ids.clone(),
+        evidence_ids,
+        source_ids,
         metadata,
     };
     let operation_gate =
@@ -174,6 +178,111 @@ pub(in crate::native_cli) fn evidence_attach(
         Some(operation_gate.actor_id),
         "casegraphen evidence attach",
     )
+}
+
+struct PreparedEvidenceAttachment {
+    cell: CaseCell,
+    relations: Vec<CaseRelation>,
+}
+
+fn prepare_evidence_attachments(
+    case_space: &CaseSpace,
+    attachments: &[NativeEvidenceAttachment],
+) -> Result<Vec<PreparedEvidenceAttachment>, NativeCliError> {
+    let existing_ids = case_space
+        .case_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .chain(
+            case_space
+                .case_relations
+                .iter()
+                .map(|relation| relation.id.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+    let mut claimed_ids = BTreeMap::new();
+    attachments
+        .iter()
+        .map(|attachment| {
+            for target_id in &attachment.satisfies_ids {
+                if !case_space
+                    .case_cells
+                    .iter()
+                    .any(|cell| cell.id == *target_id)
+                {
+                    return Err(input_refusal(
+                        &attachment.input,
+                        format!("unknown satisfies target {target_id}"),
+                    ));
+                }
+            }
+            let bytes = fs::read(&attachment.input)
+                .map_err(|source| input_refusal(&attachment.input, source))?;
+            let cell = evidence_cell_from_bytes(&bytes)
+                .map_err(|error| input_refusal(&attachment.input, error))?;
+            claim_attachment_id(&existing_ids, &mut claimed_ids, &cell.id, &attachment.input)?;
+            let relations = attachment
+                .satisfies_ids
+                .iter()
+                .enumerate()
+                .map(|(index, target_id)| {
+                    Ok(CaseRelation {
+                        id: Id::new(format!(
+                            "relation:evidence:{}:{}",
+                            path_segment(&cell.id),
+                            index + 1
+                        ))?,
+                        relation_type: CaseRelationType::SatisfiesEvidenceRequirement,
+                        relation_strength: RelationStrength::Diagnostic,
+                        from_id: cell.id.clone(),
+                        to_id: target_id.clone(),
+                        evidence_ids: vec![cell.id.clone()],
+                        source_ids: cell.source_ids.clone(),
+                        provenance: cell.provenance.clone(),
+                        metadata: Map::new(),
+                    })
+                })
+                .collect::<Result<Vec<_>, NativeCliError>>()
+                .map_err(|error| input_refusal(&attachment.input, error))?;
+            for relation in &relations {
+                claim_attachment_id(
+                    &existing_ids,
+                    &mut claimed_ids,
+                    &relation.id,
+                    &attachment.input,
+                )?;
+            }
+            Ok(PreparedEvidenceAttachment { cell, relations })
+        })
+        .collect()
+}
+
+fn claim_attachment_id(
+    existing_ids: &BTreeSet<Id>,
+    claimed_ids: &mut BTreeMap<Id, std::path::PathBuf>,
+    id: &Id,
+    input: &Path,
+) -> Result<(), NativeCliError> {
+    if existing_ids.contains(id) {
+        return Err(input_refusal(input, format!("id {id} already exists")));
+    }
+    if let Some(first_input) = claimed_ids.insert(id.clone(), input.to_path_buf()) {
+        return Err(input_refusal(
+            input,
+            format!(
+                "added id {id} duplicates an id from input {}",
+                first_input.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn input_refusal(input: &Path, error: impl std::fmt::Display) -> NativeCliError {
+    NativeCliError::invalid(format!(
+        "evidence attach input {} was refused: {error}",
+        input.display()
+    ))
 }
 
 pub(in crate::native_cli) fn cell_transition(
@@ -311,21 +420,6 @@ fn review_target_kind(
     Err(NativeCliError::invalid(format!(
         "unknown review target {target_id}"
     )))
-}
-
-fn reviewable_target_exists(case_space: &CaseSpace, target_id: &Id) -> bool {
-    case_space
-        .case_cells
-        .iter()
-        .any(|cell| cell.id == *target_id)
-        || case_space
-            .case_relations
-            .iter()
-            .any(|relation| relation.id == *target_id)
-        || case_space
-            .morphism_log
-            .iter()
-            .any(|entry| entry.morphism_id == *target_id)
 }
 
 fn generated_revision_id(

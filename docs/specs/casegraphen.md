@@ -183,6 +183,23 @@ finding. Strict mode never changes report bytes for the selected format.
 Commands whose reports do not carry these findings reject `--strict` as
 unsupported.
 
+### Batch evidence attachment
+
+`evidence attach` accepts one or more ordered `--input <evidence-cell.json>
+[--satisfies <target-id>]...` groups. A `--satisfies` flag binds to the most
+recent `--input`; one appearing before every input is malformed. This preserves
+the single-input CLI while making each input-to-target association explicit
+without a second manifest contract.
+
+The command reads, strictly parses, and validates every group before appending.
+For each input independently it forces the evidence boundary to `inferred`,
+computes the content hash from that input's bytes, refuses accepted provenance,
+and emits the same evidence cell plus diagnostic coverage-relation shape as a
+single attach. The groups are combined into one `evidence_attach` morphism and
+one target revision. Any invalid input or target refuses the invocation, names
+the input, and leaves the current revision unchanged. Coverage remains derived
+from those payload relations in the canonical morphism log.
+
 ### Named operation-gate profiles
 
 The commands that construct an operation gate accept

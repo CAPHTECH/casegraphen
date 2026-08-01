@@ -81,17 +81,22 @@ transition; go through `active`.
 
 ## Attaching evidence is not promoting it
 
-`evidence attach` takes an evidence cell document. The tool overwrites
-`metadata.evidence_boundary` with `inferred` — the spelling that means "needs an
-accepted review" — and sets `metadata.content_hash` from the input bytes, and it
-refuses input claiming `review_status: accepted`. `--satisfies <target-id>` adds a
+`evidence attach` takes one or more evidence cell documents. Repeat `--input
+<path> [--satisfies <target-id>]...`; each `--satisfies` belongs to the most
+recent input. The tool overwrites each input's `metadata.evidence_boundary` with
+`inferred` — the spelling that means "needs an accepted review" — computes each
+`metadata.content_hash` from that input's bytes, and refuses input claiming
+`review_status: accepted`. Each target adds a
 `satisfies_evidence_requirement` relation at `diagnostic` strength — which does
-not satisfy a hard requirement.
+not satisfy a hard requirement. The whole invocation appends one morphism and
+one revision. If any input is refused, no input is appended.
 
 ```sh
 ATTACH_REPORT=attach-report.json
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
-  --base-revision-id "$REV" --input evidence.json --satisfies <requirement-id> $GATE \
+  --base-revision-id "$REV" \
+  --input test-results.json --satisfies <test-requirement-id> \
+  --input changelog.json --satisfies <changelog-requirement-id> $GATE \
   --format json --output "$ATTACH_REPORT"
 REV="$(next_revision "$ATTACH_REPORT")"
 ```

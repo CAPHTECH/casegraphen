@@ -32,6 +32,12 @@ use ops::{
 use reporting::report;
 use text::render_native_case_evaluation;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NativeEvidenceAttachment {
+    input: PathBuf,
+    satisfies_ids: Vec<Id>,
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -279,8 +285,7 @@ pub(crate) enum NativeCliCommand {
         store: PathBuf,
         case_space_id: Id,
         base_revision_id: Id,
-        input: PathBuf,
-        satisfies_ids: Vec<Id>,
+        attachments: Vec<NativeEvidenceAttachment>,
         gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
@@ -733,16 +738,14 @@ impl NativeCliCommand {
                 store,
                 case_space_id,
                 base_revision_id,
-                input,
-                satisfies_ids,
+                attachments,
                 gate_options,
                 ..
             } => evidence_attach(
                 store,
                 case_space_id,
                 base_revision_id,
-                input,
-                satisfies_ids,
+                attachments,
                 gate_options,
             )?,
             Self::CellTransition {
