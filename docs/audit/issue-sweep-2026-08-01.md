@@ -88,6 +88,53 @@ implementation had to refine.
 | candidate launcher directories | `/opt/homebrew/bin` writable, `/usr/bin` and `/bin` not |
 | batch attach atomicity | current revision unmoved after a refused second input |
 
+## The fifth round, run against this pass's own output
+
+Three adversarial rounds were run against the work above — the worker
+containment fix, the gate profiles, and batch evidence attach — plus a fourth
+against the lift adapters, the area issue #14 had recorded as never attacked.
+Every finding below was reproduced by hand before it was accepted.
+
+**The writer was still enforcing a subset of the loader's contract.** Round
+four closed this class by having `append_morphism` validate the resulting
+state, but against `validate_materialized_log`, whose reference check covers
+relation endpoints and projection lists only. The loader also runs
+`validate_native_case_space`, and the import path already called it — with a
+comment explaining exactly why. Three ordinary gated commands reached the gap:
+an `evidence attach` whose cell carries a mismatched `space_id` or a blank
+title, and a `morphism apply` retiring any relation. Each wrote successfully,
+each then failed every derived command permanently, and `space validate`
+reported `valid: true` while `space rebuild` reported success — the two
+commands the policy names as audit and recovery. The fix is the call the
+import path makes.
+
+**A coverage claim could name a work cell**, and the evaluator reads coverage
+against a work cell as satisfying every evidence and proof requirement that
+cell has. One attach plus one review cleared a blocking requirement that no
+morphism named and no reviewer saw. Two reviewers found this independently.
+`run --step` had already restricted its own coverage targets to evidence
+cells; `evidence attach` asked only whether the id existed. One rule now.
+
+**An imported workflow graph could declare its own trust**, in two ways, while
+ADR 0003 stated that none survived. One of them was the sibling of a rule
+enforced in the same function: `accepted_evidence` was refused for exactly
+this reason while `source_backed_evidence` reached the same outcome under a
+different label.
+
+**`--retry-step` can supersede a live dispatch** — filed as issue #16 rather
+than fixed. Revision staleness is being used as a liveness signal, and a
+revision moves on any append, so a sibling step finishing makes a running
+dispatch read as dead: three ordinary `run --step` invocations produce two
+concurrent workers for one accepted step, reproduced here. Deleting the
+escape is one line and closes the race, but the escape is what recovers a
+killed dispatcher, so removing it trades a race for a denial of service. What
+may supersede a `started` trace is a decision, and this pass has already shown
+what improvising one costs.
+
+That last point is the honest summary of the round: of five findings, four
+were the same shape as everything else in this document, and the fifth is
+being left to a decision rather than a fix at the end of a long session.
+
 ## Still open
 
 Issue #14 — the areas four rounds declared unattacked — stays open. This pass
