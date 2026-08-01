@@ -301,6 +301,77 @@ dispatcher killed mid-round leaves a record that says which reserved steps
 had a real process — the question `--supersede-trace` asks an operator to
 answer.
 
+### 2.7 Artifact path scope
+
+`evidence attach --artifact` paths are operator-supplied input with no path
+confinement — the operator typed that path themselves, the same trust level as
+every other input flag (`--input`, `--satisfies`, `--capability-id`), so an
+absolute path or a `../` escape is accepted exactly as given, and canonicalize
+failures report the ordinary io error, because the operator already knows what
+they typed.
+
+Packet artifact paths (`packet apply`'s `artifacts:` list) are confined to the
+packet file's own directory. This is narrower than `--artifact` on purpose.
+ADR 0015 already treats a packet as arriving from the proposer rather than the
+operator — the packet's `claim.id` is attacker-controlled text, which is why
+`packet apply`'s `next_operations` emits structured values instead of a
+command string an operator would paste — and the `artifacts:` list has the
+same origin. Confinement is three ordered stages:
+
+1. **Lexical rejection**, on the caller-supplied string alone, before any
+   filesystem call: an entry that is absolute or contains a `..` component is
+   refused outright. This stage exists because canonicalizing first and
+   checking containment second is not confinement — `fs::canonicalize`
+   validates only the *final resolved* path, so an entry that starts at an
+   arbitrary absolute directory, climbs with enough `..` to reach real `/`
+   (`..` at `/` is a no-op, so over-climbing is always safe; a short climb is
+   not, since a symlinked ancestor such as macOS's `/var` -> `/private/var`
+   makes the real resolved depth deeper than the string's own component
+   count), and descends back through the packet's own real directory to a
+   genuinely in-root file canonicalizes and passes containment successfully
+   *whenever the climbed-through directory happens to exist*. That makes
+   ordinary dispatch success/failure — not merely the refusal text — a
+   filesystem-existence oracle for arbitrary absolute directories, with no
+   symlink required, and a hit dispatches for real: it attaches a legitimate
+   in-root artifact. Reproduced against a real store (`/etc`, a user's
+   `.ssh` directory, and others each toggled dispatch between success and
+   refusal depending only on whether that directory existed) and fixed.
+2. **Canonicalization** of the entry joined onto the confinement root — the
+   packet file's own canonicalized parent directory. This is the *only*
+   join: `artifacts:` entries are passed through unjoined and `prepare_claim`
+   does the one join, so there is one answer to "which directory is the
+   packet in," not the join base and the confinement root computed two
+   different ways. (A version of this fix once computed them differently —
+   the join from `packet_path.parent()`, the confinement root from
+   `fs::canonicalize(packet_path).parent()` — which refused a symlinked
+   packet file's genuine neighbour with a refusal that named the wrong
+   reason. Fixed before shipping.)
+3. **Containment**: the canonicalized result must be inside the canonicalized
+   root. This is what catches an in-tree symlink whose target leaves the
+   directory — the case stage 1 cannot see, since the entry itself is an
+   ordinary relative name.
+
+All three confined failure modes — lexical rejection, canonicalization
+failure, and a resolved-but-outside-the-root result — refuse with the
+identical, generic message, naming neither the io error nor any resolved
+path. Confinement is a filesystem-existence and symlink-target oracle if this
+is not uniform: an untrusted packet that gets a different-shaped refusal for
+`/etc/hosts` (exists) versus `/etc/zzz-no-such-file` (does not), or whose
+refusal names the canonical path a symlink resolved to, has learned something
+about the operator's filesystem from a command that never opened either
+target for the packet's benefit.
+
+In both directions, `artifact_uri` records the canonicalized path that was
+actually opened and hashed — with one exception, which is a provenance
+question rather than a confinement one: content-hash dedupe means a second
+citation of bytes already recorded in this case space reuses the existing
+`custom:artifact` cell rather than minting a new one, so `artifact_uri` names
+the path of the *first* citation that hashed those bytes into the space, not
+necessarily the path the later citer supplied. The bytes are identical by
+construction — dedupe is not a substitution — but a later citer's own path is
+not what is recorded. A path that does not canonicalize (missing, a broken
+symlink, or lexically rejected) is refused rather than recorded as given.
+
 ## 3. Approval policy — what always needs a human
 
 | Action | Human review required? |
@@ -458,6 +529,17 @@ answer.
    platform independent, so this bounds dispatch only. No non-Unix host has been
    exercised end to end; the claims in §2.3 and §2.4 should be read as Unix
    claims until one is.
+11. **A narrow window remains between canonicalizing an artifact path and
+    reading it**, the same class as residual risk 6 for worker command paths,
+    not previously named for the artifact read path. Between
+    `fs::canonicalize` and `fs::read` of the canonical result, a directory
+    component could in principle be swapped for one pointing outside the
+    approved root, so the bytes actually hashed would come from outside a
+    confined packet's directory. This is unreproduced — it needs a concurrent
+    writer inside the packet directory during `packet apply` — and is
+    recorded here as an accepted hypothesis, not a fixed defect. Packet
+    directories, like store and working directories elsewhere in this
+    document, must be writable only by the operating user.
 
 ## 5. Review provenance
 
@@ -478,6 +560,19 @@ which found real defects that were then fixed:
   grant themselves the capability the gate checks, because that path — like
   every other durable mutation except plan review and dispatch — was ungated.
   Reproduced and confirmed fixed by §2.2.
+- Round 4 (packet artifact confinement, issue #21) found that an initial
+  canonicalize-then-contain implementation did not close the oracle it was
+  written to close: a crafted absolute `artifacts:` entry could climb to real
+  `/` and descend back into the packet's own directory, making dispatch
+  success/failure — and a real durable mutation on a hit — a
+  filesystem-existence oracle with no symlink required. Fixed by the lexical
+  rejection stage in §2.7. The same round separately found that the
+  requirement-placeholder exclusion added for the Assurance axis (issue #20)
+  was keyed on coverage-claim membership rather than an actually-satisfied
+  requirement, letting an actor holding only `evidence-attach` launder an
+  unrelated, never-reviewed claim out of the axis by naming it in an
+  unrelated `--satisfies`. Both reproduced against a real store and confirmed
+  fixed.
 
 Anyone extending the execution surface should assume the same treatment is
 required: the controls here hold only for the paths that were actually attacked.

@@ -303,6 +303,9 @@ fn prepare_evidence_attachments(
                 cell,
                 &attachment.satisfies_ids,
                 &attachment.artifact_paths,
+                // Unconfined: the operator typed `--artifact` themselves, the
+                // same as every other input flag (issue #21).
+                None,
             )
         })
         .collect()
@@ -336,6 +339,56 @@ impl<'a> ClaimPreparationState<'a> {
 /// it exactly once for the packet's one claim. `label` names the input in
 /// refusal messages — the `--input` path for attach, the packet path for a
 /// packet.
+///
+/// This is also the one place that resolves an artifact path (issue #21): each
+/// path in `artifact_paths` is canonicalized once, and that single canonical
+/// value is what gets read and what `resolve_artifact` records as
+/// `artifact_uri` — never the caller-supplied string, and never a second,
+/// possibly different, canonicalization. A path that does not canonicalize is
+/// refused with the ordinary input-refusal shape rather than falling back to
+/// the original.
+///
+/// `confine_artifacts_within` is the asymmetry ADR 0015 already draws: a
+/// packet's `claim.id` is attacker-controlled text (that is why
+/// `packet_apply`'s `next_operations` emits structured values instead of a
+/// command string), and a packet's `artifacts:` list has the same origin —
+/// `artifact_paths` for a packet are the raw, unjoined `artifacts:` entries,
+/// and this function joins them onto `confine_within` itself, so there is
+/// exactly one join and it is the same directory the containment check uses.
+/// `evidence attach --artifact` passes `None` and its `artifact_paths` are
+/// exactly the operator-typed paths, not joined onto anything: the operator
+/// typed those themselves, same as every other input flag, so they are not
+/// confined.
+///
+/// Confined resolution is three stages, in order, and all three matter:
+///
+/// 1. **Lexical rejection**, on the caller-supplied string alone, before any
+///    filesystem call. An entry that is absolute or contains a `..`
+///    component is refused outright. `fs::canonicalize` only validates the
+///    *final resolved* path, so without this stage a crafted entry can climb
+///    from an arbitrary absolute directory up to `/` (any number of `..` gets
+///    there) and back down through this packet's own real, known directory
+///    to a genuinely in-root file — canonicalizing and passing containment
+///    successfully *whenever the climbed-through directory happens to
+///    exist*, and failing whenever it does not. That makes ordinary
+///    dispatch success/failure — not just the refusal message — a
+///    filesystem-existence oracle for arbitrary absolute directories, no
+///    planted symlink required. Reproduced: `artifacts: ["/etc/../../.. \
+///    (enough to reach /) .../<this-packet-dir-without-leading-slash>/a.txt"]`
+///    dispatched successfully, and mutated the store, whenever `/etc` (or
+///    any other probed directory) existed.
+/// 2. **Canonicalization** of the entry joined onto `confine_within`.
+/// 3. **Containment** (`artifact_confined`) of the canonical result inside
+///    `confine_within` — still required after stage 1, because it is what
+///    catches an in-tree symlink whose target leaves the directory; a
+///    lexical check cannot see through a symlink.
+///
+/// All three confined failure modes — lexical rejection, canonicalization
+/// failure, and a resolved-but-outside-the-root result — refuse with the
+/// identical message, naming neither the io error nor any resolved path:
+/// only the caller-supplied string is echoed back, because the proposer
+/// already wrote it. Unconfined (`None`) keeps the ordinary, informative io
+/// error, because the operator already knows what they typed.
 pub(super) fn prepare_claim(
     case_space: &CaseSpace,
     state: &mut ClaimPreparationState<'_>,
@@ -343,6 +396,7 @@ pub(super) fn prepare_claim(
     cell: CaseCell,
     satisfies_ids: &[Id],
     artifact_paths: &[PathBuf],
+    confine_artifacts_within: Option<&Path>,
 ) -> Result<PreparedEvidenceAttachment, NativeCliError> {
     for target_id in satisfies_ids {
         if !is_coverage_target(case_space, target_id) {
@@ -385,13 +439,38 @@ pub(super) fn prepare_claim(
     }
     let mut artifacts = Vec::new();
     for (index, artifact_path) in artifact_paths.iter().enumerate() {
-        let artifact_bytes =
-            fs::read(artifact_path).map_err(|source| input_refusal(artifact_path, source))?;
+        let canonical_artifact_path = match confine_artifacts_within {
+            Some(confine_within) => {
+                // Stage 1: lexical rejection, string-only, no filesystem
+                // call. See this function's doc comment for why an absolute
+                // entry or a `..` component must be refused here rather than
+                // left to canonicalize-and-contain.
+                if artifact_path.is_absolute()
+                    || artifact_path
+                        .components()
+                        .any(|component| component == std::path::Component::ParentDir)
+                {
+                    return Err(input_refusal(artifact_path, CONFINEMENT_REFUSAL));
+                }
+                // Stages 2 and 3: canonicalize the entry joined onto the
+                // confinement root, then require the result stay inside it —
+                // this is what catches an in-tree symlink pointing out,
+                // which stage 1 cannot see.
+                fs::canonicalize(confine_within.join(artifact_path))
+                    .ok()
+                    .filter(|canonical| artifact_confined(canonical, confine_within))
+                    .ok_or_else(|| input_refusal(artifact_path, CONFINEMENT_REFUSAL))?
+            }
+            None => fs::canonicalize(artifact_path)
+                .map_err(|source| input_refusal(artifact_path, source))?,
+        };
+        let artifact_bytes = fs::read(&canonical_artifact_path)
+            .map_err(|source| input_refusal(artifact_path, source))?;
         let (artifact_cell, relation) = resolve_artifact(
             case_space,
             &mut state.staged_artifact_ids,
             &cell,
-            artifact_path,
+            &canonical_artifact_path,
             &artifact_bytes,
             index + 1,
         )
@@ -420,6 +499,27 @@ pub(super) fn prepare_claim(
     })
 }
 
+/// Whether a canonicalized artifact path stays inside a canonicalized
+/// confinement root. Both arguments must already be canonicalized —
+/// `prepare_claim` is the only caller, and it is also the only place that
+/// canonicalizes, so this is a plain prefix check rather than a place that
+/// would need to resolve symlinks itself. This alone does not close the
+/// filesystem-existence oracle (a crafted entry can climb out and back in,
+/// canonicalizing to a result this check correctly, but too late, calls
+/// confined) — that is `prepare_claim`'s lexical rejection, stage 1 of the
+/// three-stage confined resolution described on its doc comment. This
+/// predicate is stage 3: catching an in-tree symlink pointing out, which the
+/// lexical stage cannot see.
+fn artifact_confined(canonical_artifact_path: &Path, canonical_root: &Path) -> bool {
+    canonical_artifact_path.starts_with(canonical_root)
+}
+
+/// The one confined-artifact refusal message, shared verbatim by all three
+/// confined failure modes (lexical rejection, canonicalization failure, and
+/// resolved-but-outside-the-root) so they cannot be told apart — see
+/// `prepare_claim`'s doc comment.
+const CONFINEMENT_REFUSAL: &str = "does not resolve inside the packet's directory";
+
 /// The id namespace `resolve_artifact` mints into and nothing else may enter:
 /// a claim naming an id here would let an actor holding only evidence-attach
 /// permanently squat a content hash before any artifact for it exists, so
@@ -437,6 +537,11 @@ const ARTIFACT_ID_PREFIX: &str = "artifact:sha256-";
 /// in the same command or across separate ones — must land on the one cell
 /// already recorded for that hash, so a second citation adds only the
 /// `derives_from` relation.
+///
+/// `artifact_path` must already be the canonical path `prepare_claim`
+/// resolved and read the bytes from — this function records it verbatim as
+/// `metadata.artifact_uri`, so a caller passing anything else would make that
+/// field name a path the tool did not actually read.
 fn resolve_artifact(
     case_space: &CaseSpace,
     staged_artifact_ids: &mut BTreeSet<Id>,
@@ -991,5 +1096,342 @@ mod tests {
                 .contains("already exists as a cell that is not a matching"),
             "{error}"
         );
+    }
+
+    fn unique_scratch_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "casegraphen-mutations-test-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn artifact_confined_checks_a_canonical_component_prefix() {
+        let root = Path::new("/tmp/root");
+        assert!(artifact_confined(Path::new("/tmp/root/file.txt"), root));
+        assert!(artifact_confined(root, root));
+        // A string-prefix check would wrongly accept this: "/tmp/rootless"
+        // starts with the bytes "/tmp/root" but is a sibling, not a child.
+        assert!(!artifact_confined(
+            Path::new("/tmp/rootless/file.txt"),
+            root
+        ));
+        assert!(!artifact_confined(Path::new("/tmp/other/file.txt"), root));
+    }
+
+    /// Extracts the message from a `NativeCliError::Invalid` refusal,
+    /// panicking on any other variant or on `Ok`. Used instead of comparing
+    /// `.to_string()` output so an assertion that two refusals are identical
+    /// also proves both are the same *kind* of refusal, not merely two
+    /// values that happen to render the same text.
+    fn expect_confined_refusal(
+        result: Result<PreparedEvidenceAttachment, NativeCliError>,
+    ) -> String {
+        match result {
+            Err(NativeCliError::Invalid(message)) => message,
+            Err(other) => panic!("expected NativeCliError::Invalid, got {other:?}"),
+            Ok(_) => panic!("expected the confined artifact to be refused"),
+        }
+    }
+
+    #[test]
+    fn prepare_claim_confines_a_packet_artifact_but_leaves_evidence_attach_unconfined() {
+        let base = unique_scratch_dir("confine");
+        let packet_dir = base.join("packet");
+        fs::create_dir_all(&packet_dir).expect("create packet dir");
+        fs::write(packet_dir.join("inside.txt"), b"inside bytes").expect("write inside artifact");
+        let outside_target = base.join("outside.txt");
+        fs::write(&outside_target, b"outside bytes").expect("write outside artifact");
+        let claim = evidence_cell_from_bytes(EVIDENCE_CELL).expect("claim cell");
+        let space = minimal_case_space(Vec::new());
+        let existing_ids: BTreeSet<Id> = BTreeSet::new();
+        let canonical_packet_dir = fs::canonicalize(&packet_dir).expect("canonicalize packet dir");
+        let prepare = |artifact: &str| {
+            let mut state = ClaimPreparationState::new(&existing_ids);
+            prepare_claim(
+                &space,
+                &mut state,
+                Path::new("packet.json"),
+                claim.clone(),
+                &[],
+                std::slice::from_ref(&PathBuf::from(artifact)),
+                Some(&canonical_packet_dir),
+            )
+        };
+
+        // Confined: a plain relative entry inside the packet directory is
+        // accepted, and the recorded uri is the canonical path that was
+        // actually read — `prepare_claim` does the one join, onto the same
+        // root the containment check uses.
+        let prepared = prepare("inside.txt").expect("an artifact inside the root is accepted");
+        let artifact_cell = prepared
+            .artifacts
+            .first()
+            .expect("one artifact cell minted");
+        assert_eq!(
+            artifact_cell.metadata["artifact_uri"],
+            json!(canonical_packet_dir
+                .join("inside.txt")
+                .to_str()
+                .expect("canonical artifact path"))
+        );
+
+        // Lexical rejection, stage 1: an absolute entry is refused before any
+        // filesystem call, even though the path it names genuinely exists.
+        // If this stage did not run, `confine_within.join(absolute)` would
+        // just be `absolute` (`Path::join` discards the base for an absolute
+        // addition) and canonicalizing it would succeed — that is issue #21
+        // defect 2's re-opened oracle. The echoed label differs from the
+        // other cases below (each preserves its own caller-supplied string),
+        // so only the shared reason is compared here, not the whole message.
+        let absolute_error = expect_confined_refusal(prepare(
+            outside_target.to_str().expect("outside path is UTF-8"),
+        ));
+        assert!(
+            absolute_error.ends_with(CONFINEMENT_REFUSAL),
+            "{absolute_error}"
+        );
+
+        // Lexical rejection, stage 1: a relative entry containing `..` is
+        // refused before any filesystem call too, even though it genuinely
+        // resolves to an existing file.
+        let dotdot_error = expect_confined_refusal(prepare("../outside.txt"));
+        assert!(
+            dotdot_error.ends_with(CONFINEMENT_REFUSAL),
+            "{dotdot_error}"
+        );
+
+        // The existence-oracle proof: the identical entry, refused first
+        // because it names nothing (stage 2, canonicalization fails), then
+        // refused again — byte for byte the same message — once it is
+        // backed by a real, existing symlink that escapes the root (stage 3,
+        // containment fails). Lexical rejection cannot see this case (the
+        // entry is a plain relative name), so this is exactly the pairing
+        // issue #21 defect 2 needed: "does not exist" and "exists but
+        // escapes" must be indistinguishable to the caller.
+        let missing_error = expect_confined_refusal(prepare("escape-link"));
+        assert!(
+            missing_error.ends_with(CONFINEMENT_REFUSAL),
+            "{missing_error}"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_target, packet_dir.join("escape-link"))
+                .expect("create escaping symlink");
+            let escaping_error = expect_confined_refusal(prepare("escape-link"));
+            assert_eq!(
+                missing_error, escaping_error,
+                "a missing entry and the identical entry once backed by an escaping symlink \
+                 must refuse identically"
+            );
+        }
+
+        // Unconfined: the identical escaping path is accepted with no
+        // confinement root — `evidence attach --artifact` is operator-typed,
+        // same as every other input flag, and gets no lexical check.
+        let mut unconfined_state = ClaimPreparationState::new(&existing_ids);
+        let unconfined = prepare_claim(
+            &space,
+            &mut unconfined_state,
+            Path::new("attach-input.json"),
+            claim,
+            &[],
+            std::slice::from_ref(&outside_target),
+            None,
+        )
+        .expect("evidence attach stays unconfined");
+        assert_eq!(unconfined.artifacts.len(), 1);
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// An absolute artifact string that climbs from `probe_dir` up to `/`
+    /// (one `..` per named component — `..` at `/` is a no-op, so this must
+    /// reach the real root) and back down through `root`'s own absolute path
+    /// to `filename`. `fs::canonicalize` validates every component along the
+    /// way, so this string canonicalizes successfully, to a real file inside
+    /// `root`, if and only if `probe_dir` exists — that is the existence
+    /// oracle issue #21 defect 2 reopened, with no symlink required.
+    fn climb_to_root_and_descend_into(probe_dir: &Path, root: &Path, filename: &str) -> String {
+        // A generous, fixed climb count rather than `probe_dir`'s own
+        // component count: `..` resolution is physical, following symlinks
+        // as it goes, so a symlinked ancestor (macOS's `/var` ->
+        // `/private/var`, which is exactly why `/etc/../..` does not reach
+        // `/` in one hop) makes the real resolved depth deeper than the raw
+        // string's component count. `..` at `/` is a no-op, so climbing
+        // further than needed is always safe; climbing short of it is not —
+        // it undercounted here once already and produced a bogus path that
+        // failed to canonicalize regardless of whether `probe_dir` existed,
+        // silently defeating the property this test exists to check.
+        const GENEROUS_CLIMB_COUNT: usize = 64;
+        let climb = "../".repeat(GENEROUS_CLIMB_COUNT);
+        let root_suffix = root
+            .strip_prefix("/")
+            .expect("root must be absolute")
+            .to_str()
+            .expect("root is UTF-8");
+        format!(
+            "{}/{climb}{root_suffix}/{filename}",
+            probe_dir.to_str().expect("probe dir is UTF-8")
+        )
+    }
+
+    #[test]
+    fn prepare_claim_lexical_rejection_closes_the_climb_and_return_existence_oracle() {
+        let base = unique_scratch_dir("climb-oracle");
+        let packet_dir = base.join("packet");
+        fs::create_dir_all(&packet_dir).expect("create packet dir");
+        fs::write(packet_dir.join("inside.txt"), b"inside bytes").expect("write inside artifact");
+        let claim = evidence_cell_from_bytes(EVIDENCE_CELL).expect("claim cell");
+        let space = minimal_case_space(Vec::new());
+        let existing_ids: BTreeSet<Id> = BTreeSet::new();
+        let canonical_packet_dir = fs::canonicalize(&packet_dir).expect("canonicalize packet dir");
+        let prepare = |artifact: String| {
+            let mut state = ClaimPreparationState::new(&existing_ids);
+            prepare_claim(
+                &space,
+                &mut state,
+                Path::new("packet.json"),
+                claim.clone(),
+                &[],
+                std::slice::from_ref(&PathBuf::from(artifact)),
+                Some(&canonical_packet_dir),
+            )
+        };
+
+        // `base` genuinely exists; a sibling under it does not. Both are
+        // used only as the climbed-through absolute prefix — the string
+        // always resolves back down into `canonical_packet_dir/inside.txt`,
+        // a real file that legitimately belongs in the root.
+        let existing_probe = base.clone();
+        let missing_probe = base.join("zzz-does-not-exist-probe");
+        assert!(
+            !missing_probe.exists(),
+            "probe must not exist for this test to mean anything"
+        );
+
+        let existing_probe_artifact =
+            climb_to_root_and_descend_into(&existing_probe, &canonical_packet_dir, "inside.txt");
+        let missing_probe_artifact =
+            climb_to_root_and_descend_into(&missing_probe, &canonical_packet_dir, "inside.txt");
+
+        // Prove the crafted string is a genuine working exploit shape before
+        // proving it is refused — otherwise a mistake in the climb (as
+        // happened once while writing this test: too few `..` left a bogus
+        // path that failed to canonicalize regardless of `probe_dir`,
+        // silently making the test pass for the wrong reason) would make
+        // this test meaningless. Bypassing `prepare_claim` entirely and
+        // canonicalizing the raw string directly: it resolves to the real
+        // in-root file exactly when the climbed-through directory exists.
+        assert_eq!(
+            fs::canonicalize(&existing_probe_artifact).expect("the exploit string must resolve"),
+            canonical_packet_dir.join("inside.txt"),
+            "the crafted string must genuinely reach the real in-root file when unconfined"
+        );
+        assert!(
+            fs::canonicalize(&missing_probe_artifact).is_err(),
+            "the crafted string must genuinely fail to resolve when the probed directory is \
+             absent — that gap between success and failure is the oracle"
+        );
+
+        // Yet `prepare_claim`, confined, refuses both identically: lexical
+        // rejection fires on the absolute string before any filesystem call,
+        // so whether `base` or its nonexistent sibling exists is never
+        // observed.
+        let existing_probe_error = expect_confined_refusal(prepare(existing_probe_artifact));
+        let missing_probe_error = expect_confined_refusal(prepare(missing_probe_artifact));
+        assert!(
+            existing_probe_error.ends_with(CONFINEMENT_REFUSAL),
+            "{existing_probe_error}"
+        );
+        assert!(
+            missing_probe_error.ends_with(CONFINEMENT_REFUSAL),
+            "{missing_probe_error}"
+        );
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn artifact_confined_matches_which_file_a_generated_path_actually_reaches() {
+        // Real files and a real symlink, not a string model of one: the
+        // property is that the confinement check agrees with the OS's own
+        // resolution of `..`, `.`, and an escaping symlink, not with a
+        // second implementation of path-escape reasoning.
+        let base = unique_scratch_dir("confinement-property");
+        let root = base.join("packet");
+        fs::create_dir_all(root.join("sub")).expect("create packet tree");
+        fs::create_dir_all(base.join("outside")).expect("create outside dir");
+        fs::write(root.join("inside.txt"), b"INSIDE").expect("write inside file");
+        fs::write(root.join("sub").join("inside2.txt"), b"INSIDE")
+            .expect("write nested inside file");
+        fs::write(base.join("outside").join("secret.txt"), b"OUTSIDE").expect("write outside file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(base.join("outside"), root.join("escape"))
+            .expect("create escaping symlink");
+
+        let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+        let canonical_base = fs::canonicalize(&base).expect("canonicalize base");
+        // Owned so the absolute anchors can live in the segment alphabet
+        // below: `PathBuf::push` with an absolute component discards
+        // whatever was pushed before it (same as `Path::join`), so including
+        // these lets a generated sequence begin outside `root` entirely —
+        // the shape `prepare_claim`'s lexical rejection exists to refuse —
+        // and then climb further above it or descend back down through
+        // `packet`, not only ever descend from `root` itself.
+        let base_absolute = canonical_base.to_str().expect("base is UTF-8").to_owned();
+        let root_absolute = canonical_root.to_str().expect("root is UTF-8").to_owned();
+        let segments: Vec<&str> = vec![
+            "..",
+            ".",
+            "inside.txt",
+            "sub",
+            "escape",
+            "outside",
+            "secret.txt",
+            "missing.txt",
+            "packet",
+            base_absolute.as_str(),
+            root_absolute.as_str(),
+        ];
+
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let len: usize = u.int_in_range(1..=6)?;
+                let mut relative = PathBuf::new();
+                for _ in 0..len {
+                    relative.push(*u.choose(&segments)?);
+                }
+                let candidate = root.join(&relative);
+
+                // Only a path that actually reaches one of the two marker
+                // files says anything about confinement; a directory, a
+                // dangling `missing.txt`, or a symlink loop reads as an
+                // ordinary `Err` here and is not this property's concern.
+                let Ok(content) = fs::read(&candidate) else {
+                    return Ok(());
+                };
+                let ground_truth_inside = match content.as_slice() {
+                    b"INSIDE" => true,
+                    b"OUTSIDE" => false,
+                    _ => return Ok(()),
+                };
+                let canonical_candidate =
+                    fs::canonicalize(&candidate).expect("a path that read must canonicalize");
+
+                assert_eq!(
+                    artifact_confined(&canonical_candidate, &canonical_root),
+                    ground_truth_inside,
+                    "confinement check disagreed with which file {relative:?} actually reaches"
+                );
+                Ok(())
+            },
+        );
+
+        fs::remove_dir_all(&base).ok();
     }
 }

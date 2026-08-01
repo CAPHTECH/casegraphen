@@ -332,6 +332,7 @@ pub(super) fn review_gaps(
     case_space: &CaseSpace,
     evidence_findings: &NativeEvidenceFindings,
     completion_candidates: &[NativeCompletionCandidate],
+    satisfied_requirement_ids: &BTreeSet<String>,
 ) -> Vec<NativeReviewGap> {
     let mut gaps = BTreeMap::new();
     for candidate in completion_candidates
@@ -345,6 +346,7 @@ pub(super) fn review_gaps(
                 target_id: candidate.id.clone(),
                 gap_type: NativeReviewGapType::UnreviewedCompletion,
                 explanation: "Completion candidates remain reviewable findings until explicitly accepted or rejected.".to_owned(),
+                requirement_satisfied: false,
             },
         );
     }
@@ -358,6 +360,26 @@ pub(super) fn review_gaps(
                 explanation:
                     "AI inference is separated from accepted evidence until review promotion."
                         .to_owned(),
+                // The requirement-placeholder pattern
+                // (`skills/casegraphen-operate/references/authoring.md`): a
+                // placeholder cell exists only so a hard `requires_evidence`
+                // edge has something to point at, and it never becomes
+                // reviewed itself. Marked here — not filtered by
+                // `assurance_axis` or `close_check_skeleton` — using the
+                // same `satisfied_requirement_ids` derivation
+                // `evaluate_cell`'s own evidence-obstruction check uses, so
+                // this can never disagree with which obstructions the
+                // evaluation actually reports. This is deliberately *not*
+                // `NativeEvaluationContext::trusted_coverage_targets`: that
+                // is mere coverage-claim membership, and `--satisfies`
+                // accepts any evidence cell as a coverage target whether or
+                // not a `requires_evidence` edge names it — marking on
+                // coverage membership alone let an actor holding only
+                // `evidence-attach` launder an unrelated, never-reviewed
+                // claim out of the axis by naming it in an unrelated
+                // `--satisfies`, cleared by any reviewer's unrelated
+                // `review accept`. Reproduced and fixed.
+                requirement_satisfied: satisfied_requirement_ids.contains(evidence_id.as_str()),
             },
         );
     }
@@ -372,6 +394,7 @@ pub(super) fn review_gaps(
                     explanation:
                         "Generated morphisms do not count as accepted evolution until reviewed."
                             .to_owned(),
+                    requirement_satisfied: false,
                 },
             );
         }
@@ -392,6 +415,7 @@ pub(super) fn review_gaps(
                     gap_type: NativeReviewGapType::UnreviewedProjectionLoss,
                     explanation: "Projection loss must stay visible to reviewers and close checks."
                         .to_owned(),
+                    requirement_satisfied: false,
                 },
             );
         }
@@ -546,8 +570,14 @@ pub(super) fn close_check_skeleton(
         })
         .map(|projection| projection.projection_id.clone())
         .collect::<Vec<_>>();
+    // The mark is made once, at production (`review_gaps`), and both this
+    // check and `assurance_axis` just read it: a review gap over an
+    // already-satisfied requirement placeholder must not keep
+    // `close:native-review-gaps-closed` failing while `space reason` reports
+    // `assurance: accepted` for the identical gap in the same payload.
     let review_gap_ids = review_gaps
         .iter()
+        .filter(|gap| !gap.requirement_satisfied)
         .map(|gap| gap.id.clone())
         .collect::<Vec<_>>();
     let invariant_results = vec![

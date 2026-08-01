@@ -695,8 +695,9 @@ fn space_reason_text_renders_the_evaluation_without_changing_json_or_exit_semant
     );
     assert_eq!(
         format!("{:x}", Sha256::digest(&json_report.stdout)),
-        "6120bc76d0154119016d33a52fa028880b519c7907ede4f113fb6e5bff1c3b62",
-        "the JSON bytes changed from the two-axis-status baseline"
+        "a9f86abdf9ce4303889e895c828f12b08a3b5f135285aa381518cfbd52703699",
+        "the JSON bytes changed from the two-axis-status baseline — expected here: \
+         NativeReviewGap gained `requirement_satisfied` (issue #20's gap-marking fix)"
     );
     let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
     let frontier_ids = evaluation["frontier_cell_ids"]
@@ -2261,6 +2262,418 @@ fn packet_apply_report_validates_against_the_native_cli_report_schema() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// `packet apply` with `store`/`case_space_id`/`base_revision_id` fixed to the
+/// packet-test fixture, varying only the packet file and its artifacts. Used
+/// by the confinement tests below so each one states only what differs: the
+/// packet path and what its `artifacts:` list names.
+fn apply_packet_test_fixture(store: &str, packet_path: &Path) -> Output {
+    run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-confinement-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ])
+}
+
+#[test]
+fn packet_apply_refuses_an_artifact_naming_a_dot_dot_escape_from_the_packet_directory() {
+    let directory = unique_temp_dir();
+    let packet_directory = directory.join("packet");
+    fs::create_dir_all(&packet_directory).expect("create packet directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    // The packet lives in its own subdirectory; the artifact it names walks
+    // back out of it with `..` to a file that is a sibling of that directory,
+    // not inside it.
+    fs::write(directory.join("outside.log"), b"outside bytes\n").expect("write outside file");
+    let mut packet = packet_value("evidence:packet-dotdot-escape");
+    packet["artifacts"] = json!(["../outside.log"]);
+    let packet_path = packet_directory.join("dotdot.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!apply.status.success());
+    assert!(
+        stderr(&apply).contains("does not resolve inside the packet's directory"),
+        "stderr: {}",
+        stderr(&apply)
+    );
+
+    let history = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1,
+        "a refused packet artifact must append nothing"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_refuses_an_artifact_naming_an_absolute_path() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    // An absolute path replaces the packet-relative join entirely
+    // (`Path::join`), so this is exactly the reproduction the fix closes: an
+    // artifact entry that names a path anywhere on the filesystem.
+    let outside_directory = unique_temp_dir();
+    fs::create_dir_all(&outside_directory).expect("create outside directory");
+    let absolute_target = outside_directory.join("absolute-target.log");
+    fs::write(&absolute_target, b"absolute bytes\n").expect("write absolute target");
+    let mut packet = packet_value("evidence:packet-absolute-escape");
+    packet["artifacts"] = json!([absolute_target.to_str().expect("absolute path")]);
+    let packet_path = directory.join("absolute.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!apply.status.success());
+    assert!(
+        stderr(&apply).contains("does not resolve inside the packet's directory"),
+        "stderr: {}",
+        stderr(&apply)
+    );
+
+    fs::remove_dir_all(&directory).expect("remove temp directory");
+    fs::remove_dir_all(&outside_directory).expect("remove outside directory");
+}
+
+#[test]
+#[cfg(unix)]
+fn packet_apply_refuses_an_artifact_symlink_pointing_outside_the_packet_directory() {
+    let directory = unique_temp_dir();
+    let packet_directory = directory.join("packet");
+    fs::create_dir_all(&packet_directory).expect("create packet directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let outside_target = directory.join("outside-target.log");
+    fs::write(&outside_target, b"outside bytes via symlink\n").expect("write outside target");
+    std::os::unix::fs::symlink(&outside_target, packet_directory.join("escape.log"))
+        .expect("create escaping symlink");
+    let mut packet = packet_value("evidence:packet-symlink-escape");
+    packet["artifacts"] = json!(["escape.log"]);
+    let packet_path = packet_directory.join("symlink.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!apply.status.success());
+    assert!(
+        stderr(&apply).contains("does not resolve inside the packet's directory"),
+        "stderr: {}",
+        stderr(&apply)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_accepts_a_plain_artifact_beside_it_and_records_the_canonical_uri() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let artifact_path = directory.join("build.log");
+    fs::write(&artifact_path, b"packet artifact bytes\n").expect("write artifact");
+    let packet_path = directory.join("plain.evidence.packet.json");
+    write_json_value(
+        &packet_path,
+        &packet_value("evidence:packet-plain-artifact"),
+    );
+
+    let apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let added_cells = stdout_json(&apply)["result"]["entry"]["morphism"]["metadata"]["payload"]
+        ["added_cells"]
+        .as_array()
+        .expect("added cells")
+        .clone();
+    let artifact_cell = added_cells
+        .iter()
+        .find(|cell| cell["cell_type"] == json!("custom:artifact"))
+        .expect("artifact cell present in the payload");
+    let canonical_artifact_path =
+        fs::canonicalize(&artifact_path).expect("canonicalize artifact path");
+    assert_eq!(
+        artifact_cell["metadata"]["artifact_uri"],
+        json!(canonical_artifact_path
+            .to_str()
+            .expect("canonical artifact path"))
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_accepts_a_bare_relative_packet_filename_from_its_own_directory() {
+    // `Path::new("packet.json").parent()` is `Some("")`, not `None` — the
+    // regression this closes. `packet apply --packet packet.json` run from
+    // the packet's own directory is the most natural invocation there is,
+    // and every other confinement test here passes an absolute or
+    // temp-rooted path, which is exactly why the regression went unnoticed.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    fs::write(directory.join("build.log"), b"packet artifact bytes\n").expect("write artifact");
+    write_json_value(
+        &directory.join("relative.evidence.packet.json"),
+        &packet_value("evidence:packet-relative-filename"),
+    );
+
+    let apply = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .current_dir(&directory)
+        .args([
+            "packet",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:packet-confinement-base",
+            "--packet",
+            "relative.evidence.packet.json",
+            "--actor-id",
+            "actor:packet-implementer",
+            "--capability-id",
+            "capability:packet-implementer",
+            "--operation-scope-id",
+            native_case_space_id(),
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:native-case-management-contract",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run casegraphen CLI");
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+#[cfg(unix)]
+fn packet_apply_resolves_artifacts_beside_a_symlinked_packet_file() {
+    // The join base for `artifacts:` entries and the confinement root must be
+    // the same directory answer. A symlinked packet *file* is the case that
+    // distinguishes "canonicalize `packet_path.parent()`" from "canonicalize
+    // `packet_path` and take its parent": the packet's real neighbour lives
+    // next to the file the symlink resolves to, not next to the symlink.
+    let directory = unique_temp_dir();
+    let real_directory = directory.join("real");
+    let link_directory = directory.join("linkdir");
+    fs::create_dir_all(&real_directory).expect("create real directory");
+    fs::create_dir_all(&link_directory).expect("create link directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    fs::write(
+        real_directory.join("data.txt"),
+        b"the packet's real neighbour\n",
+    )
+    .expect("write the packet's real neighbour");
+    let mut packet = packet_value("evidence:packet-symlinked-file");
+    packet["artifacts"] = json!(["data.txt"]);
+    let real_packet_path = real_directory.join("packet.json");
+    write_json_value(&real_packet_path, &packet);
+    let linked_packet_path = link_directory.join("link.json");
+    std::os::unix::fs::symlink(&real_packet_path, &linked_packet_path)
+        .expect("create symlinked packet file");
+
+    let apply = apply_packet_test_fixture(&store, &linked_packet_path);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let added_cells = stdout_json(&apply)["result"]["entry"]["morphism"]["metadata"]["payload"]
+        ["added_cells"]
+        .as_array()
+        .expect("added cells")
+        .clone();
+    let artifact_cell = added_cells
+        .iter()
+        .find(|cell| cell["cell_type"] == json!("custom:artifact"))
+        .expect("the packet's real neighbour was resolved as an artifact");
+    let canonical_data_path =
+        fs::canonicalize(real_directory.join("data.txt")).expect("canonicalize data path");
+    assert_eq!(
+        artifact_cell["metadata"]["artifact_uri"],
+        json!(canonical_data_path.to_str().expect("canonical data path"))
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_refuses_an_existing_and_a_missing_absolute_artifact_identically() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let outside_directory = unique_temp_dir();
+    fs::create_dir_all(&outside_directory).expect("create outside directory");
+    let absolute_target = outside_directory.join("oracle-target.log");
+    let mut packet = packet_value("evidence:packet-oracle-probe");
+    packet["artifacts"] = json!([absolute_target.to_str().expect("absolute path")]);
+    let packet_path = directory.join("oracle-probe.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    // The same packet, byte for byte, applied twice against the same
+    // unadvanced base revision (a refused apply appends nothing). Only the
+    // filesystem changes between the two calls: first the named absolute
+    // path does not exist at all, then it exists but is outside the packet
+    // directory. The observable outcome must not let those two states be
+    // told apart — comparing stderr alone is not enough: a future change
+    // that moves the refusal payload elsewhere (stdout, an exit-code-only
+    // signal) could leave two empty, trivially-equal stderr strings while
+    // the actual signal — did the operation succeed — still leaked which
+    // state held. Compare exit code, stdout, and stderr, and confirm neither
+    // call mutated the store.
+    let missing_apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!missing_apply.status.success());
+
+    fs::write(&absolute_target, b"oracle target bytes\n").expect("write absolute target");
+    let existing_apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!existing_apply.status.success());
+
+    assert_eq!(missing_apply.status.code(), existing_apply.status.code());
+    assert_eq!(stdout(&missing_apply), stdout(&existing_apply));
+    assert_eq!(
+        stderr(&missing_apply),
+        stderr(&existing_apply),
+        "a nonexistent absolute artifact path and the identical, now-existing path outside the \
+         packet directory must refuse with a byte-identical observable outcome — otherwise a \
+         packet can probe whether an arbitrary filesystem path exists"
+    );
+    assert_eq!(
+        stdout_json(&run_native_case_store_command(&directory, "history"))["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1,
+        "neither refused apply may have mutated the store"
+    );
+
+    fs::remove_dir_all(&directory).expect("remove temp directory");
+    fs::remove_dir_all(&outside_directory).expect("remove outside directory");
+}
+
+#[test]
+fn packet_apply_refuses_a_climb_and_return_artifact_identically_whether_the_probed_directory_exists(
+) {
+    // The exploit issue #21 defect 2 reopened: an `artifacts:` entry that
+    // starts at an arbitrary absolute directory, climbs with enough `..` to
+    // reach real `/` (any depth — `..` at `/` is a no-op, and enough climbs
+    // is always safe even though too few silently is not, since a symlinked
+    // ancestor like macOS's `/var` -> `/private/var` makes the real resolved
+    // depth deeper than the string's own component count), and descends back
+    // through the packet's own real directory to a genuinely in-root file.
+    // Before the lexical pre-check, this canonicalized and dispatched
+    // successfully whenever the climbed-through directory happened to exist
+    // — an existence oracle over the operator's filesystem, and a durable
+    // mutation on a hit.
+    //
+    // One packet, byte for byte, applied twice against the same unadvanced
+    // base revision (a refused apply appends nothing): the artifact entry
+    // never changes, only whether the directory it climbs through exists on
+    // disk between the two calls.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-confinement-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    fs::write(directory.join("build.log"), b"packet artifact bytes\n").expect("write artifact");
+    let canonical_directory = fs::canonicalize(&directory).expect("canonicalize packet directory");
+    let root_suffix = canonical_directory
+        .strip_prefix("/")
+        .expect("packet directory is absolute")
+        .to_str()
+        .expect("packet directory is UTF-8");
+    let climb = "../".repeat(64);
+
+    let probe_directory = unique_temp_dir();
+    assert!(
+        !probe_directory.exists(),
+        "probe must not exist yet for this test to mean anything"
+    );
+    let artifact_entry = format!(
+        "{}/{climb}{root_suffix}/build.log",
+        probe_directory.to_str().expect("probe dir is UTF-8")
+    );
+
+    // The crafted string is a genuine working exploit shape, not a typo:
+    // canonicalizing it directly (bypassing the CLI) fails while the probed
+    // directory is absent...
+    assert!(fs::canonicalize(&artifact_entry).is_err());
+
+    let mut packet = packet_value("evidence:packet-climb-probe");
+    packet["artifacts"] = json!([artifact_entry]);
+    let packet_path = directory.join("climb.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let missing_apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!missing_apply.status.success());
+
+    // ...and, once the probed directory is created, resolves to the real
+    // in-root file — proving the oracle is genuinely there for the code to
+    // close, not merely hypothesized.
+    fs::create_dir_all(&probe_directory).expect("create the probed directory");
+    assert_eq!(
+        fs::canonicalize(&artifact_entry).expect("the exploit string must now resolve"),
+        canonical_directory.join("build.log")
+    );
+
+    let existing_apply = apply_packet_test_fixture(&store, &packet_path);
+    assert!(!existing_apply.status.success());
+
+    assert_eq!(missing_apply.status.code(), existing_apply.status.code());
+    assert_eq!(stdout(&missing_apply), stdout(&existing_apply));
+    assert_eq!(
+        stderr(&missing_apply),
+        stderr(&existing_apply),
+        "whether the climbed-through probe directory exists must not be observable in the \
+         refusal"
+    );
+    assert_eq!(
+        stdout_json(&run_native_case_store_command(&directory, "history"))["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1,
+        "neither apply may have mutated the store — a hit on the existing probe directory \
+         previously dispatched successfully and attached a real artifact"
+    );
+
+    fs::remove_dir_all(&directory).expect("remove temp directory");
+    fs::remove_dir_all(&probe_directory).expect("remove probe directory");
+}
+
 #[test]
 fn packet_strict_parse_refuses_an_unknown_field() {
     let directory = unique_temp_dir();
@@ -2838,6 +3251,514 @@ fn a_hard_evidence_requirement_is_satisfied_only_by_recorded_coverage() {
             .any(|gap| gap["gap_type"] == json!("unreviewed_inference")
                 && gap["target_id"] == json!("evidence:coverage-real")),
         "the review gap for the now-accepted claim must close"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// A minimal genesis exercising exactly the requirement-placeholder pattern
+/// documented in `skills/casegraphen-operate/references/authoring.md`: a work
+/// cell with a hard `requires_evidence` edge into an evidence cell that exists
+/// only to give that edge something to point at (`lifecycle: proposed`,
+/// `review_status: unreviewed`, no declared `evidence_boundary`). Deliberately
+/// its own case space rather than an extension of `native_case_fixture()`:
+/// that fixture's projections carry a permanent `unreviewed_projection_loss`
+/// gap, which would keep assurance at `review_required` regardless of this
+/// test and defeat the point of it. `lift native` regenerates the genesis
+/// payload and checksums from `case_cells`/`case_relations`/`projections`
+/// (`write_genesis_materialization`), so only the top-level records need to be
+/// supplied here.
+fn assurance_placeholder_fixture() -> Value {
+    let space_id = "space:assurance-placeholder-fixture";
+    let source_boundary = json!({
+        "id": "source_boundary:assurance-placeholder-fixture",
+        "included_sources": ["source:test"],
+        "excluded_sources": [],
+        "adapters": ["test.fixture.v1"],
+        "accepted_fact_policy": "fixture facts are accepted test input",
+        "inference_policy": "fixture makes no inferred claims beyond the declared placeholder",
+        "information_loss": []
+    });
+    json!({
+        "schema": "highergraphen.case.space.v1",
+        "schema_version": 1,
+        "case_space_id": "case_space:assurance-placeholder-fixture",
+        "space_id": space_id,
+        "case_cells": [
+            {
+                "id": "work:placeholder-target", "cell_type": "work", "lifecycle": "active",
+                "space_id": space_id, "title": "Work needing placeholder evidence",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:placeholder-slot", "cell_type": "evidence", "lifecycle": "proposed",
+                "space_id": space_id, "title": "Required evidence placeholder",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "capability:test-mutation", "cell_type": "custom:capability", "lifecycle": "accepted",
+                "space_id": space_id, "title": "Authorize test mutations",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {
+                    "actor_ids": ["actor:test-mutation-cli"],
+                    "operations": ["evidence-attach", "review", "cell-transition"]
+                },
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "document", "title": "t"}}
+            }
+        ],
+        "case_relations": [
+            {
+                "id": "relation:placeholder-requires", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "work:placeholder-target",
+                "to_id": "evidence:placeholder-slot", "evidence_ids": [],
+                "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            }
+        ],
+        "morphism_log": [
+            {
+                "schema": "highergraphen.case.morphism_log_entry.v1", "schema_version": 1,
+                "case_space_id": "case_space:assurance-placeholder-fixture", "sequence": 1,
+                "entry_id": "morphism_log_entry:genesis", "morphism_id": "morphism:genesis",
+                "target_revision_id": "revision:assurance-placeholder-base",
+                "morphism": {
+                    "morphism_id": "morphism:genesis", "morphism_type": "create",
+                    "target_revision_id": "revision:assurance-placeholder-base",
+                    "added_ids": [], "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+                    "violated_invariant_ids": [], "review_status": "accepted",
+                    "evidence_ids": [], "source_ids": ["source:test"],
+                    "metadata": {
+                        "lift_semantics": "test_fixture_to_case_space",
+                        "source_boundary_id": "source_boundary:assurance-placeholder-fixture",
+                        "source_boundary": source_boundary
+                    }
+                },
+                "actor_id": "actor:test-author", "recorded_at": "2026-08-01T00:00:00Z",
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}},
+                "source_ids": ["source:test"], "replay_checksum": ""
+            }
+        ],
+        "projections": [],
+        "revision": {
+            "revision_id": "revision:assurance-placeholder-base",
+            "case_space_id": "case_space:assurance-placeholder-fixture",
+            "applied_entry_ids": ["morphism_log_entry:genesis"],
+            "applied_morphism_ids": ["morphism:genesis"],
+            "checksum": "", "created_at": "2026-08-01T00:00:00Z",
+            "source_ids": ["source:test"], "metadata": {}
+        },
+        "close_policy_id": null,
+        "metadata": {"source_boundary": source_boundary}
+    })
+}
+
+#[test]
+fn assurance_reaches_accepted_only_after_a_requirement_placeholder_is_covered_by_reviewed_evidence()
+{
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture_path = directory.join("assurance-placeholder-fixture.case.space.json");
+    write_json_value(&fixture_path, &assurance_placeholder_fixture());
+    import_native_case_space_from_input(
+        &directory,
+        &fixture_path,
+        "revision:assurance-placeholder-base",
+    );
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:assurance-placeholder-fixture";
+    let gate_flags = [
+        "--actor-id",
+        "actor:test-mutation-cli",
+        "--capability-id",
+        "capability:test-mutation",
+        "--operation-scope-id",
+        case_space_id,
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:assurance-placeholder-fixture",
+    ];
+    let reason = || {
+        run_cli(&[
+            "space",
+            "reason",
+            "--store",
+            &store,
+            "--case-space-id",
+            case_space_id,
+            "--format",
+            "json",
+        ])
+    };
+
+    // Nothing covers the placeholder yet: its own `UnreviewedInference` gap
+    // is unresolved, so assurance must not read as accepted.
+    let before = reason();
+    assert!(before.status.success(), "stderr: {}", stderr(&before));
+    let before_evaluation = &stdout_json(&before)["result"]["evaluation"];
+    assert_eq!(before_evaluation["assurance"], json!("review_required"));
+    let before_placeholder_gap = before_evaluation["review_gaps"]
+        .as_array()
+        .expect("review gaps")
+        .iter()
+        .find(|gap| gap["target_id"] == json!("evidence:placeholder-slot"))
+        .expect("placeholder gap present before coverage");
+    assert_eq!(
+        before_placeholder_gap["requirement_satisfied"],
+        json!(false),
+        "the mark is set at production, in sections::review_gaps, not read from a coverage \
+         predicate downstream"
+    );
+
+    let claim_path = directory.join("placeholder-claim.evidence.json");
+    write_json_value(
+        &claim_path,
+        &json!({
+            "id": "evidence:placeholder-claim", "cell_type": "evidence", "lifecycle": "active",
+            "space_id": "space:assurance-placeholder-fixture", "title": "Attached claim",
+            "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+            "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                           "source": {"kind": "document", "title": "doc"}}
+        }),
+    );
+    let mut attach_args = vec![
+        "evidence",
+        "attach",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--base-revision-id",
+        "revision:assurance-placeholder-base",
+        "--input",
+        claim_path.to_str().expect("claim path"),
+        "--satisfies",
+        "evidence:placeholder-slot",
+        "--format",
+        "json",
+    ];
+    attach_args.extend(gate_flags);
+    let attached = run_cli(&attach_args);
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+
+    // The claim exists but is itself unreviewed, so its coverage of the
+    // placeholder is not yet trusted: still not accepted.
+    let mid = reason();
+    assert!(mid.status.success(), "stderr: {}", stderr(&mid));
+    assert_eq!(
+        stdout_json(&mid)["result"]["evaluation"]["assurance"],
+        json!("review_required")
+    );
+
+    let mut review_args = vec![
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--target-id",
+        "evidence:placeholder-claim",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "reviewed the attached claim",
+        "--base-revision-id",
+        attached_revision.as_str(),
+        "--evidence-id",
+        "evidence:placeholder-claim",
+        "--format",
+        "json",
+    ];
+    review_args.extend(gate_flags);
+    let reviewed = run_cli(&review_args);
+    assert!(reviewed.status.success(), "stderr: {}", stderr(&reviewed));
+
+    // The claim is now trusted and recorded as covering the placeholder, so
+    // the placeholder's own `UnreviewedInference` gap must stop driving the
+    // axis — but the gap and the inference-separated finding must still be
+    // reported, because the placeholder cell itself was never reviewed.
+    let after = reason();
+    assert!(after.status.success(), "stderr: {}", stderr(&after));
+    let after_evaluation = &stdout_json(&after)["result"]["evaluation"];
+    assert_eq!(after_evaluation["assurance"], json!("accepted"));
+    assert!(
+        after_evaluation["evidence_findings"]["unreviewed_inference_ids"]
+            .as_array()
+            .expect("unreviewed inference ids")
+            .contains(&json!("evidence:placeholder-slot")),
+        "the placeholder itself was never reviewed and must still surface as an unreviewed \
+         inference"
+    );
+    let after_placeholder_gap = after_evaluation["review_gaps"]
+        .as_array()
+        .expect("review gaps")
+        .iter()
+        .find(|gap| {
+            gap["gap_type"] == json!("unreviewed_inference")
+                && gap["target_id"] == json!("evidence:placeholder-slot")
+        })
+        .expect(
+            "the placeholder's own review gap must remain visible even though it no longer \
+                 drives assurance",
+        );
+    assert_eq!(
+        after_placeholder_gap["requirement_satisfied"],
+        json!(true),
+        "sections::review_gaps must mark the gap once its requirement is satisfied"
+    );
+    assert!(
+        after_evaluation["evidence_findings"]["findings"]
+            .as_array()
+            .expect("evidence findings")
+            .iter()
+            .any(
+                |finding| finding["finding_type"] == json!("inference_separated")
+                    && finding["evidence_ids"] == json!(["evidence:placeholder-slot"])
+            ),
+        "the inference-separated finding for the placeholder must remain in the report"
+    );
+    // FIX 2's proof: `assurance: accepted` and a failed
+    // `close:native-review-gaps-closed` over the identical gap in the same
+    // payload was the self-contradiction this change closed. Both readers
+    // now consult the same mark.
+    let review_gaps_closed_invariant = after_evaluation["close_check"]["invariant_results"]
+        .as_array()
+        .expect("close invariant results")
+        .iter()
+        .find(|invariant| invariant["invariant_id"] == json!("close:native-review-gaps-closed"))
+        .expect("close:native-review-gaps-closed invariant present");
+    assert_eq!(
+        review_gaps_closed_invariant["passed"],
+        json!(true),
+        "close:native-review-gaps-closed must not fail over the same gap `assurance: accepted` \
+         already excluded"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn assurance_axis_does_not_launder_an_unreviewed_claim_through_an_unrelated_satisfies_target() {
+    // The exclusion #20 added must key on an actually-satisfied
+    // `requires_evidence` target, not on bare membership in the coverage set
+    // `--satisfies` writes to. `--satisfies` accepts any evidence cell as a
+    // target (`is_coverage_target` checks only `cell_type: evidence`), so
+    // without that distinction an actor holding only `evidence-attach` could
+    // attach an unrelated, never-reviewed claim, name it as the
+    // `--satisfies` target of a second claim, and have any reviewer's
+    // `review accept` of that *second* claim — never of the first — clear
+    // the first claim's own review gap out of the Assurance axis.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture_path = directory.join("assurance-oracle-fixture.case.space.json");
+    write_json_value(&fixture_path, &assurance_placeholder_fixture());
+    import_native_case_space_from_input(
+        &directory,
+        &fixture_path,
+        "revision:assurance-placeholder-base",
+    );
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:assurance-placeholder-fixture";
+    let gate_flags = [
+        "--actor-id",
+        "actor:test-mutation-cli",
+        "--capability-id",
+        "capability:test-mutation",
+        "--operation-scope-id",
+        case_space_id,
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:assurance-placeholder-fixture",
+    ];
+    let reason = || {
+        run_cli(&[
+            "space",
+            "reason",
+            "--store",
+            &store,
+            "--case-space-id",
+            case_space_id,
+            "--format",
+            "json",
+        ])
+    };
+    let attach = |claim_id: &str, claim_path: &Path, satisfies: Option<&str>, base: &str| {
+        write_json_value(
+            claim_path,
+            &json!({
+                "id": claim_id, "cell_type": "evidence", "lifecycle": "active",
+                "space_id": "space:assurance-placeholder-fixture", "title": "Attached claim",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "doc"}}
+            }),
+        );
+        let mut args = vec![
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            case_space_id,
+            "--base-revision-id",
+            base,
+            "--input",
+            claim_path.to_str().expect("claim path"),
+        ];
+        if let Some(target) = satisfies {
+            args.extend(["--satisfies", target]);
+        }
+        args.extend(["--format", "json"]);
+        args.extend(gate_flags);
+        let attached = run_cli(&args);
+        assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+        stdout_json(&attached)["result"]["record"]["current_revision_id"]
+            .as_str()
+            .expect("attached revision")
+            .to_owned()
+    };
+
+    // Baseline: the documented placeholder pattern, already covered and
+    // reviewed, reports `accepted` — the same setup and outcome as
+    // `assurance_reaches_accepted_only_after_a_requirement_placeholder_is_covered_by_reviewed_evidence`.
+    let after_placeholder_attach = attach(
+        "evidence:placeholder-claim",
+        &directory.join("placeholder-claim.evidence.json"),
+        Some("evidence:placeholder-slot"),
+        "revision:assurance-placeholder-base",
+    );
+    let mut review_args = vec![
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--target-id",
+        "evidence:placeholder-claim",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "reviewed the placeholder claim",
+        "--base-revision-id",
+        after_placeholder_attach.as_str(),
+        "--evidence-id",
+        "evidence:placeholder-claim",
+        "--format",
+        "json",
+    ];
+    review_args.extend(gate_flags);
+    let placeholder_reviewed = run_cli(&review_args);
+    assert!(
+        placeholder_reviewed.status.success(),
+        "stderr: {}",
+        stderr(&placeholder_reviewed)
+    );
+    let baseline_revision = stdout_json(&placeholder_reviewed)["result"]["record"]
+        ["current_revision_id"]
+        .as_str()
+        .expect("baseline revision")
+        .to_owned();
+    assert_eq!(
+        stdout_json(&reason())["result"]["evaluation"]["assurance"],
+        json!("accepted")
+    );
+
+    // Step 1: attach a claim nothing requires and nothing satisfies. Its own
+    // review gap is unresolved, so assurance must leave `accepted`.
+    let after_a1 = attach(
+        "evidence:oracle-a1",
+        &directory.join("oracle-a1.evidence.json"),
+        None,
+        &baseline_revision,
+    );
+    let after_a1_evaluation = stdout_json(&reason())["result"]["evaluation"].clone();
+    assert_eq!(
+        after_a1_evaluation["assurance"],
+        json!("review_required"),
+        "an unreviewed claim that nothing requires must not stay hidden behind `accepted`"
+    );
+
+    // Step 2: attach a second claim naming the first as its `--satisfies`
+    // target. `evidence:oracle-a1` is not a `requires_evidence` target of
+    // anything — this is exactly the coverage claim `is_coverage_target`
+    // allows and the fix must not treat as a satisfied requirement.
+    let after_a2 = attach(
+        "evidence:oracle-a2",
+        &directory.join("oracle-a2.evidence.json"),
+        Some("evidence:oracle-a1"),
+        &after_a1,
+    );
+    assert_eq!(
+        stdout_json(&reason())["result"]["evaluation"]["assurance"],
+        json!("review_required")
+    );
+
+    // Step 3: review accept the *second* claim only. `evidence:oracle-a1`
+    // itself is still never reviewed by anyone.
+    let mut promote_a2 = vec![
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--target-id",
+        "evidence:oracle-a2",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "reviewed the second claim only",
+        "--base-revision-id",
+        after_a2.as_str(),
+        "--evidence-id",
+        "evidence:oracle-a2",
+        "--format",
+        "json",
+    ];
+    promote_a2.extend(gate_flags);
+    let a2_reviewed = run_cli(&promote_a2);
+    assert!(
+        a2_reviewed.status.success(),
+        "stderr: {}",
+        stderr(&a2_reviewed)
+    );
+
+    let after_evaluation = stdout_json(&reason())["result"]["evaluation"].clone();
+    assert_eq!(
+        after_evaluation["assurance"],
+        json!("review_required"),
+        "reviewing an unrelated second claim must not launder the first, never-reviewed claim \
+         out of the Assurance axis just because it named the first as a `--satisfies` target"
+    );
+    assert!(
+        after_evaluation["evidence_findings"]["unreviewed_inference_ids"]
+            .as_array()
+            .expect("unreviewed inference ids")
+            .contains(&json!("evidence:oracle-a1")),
+        "the never-reviewed claim must still surface as an unreviewed inference"
+    );
+    assert!(
+        after_evaluation["review_gaps"]
+            .as_array()
+            .expect("review gaps")
+            .iter()
+            .any(|gap| gap["gap_type"] == json!("unreviewed_inference")
+                && gap["target_id"] == json!("evidence:oracle-a1")),
+        "the never-reviewed claim's own review gap must remain open"
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -6880,9 +7801,17 @@ fn evidence_attach_with_artifact_mints_a_cell_and_relation_kept_out_of_findings_
         artifact_cell["metadata"]["content_hash"],
         json!(content_hash)
     );
+    // The recorded uri is the canonicalized path that was actually hashed
+    // (issue #21), not necessarily the string `--artifact` named — a temp
+    // directory under a symlinked root (`/var` -> `/private/var` on macOS)
+    // canonicalizes to a different string than it was given.
+    let canonical_artifact_path =
+        fs::canonicalize(&artifact_path).expect("canonicalize artifact path");
     assert_eq!(
         artifact_cell["metadata"]["artifact_uri"],
-        json!(artifact_path.to_str().expect("artifact path"))
+        json!(canonical_artifact_path
+            .to_str()
+            .expect("canonical artifact path"))
     );
     // Evidence-produced-by-this-morphism names the claim, not what it cites.
     assert_eq!(

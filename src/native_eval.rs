@@ -38,7 +38,12 @@ pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCa
     let obstructions = merge_obstructions(&cell_results);
     let evidence_findings = evidence_findings(case_space, &obstructions);
     let completion_candidates = completion_candidates(case_space, &obstructions);
-    let review_gaps = review_gaps(case_space, &evidence_findings, &completion_candidates);
+    let review_gaps = review_gaps(
+        case_space,
+        &evidence_findings,
+        &completion_candidates,
+        &context.satisfied_requirement_ids,
+    );
     let projection_loss = projection_loss(case_space);
     let correspondence = correspondence_summaries(case_space);
     let evolution = evolution_summary(case_space);
@@ -89,8 +94,25 @@ struct NativeEvaluationContext<'a> {
     trusted_evidence_ids: BTreeSet<&'a str>,
     /// Targets that trusted evidence covers, taken from the morphisms that
     /// minted the coverage rather than from the graph. See
-    /// `sections::canonical_evidence_coverage`.
+    /// `sections::canonical_evidence_coverage`. Its only consumer is
+    /// [`NativeEvaluationContext::evidence_requirement_satisfied`]; do not add
+    /// a second one. "Is this id in the coverage set" is not "is this id an
+    /// actually-satisfied requirement" — `--satisfies` accepts any evidence
+    /// cell as a coverage target (`is_coverage_target`), whether or not
+    /// anything hard-requires it, so membership alone would let an actor
+    /// holding only `evidence-attach` launder an unrelated, never-reviewed
+    /// claim out of the Assurance axis by naming it in an unrelated
+    /// `--satisfies`. [`satisfied_requirement_ids`] is the set that answers
+    /// that different question.
     trusted_coverage_targets: BTreeSet<String>,
+    /// Requirement targets whose hard `requires_evidence` edge is actually
+    /// satisfied, per [`NativeEvaluationContext::evidence_requirement_satisfied`]
+    /// — the same method `evaluate_cell`'s own evidence-obstruction check
+    /// calls, so this can never disagree with which obstructions the
+    /// evaluation actually reports. Built in [`NativeEvaluationContext::new`]
+    /// after `trusted_coverage_targets`, since `evidence_requirement_satisfied`
+    /// reads it.
+    satisfied_requirement_ids: BTreeSet<String>,
 }
 
 /// Targets that trusted evidence is *recorded* as covering.
@@ -226,13 +248,38 @@ impl<'a> NativeEvaluationContext<'a> {
         let trusted_coverage_targets = trusted_coverage_targets(case_space, |evidence_id| {
             trusted_evidence_ids.contains(evidence_id)
         });
-        Self {
+        let mut context = Self {
             case_space,
             index,
             cells,
             trusted_evidence_ids,
             trusted_coverage_targets,
-        }
+            satisfied_requirement_ids: BTreeSet::new(),
+        };
+        context.satisfied_requirement_ids = context.compute_satisfied_requirement_ids();
+        context
+    }
+
+    /// Every id that is both the target of a hard `requires_evidence` edge
+    /// and satisfied for the cell holding that edge — reusing
+    /// `requirement_ids` and `evidence_requirement_satisfied` exactly as
+    /// `evaluate_cell` does, over every cell in the space rather than only
+    /// readiness subjects, so a hard requirement authored anywhere still
+    /// counts.
+    fn compute_satisfied_requirement_ids(&self) -> BTreeSet<String> {
+        self.case_space
+            .case_cells
+            .iter()
+            .flat_map(|cell| {
+                let holder_id = cell.id.clone();
+                self.requirement_ids(cell, CaseRelationType::RequiresEvidence)
+                    .into_iter()
+                    .filter(move |requirement_id| {
+                        self.evidence_requirement_satisfied(&holder_id, requirement_id)
+                    })
+                    .map(|requirement_id| requirement_id.to_string())
+            })
+            .collect()
     }
 
     fn evaluate_cells(&self) -> Vec<CellEvaluation> {
@@ -636,6 +683,35 @@ fn progress_axis(
 /// use is worst; any open review gap, review-required obstruction, or evidence
 /// boundary violation is pending review; accepted evidence with a clean review
 /// story is accepted; a space where nothing was ever reviewed is unreviewed.
+///
+/// One review gap is excluded from that fold: an `UnreviewedInference` gap
+/// whose `requirement_satisfied` is `true` — a requirement placeholder
+/// (`skills/casegraphen-operate/references/authoring.md`) whose hard
+/// `requires_evidence` edge is actually satisfied. A placeholder cell exists
+/// only so that edge has something to point at; it is an obligation slot,
+/// not a claim about an observation, so it never becomes "reviewed" and
+/// would otherwise keep every case space that uses the documented pattern
+/// from ever reaching `accepted`. The gap itself is not removed — it stays
+/// in `review_gaps` and the cell still drives `unreviewed_inference_ids` and
+/// the `inference-separated` finding — only this fold stops reading it.
+/// Every other gap type, boundary violation, and `ReviewRequired`
+/// obstruction still drives the axis exactly as before.
+///
+/// `requirement_satisfied` is read, not recomputed: it is marked once, at
+/// production, by `sections::review_gaps`, from
+/// [`NativeEvaluationContext::compute_satisfied_requirement_ids`] — built
+/// from the same `requirement_ids`/`evidence_requirement_satisfied` calls
+/// `evaluate_cell`'s own evidence-obstruction check makes, so the mark can
+/// never disagree with which obstructions the evaluation actually reports.
+/// `close_check_skeleton`'s `close:native-review-gaps-closed` reads the same
+/// mark on the same gap; neither this fold nor that one may recompute it or
+/// substitute `NativeEvaluationContext::trusted_coverage_targets` (mere
+/// coverage-claim membership, which `--satisfies` grants to any evidence
+/// cell whether or not a `requires_evidence` edge names it) — doing so once
+/// let an actor holding only `evidence-attach` launder an unrelated,
+/// never-reviewed claim out of this axis by naming it in an unrelated
+/// `--satisfies`, cleared by any reviewer's unrelated `review accept`.
+/// Reproduced and fixed.
 fn assurance_axis(
     obstructions: &[NativeObstruction],
     evidence_findings: &NativeEvidenceFindings,
@@ -649,7 +725,7 @@ fn assurance_axis(
         });
     if rejected_in_use {
         NativeAssurance::Rejected
-    } else if !review_gaps.is_empty()
+    } else if review_gaps.iter().any(|gap| !gap.requirement_satisfied)
         || !evidence_findings.boundary_violations.is_empty()
         || obstructions.iter().any(|obstruction| {
             obstruction.obstruction_type == NativeObstructionType::ReviewRequired

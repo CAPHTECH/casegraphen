@@ -186,6 +186,21 @@ pub struct NativeReviewGap {
     pub target_id: Id,
     pub gap_type: NativeReviewGapType,
     pub explanation: String,
+    /// True only for an `UnreviewedInference` gap whose `target_id` is
+    /// already an actually-satisfied `requires_evidence` target — the
+    /// requirement-placeholder pattern
+    /// (`skills/casegraphen-operate/references/authoring.md`). Always
+    /// `false` for every other gap type; the concept does not apply to them.
+    /// Marked here, at production (`sections::review_gaps`), rather than
+    /// filtered by each reader: `review_gaps` has four readers
+    /// (`assurance_axis`, `close_check_skeleton`, the published report, and
+    /// `native_review.rs`'s own close check), and a fact excluded only in
+    /// one reader's fold is a fact only that reader knows — which is exactly
+    /// how the assurance axis and the close check once disagreed over the
+    /// same gap in the same payload. `assurance_axis` and
+    /// `close_check_skeleton` both just read this field; neither
+    /// recomputes it.
+    pub requirement_satisfied: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

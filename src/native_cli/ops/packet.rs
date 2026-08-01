@@ -20,7 +20,10 @@ use crate::{
 use higher_graphen_core::{Id, ReviewStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use super::super::NativeCliError;
 use super::mutations::{append_cell_transition_morphism, append_evidence_attach_morphism};
@@ -99,11 +102,55 @@ pub(in crate::native_cli) fn packet_apply(
     let operation_gate =
         validated_mutation_gate(&replay.case_space, gate_options, "evidence-attach")?;
 
-    let packet_directory = packet_path.parent().unwrap_or_else(|| Path::new("."));
+    // A packet arrives from the proposer (ADR 0015) — its `claim.id` is
+    // already treated as attacker-controlled text, which is why
+    // `next_operations` below emits structured values instead of a command
+    // string. Its `artifacts:` list has the same origin, so unlike
+    // `evidence attach --artifact` (operator-typed, unconfined) every
+    // resolved artifact path must stay inside the packet's own directory.
+    //
+    // The confinement root is the canonicalized parent of `packet_path`
+    // itself, not of `packet_path.parent()`. `Path::parent()` returns
+    // `Some("")` — not `None` — for a bare relative filename like
+    // `packet.json`, so a guard against `None` never fires for the single
+    // most natural invocation (`packet apply --packet packet.json` from the
+    // packet's own directory), and `fs::canonicalize("")` fails.
+    // Canonicalizing the packet file — already read successfully by
+    // `read_evidence_packet` above, so it exists — and taking *its* parent
+    // instead handles a bare filename, `./x.json`, and a symlinked packet
+    // file in one expression: a symlinked packet file's real neighbours live
+    // next to the file the symlink resolves to, not next to the symlink.
+    //
+    // `artifacts:` entries are passed through unjoined. `prepare_claim` does
+    // the one join, onto this same root, as the second of its three confined
+    // resolution stages (lexical rejection, then join-and-canonicalize, then
+    // containment) — joining here as well would reintroduce two answers to
+    // "which directory is the packet in".
+    let canonical_packet_path = fs::canonicalize(packet_path).map_err(|source| {
+        packet_refusal(
+            packet_path,
+            format!(
+                "packet file {} could not be canonicalized: {source}",
+                packet_path.display()
+            ),
+        )
+    })?;
+    let canonical_packet_directory = canonical_packet_path
+        .parent()
+        .ok_or_else(|| {
+            packet_refusal(
+                packet_path,
+                format!(
+                    "canonicalized packet path {} has no parent directory",
+                    canonical_packet_path.display()
+                ),
+            )
+        })?
+        .to_path_buf();
     let artifact_paths = packet
         .artifacts
         .iter()
-        .map(|artifact| packet_directory.join(artifact))
+        .map(PathBuf::from)
         .collect::<Vec<_>>();
     // The claim goes through the identical forced-inferred/hash/refusal
     // pipeline `--input` does: `evidence_cell_from_bytes` reads the claim's
@@ -121,6 +168,7 @@ pub(in crate::native_cli) fn packet_apply(
         claim_cell,
         &packet.satisfies,
         &artifact_paths,
+        Some(&canonical_packet_directory),
     )
     .map_err(|error| packet_refusal(packet_path, error))?;
     let claim_cell_id = prepared.claim_cell_id().clone();

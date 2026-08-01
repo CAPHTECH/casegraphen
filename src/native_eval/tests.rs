@@ -4,6 +4,7 @@ use crate::native_model::{
     Revision, NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
     NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
 };
+use arbtest::arbitrary::Arbitrary;
 use higher_graphen_core::{Provenance, SourceKind, SourceRef};
 use serde_json::{json, Map, Value};
 
@@ -778,6 +779,203 @@ fn empty_space_is_active_and_unreviewed() {
 
     assert_eq!(evaluation.progress, NativeProgress::Active);
     assert_eq!(evaluation.assurance, NativeAssurance::Unreviewed);
+}
+
+#[test]
+fn assurance_axis_ignores_a_gap_marked_requirement_satisfied() {
+    // The requirement-placeholder pattern
+    // (`skills/casegraphen-operate/references/authoring.md`): an evidence cell
+    // that exists only so a hard `requires_evidence` edge has something to
+    // point at. It never becomes reviewed itself, so its own
+    // `UnreviewedInference` gap must stop driving the axis once
+    // `sections::review_gaps` has marked it `requirement_satisfied` at
+    // production time.
+    let gap = NativeReviewGap {
+        id: id("review_gap:placeholder-inference"),
+        target_id: id("evidence:placeholder"),
+        gap_type: NativeReviewGapType::UnreviewedInference,
+        explanation: "placeholder".to_owned(),
+        requirement_satisfied: true,
+    };
+    let evidence_findings = NativeEvidenceFindings {
+        accepted_evidence_ids: vec![id("evidence:claim")],
+        source_backed_evidence_ids: Vec::new(),
+        inference_record_ids: vec![id("evidence:placeholder")],
+        unreviewed_inference_ids: vec![id("evidence:placeholder")],
+        promoted_evidence_ids: Vec::new(),
+        boundary_violations: Vec::new(),
+        findings: Vec::new(),
+    };
+
+    let assurance = assurance_axis(&[], &evidence_findings, &[gap]);
+
+    assert_eq!(assurance, NativeAssurance::Accepted);
+}
+
+#[test]
+fn assurance_axis_still_requires_review_for_an_unmarked_gap() {
+    let gap = NativeReviewGap {
+        id: id("review_gap:placeholder-inference"),
+        target_id: id("evidence:placeholder"),
+        gap_type: NativeReviewGapType::UnreviewedInference,
+        explanation: "placeholder".to_owned(),
+        requirement_satisfied: false,
+    };
+    let evidence_findings = NativeEvidenceFindings {
+        accepted_evidence_ids: vec![id("evidence:claim")],
+        source_backed_evidence_ids: Vec::new(),
+        inference_record_ids: vec![id("evidence:placeholder")],
+        unreviewed_inference_ids: vec![id("evidence:placeholder")],
+        promoted_evidence_ids: Vec::new(),
+        boundary_violations: Vec::new(),
+        findings: Vec::new(),
+    };
+
+    let assurance = assurance_axis(&[], &evidence_findings, &[gap]);
+
+    assert_eq!(assurance, NativeAssurance::ReviewRequired);
+}
+
+#[test]
+fn review_gaps_marks_requirement_satisfied_only_for_unreviewed_inference_gaps() {
+    // The type restriction lives entirely here, in the one place that
+    // produces gaps — `assurance_axis` and `close_check_skeleton` both just
+    // read whatever this function wrote, with no type check of their own.
+    // Both `evidence:placeholder` and `completion_candidate:shared-id` are
+    // in the satisfied set, but only the `UnreviewedInference` gap may read
+    // `requirement_satisfied: true` from it.
+    let space = fixture_space();
+    let evidence_findings = NativeEvidenceFindings {
+        accepted_evidence_ids: Vec::new(),
+        source_backed_evidence_ids: Vec::new(),
+        inference_record_ids: vec![id("evidence:placeholder")],
+        unreviewed_inference_ids: vec![id("evidence:placeholder")],
+        promoted_evidence_ids: Vec::new(),
+        boundary_violations: Vec::new(),
+        findings: Vec::new(),
+    };
+    let completion_candidate = NativeCompletionCandidate {
+        id: id("completion_candidate:shared-id"),
+        candidate_type: NativeCompletionCandidateType::NativeCompletionCell,
+        target_ids: Vec::new(),
+        suggested_structure: Value::Null,
+        inferred_from: Vec::new(),
+        rationale: "generated".to_owned(),
+        confidence: confidence(0.5),
+        review_status: ReviewStatus::Unreviewed,
+        provenance: generated_provenance("test", 0.5),
+    };
+    let satisfied_requirement_ids: BTreeSet<String> = [
+        "evidence:placeholder".to_owned(),
+        "completion_candidate:shared-id".to_owned(),
+    ]
+    .into();
+
+    let gaps = review_gaps(
+        &space,
+        &evidence_findings,
+        std::slice::from_ref(&completion_candidate),
+        &satisfied_requirement_ids,
+    );
+
+    let inference_gap = gaps
+        .iter()
+        .find(|gap| gap.gap_type == NativeReviewGapType::UnreviewedInference)
+        .expect("inference gap present");
+    assert!(inference_gap.requirement_satisfied);
+    let completion_gap = gaps
+        .iter()
+        .find(|gap| gap.gap_type == NativeReviewGapType::UnreviewedCompletion)
+        .expect("completion gap present");
+    assert!(!completion_gap.requirement_satisfied);
+}
+
+#[test]
+fn assurance_axis_matches_the_worst_wins_truth_table() {
+    arbtest::arbtest(
+        |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+            let rejected_in_use = bool::arbitrary(u)?;
+            let unresolved_gap_present = bool::arbitrary(u)?;
+            let missing_source_violation_present = bool::arbitrary(u)?;
+            let review_required_obstruction_present = bool::arbitrary(u)?;
+            let accepted_evidence_present = bool::arbitrary(u)?;
+
+            let mut boundary_violations = Vec::new();
+            if rejected_in_use {
+                boundary_violations.push(NativeEvidenceBoundaryViolation {
+                    id: id("violation:rejected"),
+                    evidence_id: id("evidence:x"),
+                    violation_type: NativeEvidenceBoundaryViolationType::RejectedEvidenceUsed,
+                    explanation: "generated".to_owned(),
+                    severity: Severity::High,
+                });
+            }
+            if missing_source_violation_present {
+                boundary_violations.push(NativeEvidenceBoundaryViolation {
+                    id: id("violation:missing-source"),
+                    evidence_id: id("evidence:y"),
+                    violation_type: NativeEvidenceBoundaryViolationType::MissingSource,
+                    explanation: "generated".to_owned(),
+                    severity: Severity::High,
+                });
+            }
+            let evidence_findings = NativeEvidenceFindings {
+                accepted_evidence_ids: if accepted_evidence_present {
+                    vec![id("evidence:accepted")]
+                } else {
+                    Vec::new()
+                },
+                source_backed_evidence_ids: Vec::new(),
+                inference_record_ids: Vec::new(),
+                unreviewed_inference_ids: Vec::new(),
+                promoted_evidence_ids: Vec::new(),
+                boundary_violations,
+                findings: Vec::new(),
+            };
+            let review_gaps = if unresolved_gap_present {
+                vec![NativeReviewGap {
+                    id: id("review_gap:x"),
+                    target_id: id("evidence:x"),
+                    gap_type: NativeReviewGapType::UnreviewedInference,
+                    explanation: "generated".to_owned(),
+                    requirement_satisfied: false,
+                }]
+            } else {
+                Vec::new()
+            };
+            let obstructions = if review_required_obstruction_present {
+                vec![obstruction(
+                    NativeObstructionType::ReviewRequired,
+                    &id("work:x"),
+                    &id("work:x"),
+                    "constraint:test",
+                    "generated".to_owned(),
+                    Severity::Medium,
+                    "resolve",
+                )]
+            } else {
+                Vec::new()
+            };
+
+            let assurance = assurance_axis(&obstructions, &evidence_findings, &review_gaps);
+
+            let expected = if rejected_in_use {
+                NativeAssurance::Rejected
+            } else if unresolved_gap_present
+                || missing_source_violation_present
+                || review_required_obstruction_present
+            {
+                NativeAssurance::ReviewRequired
+            } else if accepted_evidence_present {
+                NativeAssurance::Accepted
+            } else {
+                NativeAssurance::Unreviewed
+            };
+            assert_eq!(assurance, expected);
+
+            Ok(())
+        },
+    );
 }
 
 fn fixture_space() -> CaseSpace {
