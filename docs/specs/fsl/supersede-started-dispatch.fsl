@@ -1,0 +1,124 @@
+// Design spec for issue #16 / ADR 0014: when a started dispatch may be
+// superseded.
+//
+// The rule this pins down: one accepted step has one live dispatch, and the
+// only thing that releases a started trace is an operator naming that exact
+// trace. Nothing about the graph's shape — least of all whether the current
+// revision has moved — may release it, because a revision moves on any
+// append and says nothing about whether a process is running.
+//
+// ASSUME-1: a trace belongs to one step; the model tracks one step, since
+//           steps do not interact through this rule.
+// MODEL-1:  Trace = 0..2 is a verification bound, not a domain fact — three
+//           traces are enough for "supersede one, a second starts, the stale
+//           assertion must not release it".
+spec SupersedeStartedDispatch {
+  type Trace = 0..2
+  enum TraceState { Absent, Started, Superseded, Finished }
+
+  state {
+    trace:      Map<Trace, TraceState>,
+    // The trace the operator named, if any. An assertion is about one trace.
+    asserted:   Option<Trace>,
+    // Rises on every append, including appends by unrelated steps. Nothing
+    // in this spec may read it as a liveness signal; it exists so the
+    // proof shows the rule does not depend on it.
+    revision:   0..3,
+    dispatched: 0..3
+  }
+
+  init {
+    forall t: Trace { trace[t] = Absent }
+    asserted = none
+    revision = 0
+    dispatched = 0
+  }
+
+  // A dispatch may start only when no trace is Started. This is the whole
+  // safety property, stated as a guard.
+  action dispatch(t: Trace) {
+    requires trace[t] == Absent
+    requires forall u: Trace { trace[u] != Started }
+    requires dispatched < 3
+    trace[t] = Started
+    dispatched = dispatched + 1
+    if revision < 3 { revision = revision + 1 }
+  }
+
+  // Any other work appends and moves the revision. Included precisely so the
+  // proof covers the case that produced the defect: a sibling step finishing.
+  action unrelated_append() {
+    requires revision < 3
+    revision = revision + 1
+  }
+
+  // The operator asserts that one named trace's dispatch is dead. The
+  // assertion is refused unless that trace is Started right now.
+  action assert_dead(t: Trace) {
+    requires trace[t] == Started
+    requires asserted == none
+    asserted = some(t)
+  }
+
+  // Superseding acts on the asserted trace only, and consumes the assertion.
+  fair action supersede() {
+    requires asserted is some(t)
+    requires trace[t] == Started
+    trace[t] = Superseded
+    asserted = none
+  }
+
+  // A dispatch that ends normally.
+  fair action finish(t: Trace) {
+    requires trace[t] == Started
+    trace[t] = Finished
+    // An assertion naming a trace that has since finished is stale and is
+    // dropped rather than carried onto whatever starts next.
+    if asserted == some(t) { asserted = none }
+    if revision < 3 { revision = revision + 1 }
+  }
+
+  // THE property: never two live dispatches for one step.
+  invariant AtMostOneStarted {
+    forall t: Trace {
+      forall u: Trace {
+        (trace[t] == Started and trace[u] == Started) => t == u
+      }
+    }
+  }
+
+  // An assertion only ever names a trace that was Started when it was made,
+  // so a stale assertion cannot release a dispatch the operator never saw.
+  invariant AssertionNamesAStartedTrace {
+    asserted is some(t) => trace[t] == Started
+  }
+
+  // Superseding is reachable — the recovery an operator needs still exists.
+  reachable OperatorRecoversAKilledDispatcher {
+    exists t: Trace { trace[t] == Superseded }
+  }
+
+  // And after recovering, a fresh dispatch can run.
+  reachable RecoveryIsFollowedByANewDispatch {
+    exists t: Trace {
+      trace[t] == Superseded and exists u: Trace { trace[u] == Started and u != t }
+    }
+  }
+
+  // The defect, stated as a state that must be unreachable: the revision has
+  // moved while a dispatch is live, and that must not have released it.
+  invariant AMovedRevisionReleasesNothing {
+    revision > 0 => forall t: Trace {
+      forall u: Trace {
+        (trace[t] == Started and trace[u] == Started) => t == u
+      }
+    }
+  }
+
+  leadsTo AssertionIsResolved { asserted != none ~> asserted == none }
+
+  // Every dispatch spent and none live is a correct stop, not a deadlock.
+  terminal {
+    dispatched == 3 and forall t: Trace { trace[t] != Started }
+  }
+}
