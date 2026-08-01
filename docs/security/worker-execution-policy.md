@@ -202,7 +202,7 @@ workers under a dedicated OS user or container is the operator's control.
   depending on whether `setsid` is present. There is no such check off Unix —
   `require_executable` is a no-op there — so on those hosts the refusal comes
   from the spawn instead, and this control is Unix-only. Everything in §2.4
-  below is likewise Unix-only; see residual risk 9.
+  below is likewise Unix-only; see residual risk 10.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
   are available, the worker is launched in a dedicated session and its process
   group is signalled on all four exit paths: clean exit, timeout, incomplete
@@ -404,7 +404,18 @@ revision replay.
    separate failure trace; `run --step` returns the reservation error. These are
    availability, not integrity, risks and are bounded by store filesystem
    permissions.
-9. **Worker execution is a Unix control surface.** Off Unix, `require_executable`
+9. **A worker chooses how much a store keeps, and pruning it is one-way.**
+   The 4 MiB cap bounds what is retained *in memory* and in the evidence cell;
+   `runs/<trace>/stdout` and `stderr` get every byte the worker wrote. Anchor
+   verification hashes all three artifacts of every anchored trace on each
+   dispatch — streamed since 2026-08-01, so memory is constant, but the CPU
+   and the disk are proportional to what workers have produced, cumulatively
+   and permanently. There is no retention or GC path: truncating a stream to
+   reclaim space makes the anchor verification refuse from then on, which is
+   correct — the artifact no longer matches what was anchored — but leaves no
+   supported way to prune. Operators running large-output workers should cap
+   them at the worker, and treat a store's `runs/` directory as append-only.
+10. **Worker execution is a Unix control surface.** Off Unix, `require_executable`
    and `process_group_utilities` are both stubs: there is no execute-bit check
    before the spawn, the worker is never launched into a dedicated session, and
    `descendants_may_survive` is unconditionally `true`. The crate compiles for a

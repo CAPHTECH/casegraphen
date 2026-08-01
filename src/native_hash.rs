@@ -76,6 +76,30 @@ pub(crate) fn content_matches_sha256(bytes: &[u8], recorded_hash: &str) -> bool 
     sha256_hex(bytes) == recorded_hash
 }
 
+/// Hashes a file without holding it in memory.
+///
+/// The raw worker streams are bounded only by what the worker chose to write,
+/// and anchor verification hashes all three artifacts of every anchored trace
+/// on every dispatch. Reading them whole made a dispatch's memory proportional
+/// to the largest stream any worker ever produced in that store — measured at
+/// 113 MB resident and 4.4 s for a `run --step` that dispatched nothing, after
+/// one worker wrote 100 MB.
+pub(crate) fn sha256_hex_of_file(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize_hex())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{content_matches_sha256, sha256_hex, Sha256};
@@ -123,6 +147,34 @@ mod tests {
             sha256_hex(&[b'a'; 200]),
             "c2a908d98f5df987ade41b5fce213067efbcc21ef2240212a41e54b5e7c28ae5"
         );
+    }
+
+    #[test]
+    fn hashing_a_file_matches_hashing_its_bytes_at_every_buffer_boundary() {
+        // The read buffer is 64 KiB, so the sizes that matter are the ones
+        // that straddle it — a file hashed in pieces must be the same digest
+        // as the same bytes hashed at once, or anchor verification would
+        // start refusing artifacts nobody touched.
+        let directory = std::env::temp_dir().join(format!(
+            "casegraphen-hash-file-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&directory).expect("create temp directory");
+        for byte_len in [0_usize, 1, 65_535, 65_536, 65_537, 131_072, 200_000] {
+            let bytes = (0..byte_len).map(|i| (i % 251) as u8).collect::<Vec<u8>>();
+            let path = directory.join(format!("stream-{byte_len}"));
+            std::fs::write(&path, &bytes).expect("write stream");
+            assert_eq!(
+                super::sha256_hex_of_file(&path).expect("hash file"),
+                sha256_hex(&bytes),
+                "digest differed at {byte_len} bytes"
+            );
+        }
+        std::fs::remove_dir_all(&directory).expect("remove temp directory");
     }
 
     #[test]

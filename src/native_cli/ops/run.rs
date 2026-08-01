@@ -1544,7 +1544,7 @@ fn verify_recorded_trace_anchors(
                 "stderr stream",
             ),
         ] {
-            verify_file_content_hash(
+            verify_file_content_hash_streaming(
                 &format!("execution trace {trace_id} {label}"),
                 &run_directory.join(file_name),
                 recorded_hash,
@@ -1555,6 +1555,33 @@ fn verify_recorded_trace_anchors(
         verified_traces.insert(trace_path, trace);
     }
     Ok(verified_traces)
+}
+
+/// The artifacts are hashed without being read into memory: a worker chooses
+/// how large its streams are, and every anchored trace is verified on every
+/// dispatch, so reading them whole made one worker's output a permanent cost
+/// on every later command.
+fn verify_file_content_hash_streaming(
+    subject: &str,
+    path: &Path,
+    recorded_hash: &str,
+    anchor_description: &str,
+    rewrite_subject: &str,
+) -> Result<(), NativeCliError> {
+    let actual = crate::native_hash::sha256_hex_of_file(path).map_err(|error| {
+        NativeCliError::invalid(format!(
+            "{subject} at {} cannot be verified against its {anchor_description}: {error}",
+            path.display()
+        ))
+    })?;
+    if actual != recorded_hash {
+        return Err(NativeCliError::invalid(format!(
+            "{subject} at {} does not match its {anchor_description}; \
+             {rewrite_subject} may have been rewritten",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn verify_file_content_hash(
