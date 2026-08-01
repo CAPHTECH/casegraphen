@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "highergraphen.case.workflow.execution_trace.v1",
+  "$id": "highergraphen.case.workflow.execution_trace.v2",
   "title": "CaseGraphen ExecutionTrace",
   "type": "object",
   "additionalProperties": false,
@@ -18,6 +18,9 @@
     "binding_content_hash",
     "operation_gate",
     "worker_report_id",
+    "worker_report_content_hash",
+    "stdout_content_hash",
+    "stderr_content_hash",
     "appended_entry_ids",
     "dispatch_state",
     "transition_applied",
@@ -30,7 +33,7 @@
   ],
   "properties": {
     "schema": {
-      "const": "highergraphen.case.workflow.execution_trace.v1"
+      "const": "highergraphen.case.workflow.execution_trace.v2"
     },
     "schema_version": {
       "const": 1
@@ -74,6 +77,15 @@
     },
     "worker_report_id": {
       "$ref": "#/$defs/id"
+    },
+    "worker_report_content_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "stdout_content_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "stderr_content_hash": {
+      "$ref": "#/$defs/sha256"
     },
     "appended_entry_ids": {
       "$ref": "#/$defs/id_array"

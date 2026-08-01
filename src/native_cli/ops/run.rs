@@ -47,6 +47,14 @@ struct ExecutedWorker {
     binding: WorkerBinding,
     binding_content_hash: String,
     worker_report: WorkerReport,
+    artifact_hashes: WorkerArtifactHashes,
+}
+
+#[derive(Clone)]
+struct WorkerArtifactHashes {
+    worker_report_content_hash: String,
+    stdout_content_hash: String,
+    stderr_content_hash: String,
 }
 
 #[derive(Clone)]
@@ -320,21 +328,14 @@ fn dispatch_step_worker(
         },
     )
     .map_err(|error| {
-        WorkerDispatchError::before_worker(
-            NativeCliError::invalid(error.to_string()),
-            Some(binding_content_hash.clone()),
-        )
+        let worker_invoked = error.worker_invoked();
+        let error = NativeCliError::invalid(error.to_string());
+        if worker_invoked {
+            WorkerDispatchError::after_worker(error, binding_content_hash.clone())
+        } else {
+            WorkerDispatchError::before_worker(error, Some(binding_content_hash.clone()))
+        }
     })?;
-    write_bytes(
-        &trace_identity.run_directory.join("stdout"),
-        &invocation.stdout,
-    )
-    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
-    write_bytes(
-        &trace_identity.run_directory.join("stderr"),
-        &invocation.stderr,
-    )
-    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
     let worker_report = worker_report(
         plan,
         step,
@@ -343,18 +344,20 @@ fn dispatch_step_worker(
         &input_report_path,
         &invocation,
     );
-    let worker_report_json = serde_json::to_value(&worker_report).map_err(|error| {
-        WorkerDispatchError::after_worker(NativeCliError::from(error), binding_content_hash.clone())
-    })?;
-    write_json(
-        &trace_identity.run_directory.join("worker.report.json"),
-        &worker_report_json,
-    )
-    .map_err(|error| WorkerDispatchError::after_worker(error, binding_content_hash.clone()))?;
+    let worker_report_content_hash =
+        write_worker_report(&trace_identity.run_directory, &worker_report).map_err(|error| {
+            WorkerDispatchError::after_worker(error, binding_content_hash.clone())
+        })?;
+    let artifact_hashes = WorkerArtifactHashes {
+        worker_report_content_hash,
+        stdout_content_hash: invocation.stdout_sha256.clone(),
+        stderr_content_hash: invocation.stderr_sha256.clone(),
+    };
     Ok(WorkerDispatch::Executed(Box::new(ExecutedWorker {
         binding,
         binding_content_hash,
         worker_report,
+        artifact_hashes,
     })))
 }
 
@@ -627,6 +630,7 @@ fn apply_step_result(
         binding,
         binding_content_hash,
         worker_report,
+        artifact_hashes,
     } = *executed;
     let store_api = NativeCaseStore::new(context.store.to_path_buf());
     let trace_identity = &reserved.identity;
@@ -636,6 +640,10 @@ fn apply_step_result(
         .as_mut()
         .expect("reserved step always has a trace guard");
     trace_guard.trace.binding_content_hash = binding_content_hash.clone();
+    trace_guard.trace.worker_report_content_hash =
+        artifact_hashes.worker_report_content_hash.clone();
+    trace_guard.trace.stdout_content_hash = artifact_hashes.stdout_content_hash.clone();
+    trace_guard.trace.stderr_content_hash = artifact_hashes.stderr_content_hash.clone();
     trace_guard
         .trace
         .metadata
@@ -820,6 +828,9 @@ fn apply_step_result(
         binding_content_hash,
         operation_gate: context.gate.clone(),
         worker_report_id: worker_report.report_id.clone(),
+        worker_report_content_hash: artifact_hashes.worker_report_content_hash,
+        stdout_content_hash: artifact_hashes.stdout_content_hash,
+        stderr_content_hash: artifact_hashes.stderr_content_hash,
         appended_entry_ids,
         dispatch_state: ExecutionDispatchState::Started,
         transition_applied,
@@ -981,6 +992,10 @@ fn execute_selected_steps(
                         Some(rejection.binding_content_hash.clone())
                     }
                 };
+                let artifact_hashes = match &dispatch {
+                    WorkerDispatch::Executed(executed) => Some(executed.artifact_hashes.clone()),
+                    WorkerDispatch::Rejected(_) => None,
+                };
                 match apply_step_result(context, plan, &mut reserved, dispatch) {
                     Ok(applied) => applied_steps.push(applied),
                     Err(error)
@@ -994,6 +1009,7 @@ fn execute_selected_steps(
                             error.to_string(),
                             worker_report.is_some(),
                             binding_content_hash,
+                            artifact_hashes,
                             worker_report,
                         )?);
                     }
@@ -1001,6 +1017,12 @@ fn execute_selected_steps(
                 }
             }
             Err(failure) => {
+                if failure.worker_invoked {
+                    if let Some(trace_guard) = reserved.trace_guard.take() {
+                        trace_guard.abandon();
+                    }
+                    return Err(failure.error);
+                }
                 if context.continue_on_step_failure {
                     applied_steps.push(finish_reserved_step_failure(
                         context,
@@ -1010,6 +1032,7 @@ fn execute_selected_steps(
                         failure.error.to_string(),
                         failure.worker_invoked,
                         failure.binding_content_hash,
+                        None,
                         None,
                     )?);
                 } else {
@@ -1074,6 +1097,7 @@ fn record_reservation_failure(
         false,
         None,
         None,
+        None,
     )
 }
 
@@ -1086,6 +1110,7 @@ fn finish_reserved_step_failure(
     summary: String,
     worker_invoked: bool,
     binding_content_hash: Option<String>,
+    artifact_hashes: Option<WorkerArtifactHashes>,
     worker_report: Option<WorkerReport>,
 ) -> Result<AppliedStep, NativeCliError> {
     let step = &plan.steps[reserved.step_index];
@@ -1099,6 +1124,11 @@ fn finish_reserved_step_failure(
         .insert("worker_invoked".to_owned(), Value::Bool(worker_invoked));
     if let Some(binding_content_hash) = binding_content_hash {
         trace_guard.trace.binding_content_hash = binding_content_hash;
+    }
+    if let Some(artifact_hashes) = artifact_hashes {
+        trace_guard.trace.worker_report_content_hash = artifact_hashes.worker_report_content_hash;
+        trace_guard.trace.stdout_content_hash = artifact_hashes.stdout_content_hash;
+        trace_guard.trace.stderr_content_hash = artifact_hashes.stderr_content_hash;
     }
     let current_case_space = NativeCaseStore::new(context.store.to_path_buf())
         .replay_current_case_space(context.case_space_id)?
@@ -1286,11 +1316,19 @@ fn read_execution_traces(
     store: &Path,
     case_space: &CaseSpace,
 ) -> Result<Vec<ExecutionTrace>, NativeCliError> {
-    verify_recorded_trace_anchors(store, case_space)?;
+    let mut verified_traces = verify_recorded_trace_anchors(store, case_space)?;
     let root = store.join(RUN_DIRECTORY);
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(path) = verified_traces.keys().next() {
+                return Err(NativeCliError::invalid(format!(
+                    "verified execution trace {} disappeared before it could be loaded",
+                    path.display()
+                )));
+            }
+            return Ok(Vec::new());
+        }
         Err(source) => return Err(NativeCliError::Io { path: root, source }),
     };
     let mut paths = Vec::new();
@@ -1305,19 +1343,24 @@ fn read_execution_traces(
         }
     }
     paths.sort();
-    paths
+    let traces = paths
         .into_iter()
         .map(|path| {
-            let bytes = fs::read(&path).map_err(|source| NativeCliError::Io {
-                path: path.clone(),
-                source,
-            })?;
-            let trace: ExecutionTrace = serde_json::from_slice(&bytes).map_err(|error| {
-                NativeCliError::invalid(format!(
-                    "execution trace {} could not be read: {error}",
-                    path.display()
-                ))
-            })?;
+            let trace = match verified_traces.remove(&path) {
+                Some(trace) => trace,
+                None => {
+                    let bytes = fs::read(&path).map_err(|source| NativeCliError::Io {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    serde_json::from_slice(&bytes).map_err(|error| {
+                        NativeCliError::invalid(format!(
+                            "execution trace {} could not be read: {error}",
+                            path.display()
+                        ))
+                    })?
+                }
+            };
             let expected_run_directory_name = path_segment(&trace.trace_id);
             if path.parent().and_then(Path::file_name).and_then(|name| name.to_str())
                 != Some(expected_run_directory_name.as_str())
@@ -1327,26 +1370,23 @@ fn read_execution_traces(
                     trace.trace_id
                 )));
             }
-            if let Some(recorded_hash) = recorded_trace_hash(case_space, &trace.trace_id) {
-                let actual_hash = crate::native_hash::sha256_hex(&bytes);
-                if actual_hash != recorded_hash {
-                    return Err(NativeCliError::invalid(format!(
-                        "execution trace {} at {} does not match its morphism-log content hash; \
-                         the trace may have been rewritten",
-                        trace.trace_id,
-                        path.display()
-                    )));
-                }
-            }
             Ok(trace)
         })
-        .collect()
+        .collect::<Result<Vec<_>, NativeCliError>>()?;
+    if let Some(path) = verified_traces.keys().next() {
+        return Err(NativeCliError::invalid(format!(
+            "verified execution trace {} disappeared before it could be loaded",
+            path.display()
+        )));
+    }
+    Ok(traces)
 }
 
 fn verify_recorded_trace_anchors(
     store: &Path,
     case_space: &CaseSpace,
-) -> Result<(), NativeCliError> {
+) -> Result<BTreeMap<PathBuf, ExecutionTrace>, NativeCliError> {
+    let mut verified_traces = BTreeMap::new();
     for entry in &case_space.morphism_log {
         if entry.morphism.morphism_type
             != CaseMorphismType::Custom("execution_trace_anchor".to_owned())
@@ -1379,36 +1419,76 @@ fn verify_recorded_trace_anchors(
             continue;
         };
         let trace_path = store.join(relative_path);
-        let bytes = fs::read(&trace_path).map_err(|error| {
+        let bytes = verify_file_content_hash(
+            &format!("execution trace {trace_id}"),
+            &trace_path,
+            recorded_hash,
+            "morphism-log content hash",
+            "the trace",
+        )?;
+        let trace: ExecutionTrace = serde_json::from_slice(&bytes).map_err(|error| {
             NativeCliError::invalid(format!(
-                "execution trace {trace_id} at {} cannot be verified against its morphism-log content hash: {error}",
+                "execution trace {trace_id} at {} could not be read after its anchor was verified: {error}",
                 trace_path.display()
             ))
         })?;
-        if crate::native_hash::sha256_hex(&bytes) != recorded_hash {
-            return Err(NativeCliError::invalid(format!(
-                "execution trace {trace_id} at {} does not match its morphism-log content hash; \
-                 the trace may have been rewritten",
+        let run_directory = trace_path.parent().ok_or_else(|| {
+            NativeCliError::invalid(format!(
+                "execution trace {trace_id} at {} has no run directory",
                 trace_path.display()
-            )));
+            ))
+        })?;
+        for (file_name, recorded_hash, label) in [
+            (
+                "worker.report.json",
+                trace.worker_report_content_hash.as_str(),
+                "worker report",
+            ),
+            (
+                "stdout",
+                trace.stdout_content_hash.as_str(),
+                "stdout stream",
+            ),
+            (
+                "stderr",
+                trace.stderr_content_hash.as_str(),
+                "stderr stream",
+            ),
+        ] {
+            verify_file_content_hash(
+                &format!("execution trace {trace_id} {label}"),
+                &run_directory.join(file_name),
+                recorded_hash,
+                "recorded content hash",
+                label,
+            )?;
         }
+        verified_traces.insert(trace_path, trace);
     }
-    Ok(())
+    Ok(verified_traces)
 }
 
-fn recorded_trace_hash<'a>(case_space: &'a CaseSpace, trace_id: &Id) -> Option<&'a str> {
-    case_space.morphism_log.iter().rev().find_map(|entry| {
-        if entry.morphism.morphism_type
-            != CaseMorphismType::Custom("execution_trace_anchor".to_owned())
-            || entry.morphism.review_status != ReviewStatus::Accepted
-        {
-            return None;
-        }
-        let metadata = &entry.morphism.metadata;
-        (metadata.get("trace_id").and_then(Value::as_str) == Some(trace_id.as_str()))
-            .then(|| metadata.get("trace_content_hash").and_then(Value::as_str))
-            .flatten()
-    })
+fn verify_file_content_hash(
+    subject: &str,
+    path: &Path,
+    recorded_hash: &str,
+    anchor_description: &str,
+    rewrite_subject: &str,
+) -> Result<Vec<u8>, NativeCliError> {
+    let bytes = fs::read(path).map_err(|error| {
+        NativeCliError::invalid(format!(
+            "{subject} at {} cannot be verified against its {anchor_description}: {error}",
+            path.display()
+        ))
+    })?;
+    if !crate::native_hash::content_matches_sha256(&bytes, recorded_hash) {
+        return Err(NativeCliError::invalid(format!(
+            "{subject} at {} does not match its {anchor_description}; \
+             {rewrite_subject} may have been rewritten",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug)]
@@ -1596,6 +1676,12 @@ impl TraceGuard {
         operation_gate: &NativeOperationGate,
         started_at: &str,
     ) -> Result<Self, NativeCliError> {
+        write_bytes(&identity.run_directory.join("stdout"), &[])?;
+        write_bytes(&identity.run_directory.join("stderr"), &[])?;
+        let initial_worker_report =
+            uninvoked_worker_report(plan, step, identity, &binding_content_hash, started_at);
+        let worker_report_content_hash =
+            write_worker_report(&identity.run_directory, &initial_worker_report)?;
         let trace = ExecutionTrace {
             schema: EXECUTION_TRACE_SCHEMA.to_owned(),
             schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
@@ -1610,6 +1696,9 @@ impl TraceGuard {
             binding_content_hash,
             operation_gate: operation_gate.clone(),
             worker_report_id: identity.worker_report_id.clone(),
+            worker_report_content_hash,
+            stdout_content_hash: empty_content_hash(),
+            stderr_content_hash: empty_content_hash(),
             appended_entry_ids: Vec::new(),
             dispatch_state: ExecutionDispatchState::Started,
             transition_applied: false,
@@ -1667,6 +1756,10 @@ impl TraceGuard {
             self.trace.clone(),
         )
     }
+
+    fn abandon(mut self) {
+        self.finished = true;
+    }
 }
 
 impl Drop for TraceGuard {
@@ -1707,6 +1800,74 @@ impl Drop for TraceGuard {
         if anchored.is_none() {
             let _ = write_trace(&self.run_directory, &self.trace);
         }
+    }
+}
+
+fn write_worker_report(
+    run_directory: &Path,
+    worker_report: &WorkerReport,
+) -> Result<String, NativeCliError> {
+    let mut bytes = serde_json::to_vec_pretty(worker_report)?;
+    bytes.push(b'\n');
+    let path = run_directory.join("worker.report.json");
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => return Err(NativeCliError::Io { path, source }),
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|source| NativeCliError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    use std::io::Write as _;
+    file.write_all(&bytes)
+        .and_then(|()| file.flush())
+        .map_err(|source| NativeCliError::Io {
+            path: path.clone(),
+            source,
+        })?;
+    Ok(crate::native_hash::sha256_hex(&bytes))
+}
+
+fn uninvoked_worker_report(
+    plan: &ExecutionPlan,
+    step: &ExecutionStep,
+    identity: &TraceIdentity,
+    binding_content_hash: &str,
+    timestamp: &str,
+) -> WorkerReport {
+    let empty_content_hash = empty_content_hash();
+    WorkerReport {
+        schema: WORKER_REPORT_SCHEMA.to_owned(),
+        schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
+        report_id: identity.worker_report_id.clone(),
+        binding_id: step.worker_binding_id.clone(),
+        binding_content_hash: binding_content_hash.to_owned(),
+        work_cell_id: step.work_cell_id.clone(),
+        plan_id: plan.plan_id.clone(),
+        step_id: step.step_id.clone(),
+        exit_status: None,
+        timed_out: false,
+        descendants_may_survive: false,
+        outputs: [WorkerOutputName::Stdout, WorkerOutputName::Stderr]
+            .into_iter()
+            .map(|name| WorkerOutput {
+                name,
+                content_hash: empty_content_hash.clone(),
+                byte_len: 0,
+                retained_byte_len: 0,
+                truncated: false,
+                incomplete: false,
+            })
+            .collect(),
+        trust_boundary: WORKER_REPORT_TRUST_BOUNDARY.to_owned(),
+        started_at: timestamp.to_owned(),
+        finished_at: timestamp.to_owned(),
+        metadata: Map::from_iter([("worker_invoked".to_owned(), Value::Bool(false))]),
     }
 }
 

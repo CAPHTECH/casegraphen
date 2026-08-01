@@ -16,6 +16,10 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 #[test]
 fn every_input_and_record_schema_constant_has_a_shipped_schema_id() {
+    assert_eq!(
+        EXECUTION_TRACE_SCHEMA,
+        "highergraphen.case.workflow.execution_trace.v2"
+    );
     let schema_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas/casegraphen");
     let shipped_ids = fs::read_dir(&schema_directory)
         .expect("read schema directory")

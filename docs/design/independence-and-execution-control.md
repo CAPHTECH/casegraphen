@@ -158,7 +158,7 @@ runtime は純粋・同期・副作用なしのレポート生成ライブラリ
 - `highergraphen.case.workflow.execution_plan.v1` — ExecutionPlan。`plan_id`, `case_space_id`, `base_revision_id`, `steps[]`（`work_item_id`, `worker_binding_id`, `input_projection_profile_id`, `success_evidence_requirement_ids`, `allowed_transition_classes[]`）, `provenance`, `review_status`。
 - `highergraphen.case.workflow.worker_binding.v1` — WorkerBinding。`worker_kind`（初期は `shell` のみ）, `command`, `args`, `working_directory`, `env_allowlist`, `timeout_ms`, `capability_ids`。legacy の Worker protocol データ契約を出発点にする。
 - `highergraphen.case.workflow.worker_report.v1` — Worker 出力。`outputs[]`（content_hash 付き）, `observed_side_effects[]`, `evidence_items[]`, `proposed_transitions[]`（CaseMorphism 候補, 必ず unreviewed）, `exit_status`, `trust_boundary`（`semantic_proof_backend` の語彙を踏襲）。
-- `highergraphen.case.workflow.execution_trace.v1` — ExecutionTrace（3.1 参照）。
+- `highergraphen.case.workflow.execution_trace.v2` — ExecutionTrace（3.1 参照）。Worker report と stdout/stderr の full-stream content hash を必須フィールドとして持ち、trace anchor から推移的に検証する。
 
 ### 3.4 モジュール構成（本リポジトリ）
 

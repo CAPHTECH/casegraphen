@@ -1,5 +1,5 @@
 {
-  "schema": "highergraphen.case.workflow.execution_trace.v1",
+  "schema": "highergraphen.case.workflow.execution_trace.v2",
   "schema_version": 1,
   "trace_id": "execution_trace:example-run",
   "plan_id": "plan:native-contract-review",
@@ -21,6 +21,9 @@
     "source_boundary_id": "source_boundary:native-case-management-contract"
   },
   "worker_report_id": "worker_report:example-run",
+  "worker_report_content_hash": "3f14d6d8d7f56ea4203c985d812f5e532a03215b6e6a4f4c1f67d10b18785a47",
+  "stdout_content_hash": "6f54a0a98a1f51d122d5f1e824f083ce7c6c0f6d879603f02d5e5d4a3f5b6769",
+  "stderr_content_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "appended_entry_ids": [
     "morphism_log_entry:evidence-example-run",
     "morphism_log_entry:transition-example-run",

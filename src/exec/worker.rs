@@ -5,7 +5,7 @@ use higher_graphen_core::Id;
 use std::os::unix::fs::PermissionsExt;
 use std::{
     env, fmt, fs,
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitCode, ExitStatus, Stdio},
     sync::{Arc, Mutex},
@@ -62,13 +62,24 @@ pub struct WorkerInvocation {
 #[derive(Debug)]
 pub struct WorkerError {
     message: String,
+    worker_invoked: bool,
 }
 
 impl WorkerError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            worker_invoked: false,
         }
+    }
+
+    fn after_worker(mut self) -> Self {
+        self.worker_invoked = true;
+        self
+    }
+
+    pub fn worker_invoked(&self) -> bool {
+        self.worker_invoked
     }
 }
 
@@ -149,27 +160,35 @@ impl Worker for ShellWorker {
             }
         }
 
+        let stdout_file = anonymous_capture_file(&ctx.run_directory, "stdout")?;
+        let stderr_file = anonymous_capture_file(&ctx.run_directory, "stderr")?;
+
         let mut child = command.spawn().map_err(|error| {
             WorkerError::new(format!(
                 "failed to spawn shell worker {} command {:?}: {error}",
                 binding.binding_id, binding.command
             ))
         })?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| WorkerError::new("shell worker stdout pipe was not captured"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| WorkerError::new("shell worker stderr pipe was not captured"))?;
-        let stdout_reader = spawn_reader(stdout);
-        let stderr_reader = spawn_reader(stderr);
+        let stdout = child.stdout.take().ok_or_else(|| {
+            WorkerError::new("shell worker stdout pipe was not captured").after_worker()
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            WorkerError::new("shell worker stderr pipe was not captured").after_worker()
+        })?;
+        let stdout_reader = spawn_reader(stdout, stdout_file);
+        let stderr_reader = spawn_reader(stderr, stderr_file);
 
         let timeout = Duration::from_millis(binding.timeout_ms);
         let mut outcome =
-            wait_with_timeout(&mut child, started, timeout, process_group_kill.as_deref())?;
-        let (stdout, stderr) = finish_readers(stdout_reader, stderr_reader)?;
+            wait_with_timeout(&mut child, started, timeout, process_group_kill.as_deref())
+                .map_err(WorkerError::after_worker)?;
+        let (stdout, stderr) = finish_readers(
+            stdout_reader,
+            stderr_reader,
+            &ctx.run_directory.join("stdout"),
+            &ctx.run_directory.join("stderr"),
+        )
+        .map_err(WorkerError::after_worker)?;
         if stdout.incomplete || stderr.incomplete {
             outcome.process_group = finalize_process_group(
                 process_group_kill.as_deref(),
@@ -202,6 +221,28 @@ impl Worker for ShellWorker {
             finished_at,
         })
     }
+}
+
+fn anonymous_capture_file(run_directory: &Path, stream: &str) -> Result<fs::File, WorkerError> {
+    let path = run_directory.join(format!(".{stream}.capture"));
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            WorkerError::new(format!(
+                "failed to create shell worker {stream} staging file at {}: {error}",
+                path.display()
+            ))
+        })?;
+    fs::remove_file(&path).map_err(|error| {
+        WorkerError::new(format!(
+            "failed to unlink shell worker {stream} staging file at {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(file)
 }
 
 pub fn execute_worker(
@@ -465,25 +506,34 @@ fn signal_process_group(kill_path: &Path, signal: &str, child_id: u32) -> Option
         .map(|status| status.success())
 }
 
-#[derive(Clone)]
 struct CaptureProgress {
     bytes: Vec<u8>,
     byte_len: u64,
     truncated: bool,
     hasher: Sha256,
+    sealed: bool,
+    raw_output: Option<fs::File>,
 }
 
 impl CaptureProgress {
-    fn new() -> Self {
+    fn new(raw_output: Option<fs::File>) -> Self {
         Self {
             bytes: Vec::new(),
             byte_len: 0,
             truncated: false,
             hasher: Sha256::new(),
+            sealed: false,
+            raw_output,
         }
     }
 
-    fn record(&mut self, bytes: &[u8]) {
+    fn record(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if self.sealed {
+            return Ok(());
+        }
+        if let Some(raw_output) = &mut self.raw_output {
+            raw_output.write_all(bytes)?;
+        }
         self.hasher.update(bytes);
         self.byte_len = self.byte_len.saturating_add(bytes.len() as u64);
         let remaining = OUTPUT_LIMIT_BYTES.saturating_sub(self.bytes.len());
@@ -492,6 +542,7 @@ impl CaptureProgress {
         if retained < bytes.len() {
             self.truncated = true;
         }
+        Ok(())
     }
 }
 
@@ -505,7 +556,7 @@ struct CapturedOutput {
 
 #[cfg(test)]
 fn read_capped(mut reader: impl Read) -> io::Result<CapturedOutput> {
-    let capture = Arc::new(Mutex::new(CaptureProgress::new()));
+    let capture = Arc::new(Mutex::new(CaptureProgress::new(None)));
     read_into_capture(&mut reader, &capture)?;
     Ok(capture_snapshot(&capture, false))
 }
@@ -523,7 +574,7 @@ fn read_into_capture(
         capture
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .record(&buffer[..count]);
+            .record(&buffer[..count])?;
     }
     Ok(())
 }
@@ -533,8 +584,8 @@ struct OutputReader {
     capture: Arc<Mutex<CaptureProgress>>,
 }
 
-fn spawn_reader(reader: impl Read + Send + 'static) -> OutputReader {
-    let capture = Arc::new(Mutex::new(CaptureProgress::new()));
+fn spawn_reader(reader: impl Read + Send + 'static, raw_output: fs::File) -> OutputReader {
+    let capture = Arc::new(Mutex::new(CaptureProgress::new(Some(raw_output))));
     let reader_capture = Arc::clone(&capture);
     let handle = thread::spawn(move || read_into_capture(reader, &reader_capture));
     OutputReader { handle, capture }
@@ -543,6 +594,8 @@ fn spawn_reader(reader: impl Read + Send + 'static) -> OutputReader {
 fn finish_readers(
     stdout: OutputReader,
     stderr: OutputReader,
+    stdout_path: &Path,
+    stderr_path: &Path,
 ) -> Result<(CapturedOutput, CapturedOutput), WorkerError> {
     let deadline = Instant::now() + READER_GRACE;
     while (!stdout.handle.is_finished() || !stderr.handle.is_finished())
@@ -551,29 +604,75 @@ fn finish_readers(
         thread::sleep(POLL_INTERVAL);
     }
     Ok((
-        finish_reader(stdout, "stdout")?,
-        finish_reader(stderr, "stderr")?,
+        finish_reader(stdout, "stdout", stdout_path)?,
+        finish_reader(stderr, "stderr", stderr_path)?,
     ))
 }
 
-fn finish_reader(reader: OutputReader, stream: &str) -> Result<CapturedOutput, WorkerError> {
-    if !reader.handle.is_finished() {
-        return Ok(capture_snapshot(&reader.capture, true));
+fn finish_reader(
+    reader: OutputReader,
+    stream: &str,
+    destination: &Path,
+) -> Result<CapturedOutput, WorkerError> {
+    let incomplete = !reader.handle.is_finished();
+    if incomplete {
+        seal_capture(&reader.capture);
+    } else {
+        reader
+            .handle
+            .join()
+            .map_err(|_| WorkerError::new(format!("shell worker {stream} reader panicked")))?
+            .map_err(|error| {
+                WorkerError::new(format!("failed to capture shell worker {stream}: {error}"))
+            })?;
     }
-    reader
-        .handle
-        .join()
-        .map_err(|_| WorkerError::new(format!("shell worker {stream} reader panicked")))?
-        .map_err(|error| {
-            WorkerError::new(format!("failed to capture shell worker {stream}: {error}"))
-        })?;
-    Ok(capture_snapshot(&reader.capture, false))
+    publish_capture(&reader.capture, destination).map_err(|error| {
+        WorkerError::new(format!(
+            "failed to publish shell worker {stream} capture at {}: {error}",
+            destination.display()
+        ))
+    })?;
+    Ok(capture_snapshot(&reader.capture, incomplete))
+}
+
+fn seal_capture(capture: &Arc<Mutex<CaptureProgress>>) {
+    let mut progress = capture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    progress.sealed = true;
+}
+
+fn publish_capture(capture: &Arc<Mutex<CaptureProgress>>, destination: &Path) -> io::Result<()> {
+    let mut progress = capture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let raw_output = progress
+        .raw_output
+        .as_mut()
+        .ok_or_else(|| io::Error::other("capture has no raw output file"))?;
+    raw_output.flush()?;
+    raw_output.seek(SeekFrom::Start(0))?;
+    match fs::remove_file(destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut published = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    io::copy(raw_output, &mut published)?;
+    published.flush()
 }
 
 fn capture_snapshot(capture: &Arc<Mutex<CaptureProgress>>, incomplete: bool) -> CapturedOutput {
     let progress = capture
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    captured_output(&progress, incomplete)
+}
+
+fn captured_output(progress: &CaptureProgress, incomplete: bool) -> CapturedOutput {
     CapturedOutput {
         bytes: progress.bytes.clone(),
         byte_len: progress.byte_len,

@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -2363,7 +2364,11 @@ fn worker_binding_register_stores_pretty_json_and_content_hash() {
 fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
-    let fixture = setup_native_run(&directory, "happy", "printf 'successful-worker-output\\n'");
+    let fixture = setup_native_run(
+        &directory,
+        "happy",
+        "printf 'successful-worker-output\\n'; printf 'diagnostic-worker-output\\n' >&2",
+    );
 
     let first = run_native_step(&directory, &fixture, true, None);
     assert!(first.status.success(), "stderr: {}", stderr(&first));
@@ -2393,6 +2398,20 @@ fn native_run_step_executes_one_accepted_plan_step_and_then_stops() {
     assert_jsonschema_valid(
         &repo_path("schemas/casegraphen/worker.report.schema.json"),
         &report_path,
+    );
+    let trace = json_file(trace_path.clone());
+    let run_directory = trace_path.parent().expect("run directory").to_owned();
+    assert_eq!(
+        trace["worker_report_content_hash"],
+        json!(sha256_file(&report_path))
+    );
+    assert_eq!(
+        trace["stdout_content_hash"],
+        json!(sha256_file(&run_directory.join("stdout")))
+    );
+    assert_eq!(
+        trace["stderr_content_hash"],
+        json!(sha256_file(&run_directory.join("stderr")))
     );
 
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
@@ -2726,11 +2745,11 @@ fn native_run_step_records_tampered_binding_as_domain_obstruction() {
         &repo_path("schemas/casegraphen/execution.trace.schema.json"),
         &trace_path,
     );
-    assert!(!trace_path
-        .parent()
-        .expect("run directory")
-        .join("stdout")
-        .exists());
+    assert_eq!(
+        fs::read(trace_path.parent().expect("run directory").join("stdout"))
+            .expect("read anchored empty stdout"),
+        b""
+    );
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
     assert_eq!(
         replay["result"]["replay"]["current_revision_id"],
@@ -2782,6 +2801,205 @@ fn native_run_step_detects_a_rewritten_anchored_trace() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+#[test]
+fn native_run_step_detects_a_rewritten_anchored_worker_report() {
+    assert_worker_artifact_tamper_detected("worker.report.json", "worker report", |path| {
+        let mut report = json_file(path.to_owned());
+        report["timed_out"] = json!(true);
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&report).expect("serialize rewritten worker report"),
+        )
+        .expect("rewrite worker report");
+    });
+}
+
+#[test]
+fn native_run_step_detects_rewritten_anchored_stderr() {
+    assert_worker_artifact_tamper_detected("stderr", "stderr stream", |path| {
+        fs::write(path, b"rewritten stderr\n").expect("rewrite stderr");
+    });
+}
+
+#[test]
+fn native_run_step_detects_rewritten_anchored_stdout() {
+    assert_worker_artifact_tamper_detected("stdout", "stdout stream", |path| {
+        fs::write(path, b"rewritten stdout\n").expect("rewrite stdout");
+    });
+}
+
+#[test]
+fn native_run_step_anchors_and_verifies_a_full_stream_beyond_the_retention_cap() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let chunk = "x".repeat(4096);
+    let script =
+        format!("i=0; while [ \"$i\" -lt 1025 ]; do printf '%s' '{chunk}'; i=$((i + 1)); done");
+    let fixture = setup_native_run(&directory, "truncated-anchor", &script);
+
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    let run_directory = trace_path.parent().expect("run directory").to_owned();
+    let stdout_path = run_directory.join("stdout");
+    let trace = json_file(trace_path);
+    let report = json_file(run_directory.join("worker.report.json"));
+    let stdout_report = report["outputs"]
+        .as_array()
+        .expect("worker outputs")
+        .iter()
+        .find(|output| output["name"] == json!("stdout"))
+        .expect("stdout report");
+    let full_byte_len = 4096_u64 * 1025;
+
+    assert_eq!(stdout_report["byte_len"], json!(full_byte_len));
+    assert_eq!(
+        stdout_report["retained_byte_len"],
+        json!(4_u64 * 1024 * 1024)
+    );
+    assert_eq!(stdout_report["truncated"], json!(true));
+    assert_eq!(
+        fs::metadata(&stdout_path).expect("stdout metadata").len(),
+        full_byte_len
+    );
+    assert_eq!(
+        trace["stdout_content_hash"],
+        json!(sha256_file(&stdout_path))
+    );
+    assert_eq!(
+        trace["stdout_content_hash"], stdout_report["content_hash"],
+        "the trace and report must carry the same tool-computed full-stream hash"
+    );
+
+    let result_revision_id = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("trace result revision");
+    let verified = run_native_step_with_base(&directory, &fixture, result_revision_id, true, None);
+    assert!(verified.status.success(), "stderr: {}", stderr(&verified));
+    assert_eq!(
+        stdout_json(&verified)["result"]["status"],
+        json!("no_dispatchable_step")
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_publishes_tool_capture_over_a_worker_replaced_stdout_path() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        "worker-replaced-stdout",
+        concat!(
+            "printf 'captured stdout'; ",
+            "rm -f \"$CASEGRAPHEN_RUN_DIR/stdout\"; ",
+            "printf 'worker path replacement' > \"$CASEGRAPHEN_RUN_DIR/stdout\""
+        ),
+    );
+
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    let stdout_path = only_run_file(&directory, "stdout");
+    assert_eq!(
+        fs::read(&stdout_path).expect("read published stdout"),
+        b"captured stdout"
+    );
+    assert_eq!(
+        first_json["result"]["trace"]["stdout_content_hash"],
+        json!(sha256_file(&stdout_path))
+    );
+
+    let result_revision_id = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("trace result revision");
+    let verified = run_native_step_with_base(&directory, &fixture, result_revision_id, true, None);
+    assert!(verified.status.success(), "stderr: {}", stderr(&verified));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_step_does_not_follow_a_worker_report_symlink_to_stdout() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let ln = if Path::new("/bin/ln").is_file() {
+        "/bin/ln"
+    } else {
+        "/usr/bin/ln"
+    };
+    let script = format!(
+        concat!(
+            "printf 'captured stdout'; ",
+            "rm -f \"$CASEGRAPHEN_RUN_DIR/worker.report.json\"; ",
+            "{ln} -s stdout \"$CASEGRAPHEN_RUN_DIR/worker.report.json\""
+        ),
+        ln = ln
+    );
+    let fixture = setup_native_run(&directory, "worker-report-symlink", &script);
+
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    let run_directory = trace_path.parent().expect("run directory");
+    let stdout_path = run_directory.join("stdout");
+    let report_path = run_directory.join("worker.report.json");
+    assert_eq!(
+        fs::read(&stdout_path).expect("read published stdout"),
+        b"captured stdout"
+    );
+    assert!(!fs::symlink_metadata(&report_path)
+        .expect("worker report metadata")
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        first_json["result"]["trace"]["worker_report_content_hash"],
+        json!(sha256_file(&report_path))
+    );
+    assert_eq!(
+        first_json["result"]["trace"]["stdout_content_hash"],
+        json!(sha256_file(&stdout_path))
+    );
+
+    let result_revision_id = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("trace result revision");
+    let verified = run_native_step_with_base(&directory, &fixture, result_revision_id, true, None);
+    assert!(verified.status.success(), "stderr: {}", stderr(&verified));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_does_not_anchor_a_post_worker_artifact_publication_failure() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        "worker-report-publication-failure",
+        concat!(
+            "printf 'captured before report failure'; ",
+            "rm -f \"$CASEGRAPHEN_RUN_DIR/worker.report.json\"; ",
+            "mkdir \"$CASEGRAPHEN_RUN_DIR/worker.report.json\""
+        ),
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("worker.report.json"));
+    let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
+    assert!(!replay["result"]["replay"]["case_space"]["morphism_log"]
+        .as_array()
+        .expect("morphism log")
+        .iter()
+        .any(|entry| {
+            entry["morphism"]["morphism_type"] == json!("custom:execution_trace_anchor")
+        }));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 #[cfg(unix)]
 #[test]
 fn native_run_step_rejects_a_retargeted_command_symlink() {
@@ -2815,11 +3033,16 @@ fn native_run_step_rejects_a_retargeted_command_symlink() {
         value["result"]["trace"]["obstructions"][0]["obstruction_type"],
         json!("binding_identity_mismatch")
     );
-    assert!(!only_run_file(&directory, "execution.trace.json")
-        .parent()
-        .expect("run directory")
-        .join("stdout")
-        .exists());
+    assert_eq!(
+        fs::read(
+            only_run_file(&directory, "execution.trace.json")
+                .parent()
+                .expect("run directory")
+                .join("stdout")
+        )
+        .expect("read anchored empty stdout"),
+        b""
+    );
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -7492,6 +7715,50 @@ fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {
     matches.sort();
     assert_eq!(matches.len(), 1, "expected one {file_name}");
     matches.remove(0)
+}
+
+fn assert_worker_artifact_tamper_detected(
+    file_name: &str,
+    expected_label: &str,
+    tamper: impl FnOnce(&Path),
+) {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        &format!("{file_name}-tamper"),
+        "printf 'anchored stdout\\n'; printf 'anchored stderr\\n' >&2",
+    );
+    let first = run_native_step(&directory, &fixture, true, None);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let first_json = stdout_json(&first);
+    let trace_id = first_json["result"]["trace"]["trace_id"]
+        .as_str()
+        .expect("trace id");
+    let result_revision_id = first_json["result"]["trace"]["result_revision_id"]
+        .as_str()
+        .expect("trace result revision");
+    let trace_path = only_run_file(&directory, "execution.trace.json");
+    tamper(&trace_path.parent().expect("run directory").join(file_name));
+
+    let verified = run_native_step_with_base(&directory, &fixture, result_revision_id, true, None);
+
+    assert!(!verified.status.success());
+    let error = stderr(&verified);
+    assert!(error.contains(trace_id), "{error}");
+    assert!(error.contains(expected_label), "{error}");
+    assert!(
+        error.contains("does not match its recorded content hash"),
+        "{error}"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+fn sha256_file(path: &Path) -> String {
+    let bytes = fs::read(path).unwrap_or_else(|error| {
+        panic!("{} should be readable for hashing: {error}", path.display())
+    });
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn replayed_work_lifecycle(replay: &Value) -> &str {

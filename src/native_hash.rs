@@ -72,9 +72,13 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hasher.finalize_hex()
 }
 
+pub(crate) fn content_matches_sha256(bytes: &[u8], recorded_hash: &str) -> bool {
+    sha256_hex(bytes) == recorded_hash
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{sha256_hex, Sha256};
+    use super::{content_matches_sha256, sha256_hex, Sha256};
 
     #[test]
     fn sha256_matches_the_standard_abc_vector() {
@@ -148,5 +152,29 @@ mod tests {
                 "streaming mismatch for {byte_len} bytes"
             );
         }
+    }
+
+    #[test]
+    fn content_hash_comparison_accepts_exact_bytes_and_rejects_changes() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let bytes: Vec<u8> = u.arbitrary()?;
+                let selector: usize = u.arbitrary()?;
+                let recorded_hash = sha256_hex(&bytes);
+
+                assert!(content_matches_sha256(&bytes, &recorded_hash));
+                if !bytes.is_empty() {
+                    let changed_index = selector % bytes.len();
+                    let mut changed = bytes.clone();
+                    changed[changed_index] ^= 1;
+                    assert!(!content_matches_sha256(&changed, &recorded_hash));
+                    assert!(!content_matches_sha256(
+                        &bytes[..bytes.len() - 1],
+                        &recorded_hash
+                    ));
+                }
+                Ok(())
+            },
+        );
     }
 }

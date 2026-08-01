@@ -206,6 +206,25 @@ be replaced after validation. A durable morphism records exactly the expanded
 gate in `metadata.operation_gate`, without the profile name or file path, so
 replay and audit never depend on the profile file.
 
+### Anchored execution artifacts
+
+Every `highergraphen.case.workflow.execution_trace.v2` record requires
+`worker_report_content_hash`, `stdout_content_hash`, and
+`stderr_content_hash`. The worker-report hash covers the exact
+`worker.report.json` bytes written by the tool. The two stream hashes cover the
+full captured streams, including bytes beyond the 4 MiB in-memory retention
+cap. The complete raw streams remain in the run directory; the cap applies only
+to the retained output embedded in the worker result.
+
+Before the trace is serialized, the tool computes all three hashes and folds
+them into the trace. The morphism log then anchors the trace content hash. A
+reader verifies that anchor and, from the same verified trace bytes, re-hashes
+the worker report and both raw streams. Any mismatch is an integrity mismatch
+and therefore a tool failure. A dispatch that does not invoke a process still
+writes and anchors a tool-generated report plus empty stdout and stderr files,
+so the three required fields are always backed by durable bytes rather than
+acting as optional placeholders.
+
 ## Core Dependencies
 
 `casegraphen` must reuse core primitives:
