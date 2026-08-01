@@ -135,17 +135,53 @@ That last point is the honest summary of the round: of five findings, four
 were the same shape as everything else in this document, and the fifth is
 being left to a decision rather than a fix at the end of a long session.
 
-## Still open
+## The declared-unattacked areas, driven
 
-Issue #14 — the areas four rounds declared unattacked — stays open. This pass
-attacked the worker containment surface, the operation gate with profiles, and
-batch evidence attachment, and each found something. The lift adapters, the
-reader-thread and `TraceGuard` failure paths, and `--retry-step` attempt
-collisions remain where they were: recorded as unattacked, which is not the
-same as held.
+Issue #14 recorded four areas no adversarial round had ever attacked, on the
+premise that an unattacked area is not an area that held. It was right twice.
 
-The worker-containment round also named a coverage gap worth repeating: this
-host has no `setsid`, so the two real-binary containment tests take the
+- **The lift adapters** gave up two trust values, above.
+- **`--retry-step`** gave up the live-dispatch race, above.
+- **Reader-thread and capture paths held.** The question that matters since the
+  trace started anchoring both raw streams is whether a recorded hash can
+  disagree with the file on disk — that would be a store that bricks itself on
+  its own next read. Driven with a worker that holds stderr open past the
+  reader grace and exits clean: all three hashes matched and a later read
+  verified them. `CaptureProgress::record` updates the file and the hasher in
+  one critical section and `seal_capture` stops both together, so the two
+  cannot describe different prefixes.
+- **A dispatcher killed mid-dispatch leaves a coherent record.** Driven: the
+  trace stays `started`, the store stays valid, a sibling step still runs, and
+  the killed step stays blocked — which is what `--supersede-trace` now exists
+  to release.
+- **Non-Unix was overclaimed rather than broken.** The crate builds for
+  `wasm32-unknown-unknown`, but §2.3 said an execute-bit check runs "on every
+  host" and it does not run off Unix at all. Now residual risk 9.
+
+What is still not driven — the case-lock stale-break race, the
+canonicalize-to-spawn TOCTOU, and the three containment limits that need a host
+with `setsid` — is recorded in the residual risks, not in an open issue. A
+permanently open "nobody has attacked this" ticket makes it easy to read the
+absence of news as good news, which is the mistake it was filed to prevent.
+
+## Where the next round should start
+
+Every issue open at `79e0d24` is closed, and so is #16, which this pass
+raised and then answered. Nothing is being tracked in an open ticket, which
+means the next round starts from two places rather than from a list:
+
+- **The residual risks** in `docs/security/worker-execution-policy.md`. Three
+  of the nine were written or rewritten today, and risk 9 is new: worker
+  execution is a Unix control surface and no non-Unix host has been driven.
+- **This document**, for the shape. Four earlier rounds and this one all
+  reduce to the same failure, and the four instances above were found by
+  looking for siblings — a rule enforced here and not there — rather than by
+  reading code for bugs.
+
+One coverage gap is worth repeating because no amount of review closes it:
+this host has no `setsid`, so the two real-binary containment tests take the
 "no utilities" branch and cannot fail here no matter how broken the code is.
 The property tests carry the rule; the platform coverage does not exist. A
-Linux CI job running those two tests would settle it.
+Linux CI job running those two tests would settle it, and would also let
+someone drive the three containment limits in residual risk 4, which are
+code-read only.
