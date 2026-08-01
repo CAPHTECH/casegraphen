@@ -1,0 +1,38 @@
+{
+  "schema": "highergraphen.case.evidence_packet.v1",
+  "schema_version": 1,
+  "case_space_id": "case_space:native-case-management-contract",
+  "target": {
+    "cell_id": "work:review-native-contract",
+    "transition_to": "active"
+  },
+  "claim": {
+    "id": "evidence:packet-example",
+    "cell_type": "evidence",
+    "space_id": "space:higher-graphen-casegraphen",
+    "title": "Packet-carried test results",
+    "lifecycle": "active",
+    "source_ids": [
+      "source:native-contract-review"
+    ],
+    "structure_ids": [],
+    "provenance": {
+      "source": {
+        "kind": "log",
+        "title": "CI test run"
+      },
+      "confidence": 0.8,
+      "review_status": "unreviewed"
+    },
+    "metadata": {}
+  },
+  "artifacts": [
+    "build.log"
+  ],
+  "satisfies": [
+    "evidence:native-schema-json-valid"
+  ],
+  "completion": {
+    "reason": "Test results attached and accepted; the waiting work item is unblocked."
+  }
+}

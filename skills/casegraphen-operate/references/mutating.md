@@ -17,7 +17,8 @@ next_revision() {
 | Change | Command |
 |---|---|
 | Add, update, or retire cells and relations | `morphism propose` → `check` → `apply` |
-| Record new evidence | `evidence attach` |
+| Record new evidence, with or without the file it is about | `evidence attach` |
+| Drive attach → review pause → transition from one file | `packet apply`, then `packet resume` |
 | Promote evidence, or accept/reject/reopen/waive a target | `review accept|reject|reopen|waive` |
 | Move one cell's lifecycle | `cell transition` |
 | Discard a proposal | `morphism reject` |
@@ -101,6 +102,28 @@ casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
 REV="$(next_revision "$ATTACH_REPORT")"
 ```
 
+## Attach the file, not just the claim about it
+
+Add `--artifact <path>` to an input group to record the observed object itself —
+a log, a test bundle, a document. The tool hashes the file and mints a
+`custom:artifact` cell whose id *is* that hash (`artifact:sha256-<hex>`), plus a
+`derives_from` relation from your claim to it, inside the same morphism. Two
+citations of identical bytes land on one artifact cell.
+
+```sh
+casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
+  --base-revision-id "$REV" \
+  --input test-claim.json --satisfies <requirement-id> --artifact test-run.log \
+  $GATE --format json --output "$ATTACH_REPORT"
+```
+
+Artifacts are observations, not claims: they are outside acceptability, they
+never appear on the frontier, `review accept` on one is refused, and they cannot
+be updated, transitioned, or retired. Review the claim that cites the artifact.
+Artifacts enter only this way — a genesis snapshot or a morphism proposal
+carrying one is refused, and a claim id inside the `artifact:sha256-` namespace
+is refused.
+
 Expect the `missing_evidence` obstruction to survive this. To clear it, promote
 the requirement:
 
@@ -136,3 +159,36 @@ REV="$(next_revision "$TRANSITION_REPORT")"
 Capability-gated, so no human interaction is required if the acting actor holds
 the capability. Use it for judgments a human made; use `run --step` for work a
 worker did.
+
+## One packet instead of attach-then-transition by hand
+
+A packet is a strict-JSON file naming a target transition, one claim, its
+artifacts, and the completion reason. It drives the same attach and the same
+transition — and it **always stops in between**, because one invocation carries
+one gate, so one actor, and an actor that reviewed its own claim would be
+self-accepting (ADR 0015).
+
+```sh
+casegraphen packet apply --store "$STORE" --case-space-id "$CS" \
+  --base-revision-id "$REV" --packet packet.json $GATE \
+  --format json --output "$APPLY_REPORT"
+# result.status: paused_for_review
+# result.completed_through: the revision the attach produced — carry it
+# result.next_operations: structured fields for the two calls to make next
+```
+
+Then a **different actor**, holding a capability that lists the `review`
+operation, runs `review accept` on `result.claim_cell_id`. Only after that:
+
+```sh
+casegraphen packet resume --store "$STORE" --case-space-id "$CS" \
+  --base-revision-id "$REV" --packet packet.json \
+  --completed-through <the apply revision> $GATE \
+  --format json --output "$RESUME_REPORT"
+```
+
+`--completed-through` is an assertion, not a lookup: resume refuses if that
+revision is not in this space's history, if the claim is not the evidence that
+exact revision attached, or if no accepted review for it exists in the log. A
+stored `review_status: accepted` on the cell does not count — only a review
+morphism does.

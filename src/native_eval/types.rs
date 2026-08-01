@@ -6,7 +6,8 @@ use serde_json::Value;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCaseEvaluation {
-    pub status: NativeReasoningStatus,
+    pub progress: NativeProgress,
+    pub assurance: NativeAssurance,
     pub readiness: NativeReadiness,
     pub frontier_cell_ids: Vec<Id>,
     pub obstructions: Vec<NativeObstruction>,
@@ -19,13 +20,26 @@ pub struct NativeCaseEvaluation {
     pub close_check: NativeCloseCheckSkeleton,
 }
 
+/// Is the work moving, stuck, or done? One of the two reasoning axes; the
+/// other is [`NativeAssurance`]. Neither hides the other: both are always
+/// reported.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum NativeReasoningStatus {
-    Ready,
+pub enum NativeProgress {
+    Active,
     Blocked,
-    Incomplete,
+    Complete,
+}
+
+/// Is what the space produced trusted? Folded worst-wins over the
+/// review-relevant facts the evaluation already carries.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeAssurance {
+    Unreviewed,
     ReviewRequired,
+    Accepted,
+    Rejected,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

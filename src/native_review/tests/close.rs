@@ -310,3 +310,83 @@ fn close_blocks_before_review_and_closes_after_reviews_and_declarations() {
 
     assert!(close.closeable);
 }
+
+#[test]
+fn reopening_accepted_evidence_blocks_close_the_way_reason_already_reports_it() {
+    // Same fixture and same resolution path as
+    // `close_blocks_before_review_and_closes_after_reviews_and_declarations`,
+    // so `evidence:source-backed` starts out satisfying the hard requirement
+    // with no review at all (its boundary is source-backed).
+    let mut space = fixture_space_with_completion();
+    let completion_review = defer_review_morphism(
+        &space,
+        request(
+            NativeReviewTargetKind::Completion,
+            "completion:source-backed-evidence",
+            ReviewAction::Defer,
+            "revision:completion-deferred",
+        ),
+    )
+    .expect("defer completion");
+    append_review_for_test(&mut space, completion_review, "entry:completion-deferred");
+    let morphism_review = accept_review_morphism(
+        &space,
+        request_for_space(
+            &space,
+            NativeReviewTargetKind::Morphism,
+            "morphism:generated",
+            ReviewAction::Accept,
+            "revision:morphism-reviewed",
+        ),
+    )
+    .expect("accept generated morphism");
+    append_review_for_test(&mut space, morphism_review, "entry:morphism-reviewed");
+
+    let closeable = check_native_close(
+        &space,
+        NativeCloseCheckRequest {
+            declared_projection_loss_ids: vec![id("projection:lossy")],
+            ..close_request_for(&space)
+        },
+    )
+    .expect("close check before reopen");
+    assert!(
+        closeable.closeable,
+        "source-backed evidence must satisfy the requirement before any review targets it"
+    );
+
+    // A canonical review morphism now reopens that same evidence cell. Its
+    // stored `provenance.review_status` never changes — only the log carries
+    // the reopen — so the close check must read the log-derived, fail-closed
+    // status the evaluator already reads, not a raw review outcome.
+    let reopen = reopen_review_morphism(
+        &space,
+        request_for_space(
+            &space,
+            NativeReviewTargetKind::Evidence,
+            "evidence:source-backed",
+            ReviewAction::Reopen,
+            "revision:evidence-reopened",
+        ),
+    )
+    .expect("reopen evidence");
+    append_review_for_test(&mut space, reopen, "entry:evidence-reopened");
+
+    let after_reopen = check_native_close(
+        &space,
+        NativeCloseCheckRequest {
+            declared_projection_loss_ids: vec![id("projection:lossy")],
+            ..close_request_for(&space)
+        },
+    )
+    .expect("close check after reopen");
+
+    assert!(
+        !after_reopen.closeable,
+        "a reopened evidence cell must fail closed, exactly as space reason already reports it \
+         rejected and blocking on the same revision"
+    );
+    assert!(after_reopen
+        .blocker_ids
+        .contains(&id("evidence:source-backed")));
+}

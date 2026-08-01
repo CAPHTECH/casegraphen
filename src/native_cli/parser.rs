@@ -43,6 +43,7 @@ impl NativeCliCommand {
                 Self::parse_evidence(required_segment(&mut args, "evidence operation")?, args)
             }
             "cell" => Self::parse_cell(required_segment(&mut args, "cell operation")?, args),
+            "packet" => Self::parse_packet(required_segment(&mut args, "packet operation")?, args),
             _ => Err(NativeCliError::usage("unsupported native namespace")),
         }
     }
@@ -578,5 +579,53 @@ impl NativeCliCommand {
             reason: options.reason,
             output: options.output,
         })
+    }
+
+    fn parse_packet(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        match operation.to_str() {
+            Some("apply") => {
+                let options = NativeOptions::parse(args)?;
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "packet apply",
+                        operation: "evidence-attach",
+                        actor_command: Some("packet apply"),
+                    })?;
+                Ok(Self::PacketApply {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    base_revision_id: options.base_revision_id.clone().ok_or_else(|| {
+                        NativeCliError::usage("--base-revision-id <id> is required")
+                    })?,
+                    packet: options.require_path("--packet")?,
+                    gate_options,
+                    output: options.output,
+                })
+            }
+            Some("resume") => {
+                let options = NativeOptions::parse(args)?;
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "packet resume",
+                        operation: "cell-transition",
+                        actor_command: Some("packet resume"),
+                    })?;
+                Ok(Self::PacketResume {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    base_revision_id: options.base_revision_id.clone().ok_or_else(|| {
+                        NativeCliError::usage("--base-revision-id <id> is required")
+                    })?,
+                    packet: options.require_path("--packet")?,
+                    completed_through: options.require_id("--completed-through")?,
+                    gate_options,
+                    output: options.output,
+                })
+            }
+            Some(_) | None => Err(NativeCliError::usage("unsupported native packet command")),
+        }
     }
 }

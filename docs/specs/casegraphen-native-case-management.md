@@ -524,6 +524,38 @@ Default readiness rules:
 This keeps native CaseGraphen compatible with the current workflow evaluator's
 principle that state is an input fact and readiness is derived.
 
+### Reasoning Status Axes
+
+`space reason` reports two independent axes instead of a single folded status,
+because "is the work moving or done?" and "is what it produced trusted?" are
+different questions and a single priority ladder can only voice one. Both axes
+are projections of the evaluation already computed; neither introduces a new
+decision rule, and neither hides the other.
+
+Progress — `active | blocked | complete`:
+
+- `blocked`: at least one blocking obstruction exists;
+- `complete`: the space has cells and no readiness subject remains — every
+  goal/work-like cell reached a complete lifecycle;
+- `active`: otherwise. An empty case space is `active`, not complete.
+
+Assurance — `unreviewed | review_required | accepted | rejected`, folded
+worst-wins over the review-relevant facts the evaluation carries:
+
+- `rejected`: rejected evidence is present (a `rejected_evidence_used`
+  boundary violation);
+- `review_required`: any open review gap, `review_required` obstruction, or
+  evidence boundary violation;
+- `accepted`: accepted or review-promoted evidence exists and the review story
+  is clean. "Accepted" reads the same effective status the trust decision
+  reads: a canonical review-accept morphism in the log, or the cell's own
+  stored `provenance.review_status` when the log has no review for that cell
+  (a review morphism never rewrites the cell it reviews);
+- `unreviewed`: nothing has been reviewed and nothing is pending review.
+
+Exit-code semantics are a separate line: a report carries a domain finding when
+obstructions are present, regardless of either axis.
+
 ## Obstruction, Completion, Evidence, And Review Semantics
 
 ### Obstructions
@@ -592,6 +624,46 @@ Hard evidence requirements default to allowing only `source_backed` and
 appear in AI and audit projections, but it cannot silently satisfy close or
 readiness requirements.
 
+#### Artifacts versus evidence assertions
+
+An evidence cell is a claim about what an observed object shows. The observed
+object itself — a log, an xcresult, a document — is a separate concept: an
+**artifact**. Splitting the two means review lands on the claim, not on the
+observation the claim cites, so the unreviewed-inference warning that follows
+every attached claim does not also land on the file it is about.
+
+An artifact is represented by the `custom:artifact` cell-type convention (the
+same `custom:.+` extension mechanism `custom:capability` uses), so it needs no
+schema change. An artifact cell's id is content-addressed —
+`artifact:sha256-<hex>` — and it carries `lifecycle: resolved` (an observation
+is a completed fact, so it never joins the frontier or a readiness subject),
+`provenance.review_status: unreviewed`, and `metadata.content_hash` /
+`metadata.artifact_uri` naming what was hashed and where it was read from.
+
+Artifacts enter only through `evidence attach`. Each `--input <claim-cell.json>`
+may carry zero or more `--artifact <path>` file paths; for each one, the tool
+reads the bytes, computes the sha256 content hash itself (a caller never
+supplies it), mints the `custom:artifact` cell if one for that hash does not
+already exist, and adds a `derives_from` relation from the claim to the
+artifact — all inside the one `EvidenceAttach` morphism the command already
+batches its inputs into. Two citations of the same bytes, in the same attach
+or across separate ones, land on the one artifact cell; only the relation is
+added a second time.
+
+This entry rule is enforced once, in the model: post-genesis, a `custom:artifact`
+cell (and a `derives_from` relation whose target is one) may be added only by a
+morphism of type `EvidenceAttach`. Genesis is not exempt — a lift or import
+snapshot containing an artifact cell is refused, because an artifact is a fact
+about one file's bytes, not a source boundary a human can vouch for as a whole.
+An artifact cell is also immutable as a whole: any appearance of one in an
+update, including a lifecycle transition via `cell transition`, is refused.
+
+Acceptability and review apply to claims, not to what they cite. An artifact
+cell has `cell_type` `custom:artifact`, not `evidence`, so it falls outside
+`--satisfies` coverage targets, the evidence findings the evaluator scans, and
+`review accept`/`reject`/etc. — reviewing an artifact is refused, because what
+is reviewable is the evidence cell that derives from it.
+
 ### Reviews
 
 Review is represented as both a cell type and morphism type:
@@ -604,7 +676,28 @@ Review is represented as both a cell type and morphism type:
 
 Every review morphism must name reviewer ID, reason, target IDs, source or
 evidence IDs, and the review outcome. A review projection may suggest actions,
-but the durable result is only the appended review morphism.
+but the durable result is only the appended review morphism. For an evidence
+cell, this reads fail-closed: a reopened or waived/deferred review leaves the
+evidence treated as not accepted until an explicit accept lands, regardless of
+what the cell's own stored status still says.
+
+### Evidence Packets
+
+An evidence packet (`highergraphen.case.evidence_packet.v1`) is a strict JSON
+input driving `packet apply` and `packet resume` (ADR 0015): apply attaches the
+packet's claim and artifacts through the exact same machinery `evidence attach`
+uses, then always pauses; resume verifies the claim is `cell_type: evidence`,
+was attached by this same packet's own apply (the log entry at the named
+`--completed-through` revision must be the `EvidenceAttach` morphism that
+added it, so a different attach's already-accepted claim cannot be borrowed),
+and carries a log-derived accepted review status with no fallback to its own
+stored provenance — deliberately not the same folded status evidence findings
+report, since "no review in the log" must never read as accepted on a path
+that authorizes a mutation. Only then does it transition the target cell
+through the exact same machinery `cell transition` uses. A packet never
+performs the review itself: one invocation carries one operation gate, and a
+packet that reviewed its own claim would make one actor both propose and
+accept, which is what the pause exists to prevent.
 
 ## Projection And Evolution Views
 
@@ -783,6 +876,29 @@ casegraphen review waive --store <dir> --case-space-id <id> --target-id <id> --r
 These commands produce typed or metadata-only review morphisms as appropriate,
 validate an operation gate before construction, and append through the gated
 store boundary. There is no `review list` command in the current CLI.
+
+Evidence packet commands (ADR 0015):
+
+```sh
+casegraphen packet apply --store <dir> --case-space-id <id> --base-revision-id <id> --packet <evidence.packet.json> --format json
+casegraphen packet resume --store <dir> --case-space-id <id> --base-revision-id <id> --packet <evidence.packet.json> --completed-through <revision-id> --format json
+```
+
+`packet apply` reads the packet's claim and artifacts and calls the same
+internal function `evidence attach` calls to append one `EvidenceAttach`
+morphism, then reports `result.status: "paused_for_review"` and a structured
+`result.next_operations` array — named fields such as `target_id`,
+`base_revision_id`, and `completed_through`, not assembled shell command
+strings, because a packet's `claim.id` is caller-controlled and a command
+string built from it could inject flags into the very `review accept` the
+pause exists to keep independent. `packet resume` refuses unless
+`--completed-through` names a revision present in the replayed history, the
+log entry at that exact revision is the `EvidenceAttach` morphism that added
+the claim (so a different attach's already-accepted claim cannot be reused to
+authorize this packet's transition), and the claim's log-derived review
+status — with no fallback to its own stored provenance — is accepted. It then
+calls the same internal function `cell transition` calls and reports
+`result.status: "completed"`.
 
 `space topology` emits a native CLI operation report with topology
 diagnostics under `result.topology`. Baseline output omits

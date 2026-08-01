@@ -34,6 +34,7 @@ mod github_issue_lift;
 mod io;
 mod lift;
 mod mutations;
+mod packet;
 mod plan;
 mod run;
 mod workflow_lift;
@@ -44,6 +45,9 @@ use io::{
 };
 pub(super) use lift::{case_import, case_new, lift_structured_source};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
+use mutations::{existing_case_space_ids, prepare_claim, ClaimPreparationState};
+pub use packet::EVIDENCE_PACKET_SCHEMA;
+pub(super) use packet::{packet_apply, packet_resume};
 pub(super) use plan::{plan_check, plan_propose, plan_review};
 pub(super) use run::{run_frontier, run_step};
 

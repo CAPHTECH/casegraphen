@@ -51,6 +51,8 @@ strings are:
 | `morphism reject` | `morphism-reject` |
 | `evidence attach` | `evidence-attach` |
 | `cell transition` | `cell-transition` |
+| `packet apply` | `evidence-attach` (no new operation vocabulary; it calls the same internal function `evidence attach` does) |
+| `packet resume` | `cell-transition` (same rationale; it calls the same internal function `cell transition` does) |
 | `review accept\|reject\|reopen\|waive` | `review` |
 
 `morphism propose` is intentionally ungated because it writes only a proposal
@@ -313,6 +315,8 @@ answer.
 | Transition inside accepted plan classes, deterministic gates pass | No additional review (the accepted plan plus dispatch gate authorizes it) |
 | Transition outside plan classes | Always — remains an unreviewed proposal |
 | Review accept/reject/reopen/waive | Always (reviewer id + reason + operation gate) |
+| Packet apply (evidence-attach step of ADR 0015) | No promotion, same as evidence attachment — the claim and any artifacts enter as unreviewed evidence, and the command always reports `paused_for_review`; it never accepts a review itself |
+| Packet resume (cell-transition step of ADR 0015) | Always gated on an independent review: refuses unless the claim was attached by this same packet's own apply and is accepted by a canonical review already in the log — a packet cannot supply that review, by design, so a human (or a delegated actor holding a separate `review` capability) must have run `review accept` first |
 | Promoting worker evidence to satisfy a hard requirement beyond `source_backed` origin rules | Always (`review accept`, with operation gate) |
 | Case-space close | Always (close-check invariants incl. gate) |
 | Adopting an existing morphism log (`space rebuild --adopt-existing-log`) | Always — the operator asserts that the pre-existing unanchored log is trusted; rebuild verifies its full fold and snapshots before creating a missing head |

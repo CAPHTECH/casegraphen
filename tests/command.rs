@@ -566,7 +566,11 @@ fn native_reasoning_commands_emit_domain_reports_and_output_file() {
     assert!(reason.status.success(), "stderr: {}", stderr(&reason));
     let reason_json = stdout_json(&reason);
     assert_eq!(
-        reason_json["result"]["evaluation"]["status"],
+        reason_json["result"]["evaluation"]["progress"],
+        json!("active")
+    );
+    assert_eq!(
+        reason_json["result"]["evaluation"]["assurance"],
         json!("review_required")
     );
     assert!(reason_json["result"]["evaluation"]["completion_candidates"]
@@ -691,8 +695,8 @@ fn space_reason_text_renders_the_evaluation_without_changing_json_or_exit_semant
     );
     assert_eq!(
         format!("{:x}", Sha256::digest(&json_report.stdout)),
-        "bb34c4e1e88ca67a5afb3e40068812b2b0f0886489acf460d01938181ade014a",
-        "the JSON bytes changed from the pre-text-renderer baseline"
+        "6120bc76d0154119016d33a52fa028880b519c7907ede4f113fb6e5bff1c3b62",
+        "the JSON bytes changed from the two-axis-status baseline"
     );
     let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
     let frontier_ids = evaluation["frontier_cell_ids"]
@@ -1298,6 +1302,1016 @@ fn a_capability_authorizes_only_the_operations_it_names() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// A case space carrying two capabilities separated on purpose: the
+/// implementer may attach evidence and transition cells, the reviewer may
+/// only review. Packet tests use this so the actor-seam assertion (ADR 0015)
+/// is checking a real capability boundary, not a single actor wearing two hats.
+fn packet_test_fixture() -> Value {
+    let mut fixture = json_file(native_case_fixture());
+    let space_id = fixture["space_id"].clone();
+    let capability = |id: &str, actor_id: &str, operations: &[&str]| {
+        json!({
+            "id": id,
+            "cell_type": "custom:capability",
+            "space_id": space_id,
+            "title": format!("Packet test capability {id}"),
+            "lifecycle": "accepted",
+            "source_ids": ["source:native-design-doc"],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "document", "title": "Packet test fixture"},
+                "confidence": 1.0,
+                "review_status": "accepted"
+            },
+            "metadata": {
+                "actor_ids": [actor_id],
+                "operations": operations
+            }
+        })
+    };
+    fixture["case_cells"]
+        .as_array_mut()
+        .expect("case cells array")
+        .extend([
+            capability(
+                "capability:packet-implementer",
+                "actor:packet-implementer",
+                &["evidence-attach", "cell-transition"],
+            ),
+            capability(
+                "capability:packet-reviewer",
+                "actor:packet-reviewer",
+                &["review"],
+            ),
+        ]);
+    fixture
+}
+
+fn import_packet_test_case_space(directory: &Path, revision_id: &str) -> Output {
+    let fixture_path = directory.join("packet-test-fixture.case.space.json");
+    write_json_value(&fixture_path, &packet_test_fixture());
+    import_native_case_space_from_input(directory, &fixture_path, revision_id)
+}
+
+fn packet_value(claim_id: &str) -> Value {
+    json!({
+        "schema": "highergraphen.case.evidence_packet.v1",
+        "schema_version": 1,
+        "case_space_id": native_case_space_id(),
+        "target": {"cell_id": "work:review-native-contract", "transition_to": "active"},
+        "claim": {
+            "id": claim_id,
+            "cell_type": "evidence",
+            "space_id": "space:higher-graphen-casegraphen",
+            "title": "Packet claim",
+            "lifecycle": "active",
+            "source_ids": ["source:packet-test"],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "log", "title": "CI"},
+                "confidence": 0.8,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        },
+        "artifacts": ["build.log"],
+        "satisfies": ["evidence:native-schema-json-valid"],
+        "completion": {"reason": "Packet test completion reason"}
+    })
+}
+
+#[test]
+fn packet_apply_pauses_for_review_then_resume_transitions_after_acceptance() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-happy-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet_path = directory.join("happy.evidence.packet.json");
+    write_json_value(&packet_path, &packet_value("evidence:packet-happy"));
+    let artifact_path = directory.join("build.log");
+    fs::write(&artifact_path, b"packet artifact bytes\n").expect("write artifact");
+    let packet_str = packet_path.to_str().expect("packet path").to_owned();
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-happy-base",
+        "--packet",
+        &packet_str,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let apply_json = stdout_json(&apply);
+    assert_eq!(apply_json["result"]["status"], json!("paused_for_review"));
+    assert_eq!(
+        apply_json["result"]["claim_cell_id"],
+        json!("evidence:packet-happy")
+    );
+    assert_eq!(
+        apply_json["result"]["artifact_cell_ids"]
+            .as_array()
+            .expect("artifact cell ids")
+            .len(),
+        1
+    );
+    let completed_through = apply_json["result"]["completed_through"]
+        .as_str()
+        .expect("completed_through")
+        .to_owned();
+    assert_eq!(
+        apply_json["result"]["record"]["current_revision_id"],
+        json!(completed_through)
+    );
+    assert_eq!(
+        apply_json["result"]["record"]["revision_count"],
+        json!(2),
+        "packet apply must append exactly one revision on top of genesis"
+    );
+    // Structured, not shell text: a packet-controlled `claim.id` must not be
+    // able to inject flags into a string an operator is told to paste.
+    let next_operations = apply_json["result"]["next_operations"]
+        .as_array()
+        .expect("next operations");
+    assert_eq!(next_operations.len(), 2);
+    assert_eq!(next_operations[0]["command"], json!("review accept"));
+    assert_eq!(
+        next_operations[0]["target_id"],
+        json!("evidence:packet-happy")
+    );
+    assert_eq!(
+        next_operations[0]["base_revision_id"],
+        json!(completed_through)
+    );
+    assert_eq!(next_operations[1]["command"], json!("packet resume"));
+    assert_eq!(
+        next_operations[1]["completed_through"],
+        json!(completed_through)
+    );
+
+    // Gate seam, confirmed the hard way: the implementer's own gate lacks
+    // `review`, so accepting its own claim under that gate must be refused.
+    // This is the enforcement that makes the pause meaningful rather than a
+    // convention an implementer could route around.
+    let self_review = run_cli(&[
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:packet-happy",
+        "--reviewer-id",
+        "reviewer:should-not-work",
+        "--reason",
+        "attempting self-review under the implementer gate",
+        "--base-revision-id",
+        &completed_through,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!self_review.status.success());
+    assert!(
+        stderr(&self_review).contains("does not authorize operation review"),
+        "stderr: {}",
+        stderr(&self_review)
+    );
+
+    // Resume before any review exists is refused, naming `review accept`.
+    let resume_before_review = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &completed_through,
+        "--packet",
+        &packet_str,
+        "--completed-through",
+        &completed_through,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume_before_review.status.success());
+    assert!(
+        stderr(&resume_before_review).contains("review accept"),
+        "stderr: {}",
+        stderr(&resume_before_review)
+    );
+
+    let review = run_cli(&[
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:packet-happy",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "reviewed under the independent reviewer capability",
+        "--base-revision-id",
+        &completed_through,
+        "--evidence-id",
+        "evidence:packet-happy",
+        "--actor-id",
+        "actor:packet-reviewer",
+        "--capability-id",
+        "capability:packet-reviewer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(review.status.success(), "stderr: {}", stderr(&review));
+    let review_revision = stdout_json(&review)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("review revision")
+        .to_owned();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &review_revision,
+        "--packet",
+        &packet_str,
+        "--completed-through",
+        &completed_through,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(resume.status.success(), "stderr: {}", stderr(&resume));
+    let resume_json = stdout_json(&resume);
+    assert_eq!(resume_json["result"]["status"], json!("completed"));
+    assert_eq!(
+        resume_json["result"]["entry"]["morphism"]["metadata"]["payload"]["updated_cells"][0]
+            ["lifecycle"],
+        json!("active")
+    );
+    assert_eq!(
+        resume_json["result"]["entry"]["morphism"]["metadata"]["operation_gate"]["operation"],
+        json!("cell-transition")
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_refuses_a_claim_id_naming_an_unattached_accepted_evidence_cell() {
+    // Reproduction of the audit's HIGH finding against ADR 0015: a packet
+    // whose `claim.id` names an already-accepted EVIDENCE cell that no
+    // packet ever attached (a genesis-authored evidence cell, trusted by the
+    // source boundary with no review morphism anywhere in the log) must not
+    // sail through resume. Unlike the earlier non-evidence-cell reproduction,
+    // this cell genuinely is `cell_type: evidence` with accepted provenance
+    // -- the fix must refuse on "this claim was never attached by an
+    // EvidenceAttach morphism", not merely on cell type.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-unattached-claim-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet = packet_value("evidence:native-schema-json-valid");
+    let packet_path = directory.join("unattached-claim.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let history_before = run_native_case_store_command(&directory, "history");
+    let entries_before = stdout_json(&history_before)["result"]["entries"]
+        .as_array()
+        .expect("history entries before")
+        .len();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-unattached-claim-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--completed-through",
+        "revision:packet-unattached-claim-base",
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("was not added by the EvidenceAttach morphism"),
+        "stderr: {}",
+        stderr(&resume)
+    );
+
+    let history_after = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history_after)["result"]["entries"]
+            .as_array()
+            .expect("history entries after")
+            .len(),
+        entries_before,
+        "a refused resume must append nothing"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_refuses_a_claim_attached_by_a_different_packets_apply() {
+    // A claim genuinely attached and genuinely accepted -- just not by the
+    // apply `--completed-through` names. Reusing a foreign attach's accepted
+    // claim to authorize a different packet's transition must refuse, even
+    // though the claim really is accepted evidence somewhere in the log.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-cross-attach-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet_a_path = directory.join("packet-a.evidence.packet.json");
+    write_json_value(&packet_a_path, &packet_value("evidence:packet-a-claim"));
+    let packet_b_path = directory.join("packet-b.evidence.packet.json");
+    write_json_value(&packet_b_path, &packet_value("evidence:packet-b-claim"));
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+
+    let apply_a = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-cross-attach-base",
+        "--packet",
+        packet_a_path.to_str().expect("packet a path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(apply_a.status.success(), "stderr: {}", stderr(&apply_a));
+    let apply_a_json = stdout_json(&apply_a);
+    let revision_after_a = apply_a_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("revision after a")
+        .to_owned();
+
+    let apply_b = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &revision_after_a,
+        "--packet",
+        packet_b_path.to_str().expect("packet b path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(apply_b.status.success(), "stderr: {}", stderr(&apply_b));
+    let completed_through_b = stdout_json(&apply_b)["result"]["completed_through"]
+        .as_str()
+        .expect("completed_through b")
+        .to_owned();
+
+    // Claim A is honestly reviewed and accepted.
+    let review = run_cli(&[
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:packet-a-claim",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "claim A really was reviewed",
+        "--base-revision-id",
+        &completed_through_b,
+        "--evidence-id",
+        "evidence:packet-a-claim",
+        "--actor-id",
+        "actor:packet-reviewer",
+        "--capability-id",
+        "capability:packet-reviewer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(review.status.success(), "stderr: {}", stderr(&review));
+    let review_revision = stdout_json(&review)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("review revision")
+        .to_owned();
+
+    // Claim A's now-accepted id, paired with B's own completed-through
+    // revision -- the revision where claim A was genuinely attached and
+    // accepted is deliberately NOT what is named here. B's own claim was
+    // never reviewed at all, so if this pairing were accepted, A's honest
+    // review would have authorized B's transition.
+    let mut forged = packet_value("evidence:packet-a-claim");
+    forged["target"] = packet_value("evidence:packet-b-claim")["target"].clone();
+    forged["completion"] = packet_value("evidence:packet-b-claim")["completion"].clone();
+    let forged_path = directory.join("forged.evidence.packet.json");
+    write_json_value(&forged_path, &forged);
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &review_revision,
+        "--packet",
+        forged_path.to_str().expect("forged packet path"),
+        "--completed-through",
+        &completed_through_b,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("was not added by the EvidenceAttach morphism"),
+        "stderr: {}",
+        stderr(&resume)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_validates_its_gate_before_reading_the_packet_file() {
+    // `evidence attach` documents authorizing before touching inputs so an
+    // actor holding no capability cannot distinguish a missing file from an
+    // unknown one through the refusal text; `packet resume` must follow the
+    // same ordering. A nonexistent packet path plus a capability id that
+    // does not resolve to any cell: if the gate ran second, the refusal
+    // would be about the missing file.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-gate-order-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-gate-order-base",
+        "--packet",
+        "definitely-does-not-exist.evidence.packet.json",
+        "--completed-through",
+        "revision:packet-gate-order-base",
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:does-not-exist",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("does not resolve to an existing case cell"),
+        "the gate must be validated before the packet file is ever read: stderr: {}",
+        stderr(&resume)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_refuses_a_completed_through_revision_absent_from_history() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-stale-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet_path = directory.join("stale.evidence.packet.json");
+    write_json_value(&packet_path, &packet_value("evidence:packet-stale"));
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+    let packet_str = packet_path.to_str().expect("packet path").to_owned();
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-stale-base",
+        "--packet",
+        &packet_str,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let current_revision = stdout_json(&apply)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("current revision")
+        .to_owned();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &current_revision,
+        "--packet",
+        &packet_str,
+        "--completed-through",
+        "revision:never-appended",
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("is not in this case space's history"),
+        "stderr: {}",
+        stderr(&resume)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_refuses_after_the_claim_is_rejected() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-rejected-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet_path = directory.join("rejected.evidence.packet.json");
+    write_json_value(&packet_path, &packet_value("evidence:packet-rejected"));
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+    let packet_str = packet_path.to_str().expect("packet path").to_owned();
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-rejected-base",
+        "--packet",
+        &packet_str,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let completed_through = stdout_json(&apply)["result"]["completed_through"]
+        .as_str()
+        .expect("completed_through")
+        .to_owned();
+
+    let reject = run_cli(&[
+        "review",
+        "reject",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:packet-rejected",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "the claim does not hold up",
+        "--base-revision-id",
+        &completed_through,
+        "--actor-id",
+        "actor:packet-reviewer",
+        "--capability-id",
+        "capability:packet-reviewer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(reject.status.success(), "stderr: {}", stderr(&reject));
+    let reject_revision = stdout_json(&reject)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("reject revision")
+        .to_owned();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        &reject_revision,
+        "--packet",
+        &packet_str,
+        "--completed-through",
+        &completed_through,
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("is not accepted"),
+        "stderr: {}",
+        stderr(&resume)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_resume_refuses_a_claim_id_naming_an_accepted_non_evidence_cell() {
+    // Reproduction of an audit finding: a packet whose `claim.id` names an
+    // already-accepted, non-evidence cell (a genesis goal cell) must not sail
+    // through resume just because that id happens to resolve to something
+    // with `provenance.review_status: accepted` in the case space. Nothing
+    // here ever ran `packet apply` or `evidence attach` — the attack is that
+    // resume looked up `claim.id` and read whatever cell it found.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-non-evidence-claim-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet = packet_value("goal:native-case-contract");
+    let packet_path = directory.join("non-evidence-claim.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+
+    let history_before = run_native_case_store_command(&directory, "history");
+    let entries_before = stdout_json(&history_before)["result"]["entries"]
+        .as_array()
+        .expect("history entries before")
+        .len();
+
+    let resume = run_cli(&[
+        "packet",
+        "resume",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-non-evidence-claim-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--completed-through",
+        "revision:packet-non-evidence-claim-base",
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!resume.status.success());
+    assert!(
+        stderr(&resume).contains("is not an evidence cell"),
+        "stderr: {}",
+        stderr(&resume)
+    );
+
+    let history_after = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history_after)["result"]["entries"]
+            .as_array()
+            .expect("history entries after")
+            .len(),
+        entries_before,
+        "a refused resume must append nothing"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_refuses_a_case_space_id_mismatch_before_any_mutation() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-mismatch-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let mut packet = packet_value("evidence:packet-mismatch");
+    packet["case_space_id"] = json!("case_space:not-this-one");
+    let packet_path = directory.join("mismatch.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-mismatch-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!apply.status.success());
+    assert!(
+        stderr(&apply).contains("does not match --case-space-id"),
+        "stderr: {}",
+        stderr(&apply)
+    );
+
+    let history = run_native_case_store_command(&directory, "history");
+    assert_eq!(
+        stdout_json(&history)["result"]["entries"]
+            .as_array()
+            .expect("history entries")
+            .len(),
+        1,
+        "a mismatched packet must append nothing"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_apply_report_validates_against_the_native_cli_report_schema() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-schema-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let packet_path = directory.join("schema.evidence.packet.json");
+    write_json_value(&packet_path, &packet_value("evidence:packet-schema"));
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+    let output_path = directory.join("packet-apply.report.json");
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-schema-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+        "--output",
+        output_path.to_str().expect("output path"),
+    ]);
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/native-cli.report.schema.json"),
+        &output_path,
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn packet_strict_parse_refuses_an_unknown_field() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_packet_test_case_space(&directory, "revision:packet-strict-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let mut packet = packet_value("evidence:packet-strict");
+    packet["target"]["bogus_field"] = json!("x");
+    let packet_path = directory.join("strict.evidence.packet.json");
+    write_json_value(&packet_path, &packet);
+    fs::write(directory.join("build.log"), b"artifact\n").expect("write artifact");
+
+    let apply = run_cli(&[
+        "packet",
+        "apply",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:packet-strict-base",
+        "--packet",
+        packet_path.to_str().expect("packet path"),
+        "--actor-id",
+        "actor:packet-implementer",
+        "--capability-id",
+        "capability:packet-implementer",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!apply.status.success());
+    let message = stderr(&apply);
+    assert!(
+        message.contains("target.bogus_field"),
+        "refusal did not locate the field: {message}"
+    );
+    assert!(
+        message.contains("unknown field"),
+        "refusal did not keep serde's reason: {message}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 #[test]
 fn the_store_refuses_a_morphism_whose_result_it_could_not_load_back() {
     let directory = unique_temp_dir();
@@ -1794,6 +2808,36 @@ fn a_hard_evidence_requirement_is_satisfied_only_by_recorded_coverage() {
     assert!(
         !blocked(),
         "the canonical attach-then-review path no longer satisfies a hard requirement"
+    );
+
+    // The trust decision above already reads the log-derived acceptance
+    // (that is what cleared the hard obstruction); the findings section must
+    // report the same fact rather than the cell's never-updated stored
+    // `provenance.review_status`, or the unreviewed-inference finding and its
+    // review gap would persist forever and the assurance axis could never
+    // reach `accepted` through the CLI review path.
+    let reason = run_native_case_store_command(&directory, "reason");
+    assert!(reason.status.success(), "stderr: {}", stderr(&reason));
+    let evaluation = &stdout_json(&reason)["result"]["evaluation"];
+    assert!(
+        !evaluation["evidence_findings"]["unreviewed_inference_ids"]
+            .as_array()
+            .expect("unreviewed inference ids")
+            .contains(&json!("evidence:coverage-real")),
+        "an accepted-by-review inferred claim must stop reading as unreviewed"
+    );
+    assert!(evaluation["evidence_findings"]["accepted_evidence_ids"]
+        .as_array()
+        .expect("accepted evidence ids")
+        .contains(&json!("evidence:coverage-real")));
+    assert!(
+        !evaluation["review_gaps"]
+            .as_array()
+            .expect("review gaps")
+            .iter()
+            .any(|gap| gap["gap_type"] == json!("unreviewed_inference")
+                && gap["target_id"] == json!("evidence:coverage-real")),
+        "the review gap for the now-accepted claim must close"
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -5774,6 +6818,602 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
 }
 
 #[test]
+fn evidence_attach_with_artifact_mints_a_cell_and_relation_kept_out_of_findings_and_frontier() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:artifact-attach-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let claim_path = directory.join("claim-with-artifact.evidence.json");
+    write_json_value(
+        &claim_path,
+        &native_attached_evidence("evidence:claim-with-artifact", "unreviewed"),
+    );
+    let artifact_path = directory.join("build.log");
+    fs::write(&artifact_path, b"a captured worker log\n").expect("write artifact file");
+
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:artifact-attach-base",
+            "--input",
+            claim_path.to_str().expect("claim path"),
+            "--satisfies",
+            "evidence:native-schema-json-valid",
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let entry = &stdout_json(&attached)["result"]["entry"];
+    let payload = &entry["morphism"]["metadata"]["payload"];
+    let added_cells = payload["added_cells"].as_array().expect("added cells");
+    assert_eq!(
+        added_cells.len(),
+        2,
+        "the claim and the artifact it cites belong in the one evidence-attach morphism"
+    );
+    let content_hash = sha256_file(&artifact_path);
+    let artifact_id = format!("artifact:sha256-{content_hash}");
+    let artifact_cell = added_cells
+        .iter()
+        .find(|cell| cell["id"] == json!(artifact_id))
+        .expect("artifact cell present in the payload");
+    assert_eq!(artifact_cell["cell_type"], json!("custom:artifact"));
+    assert_eq!(artifact_cell["lifecycle"], json!("resolved"));
+    assert_eq!(
+        artifact_cell["provenance"]["review_status"],
+        json!("unreviewed")
+    );
+    assert_eq!(artifact_cell["title"], json!("build.log"));
+    assert_eq!(artifact_cell["source_ids"], json!(["source:native-cli"]));
+    assert_eq!(
+        artifact_cell["metadata"]["content_hash"],
+        json!(content_hash)
+    );
+    assert_eq!(
+        artifact_cell["metadata"]["artifact_uri"],
+        json!(artifact_path.to_str().expect("artifact path"))
+    );
+    // Evidence-produced-by-this-morphism names the claim, not what it cites.
+    assert_eq!(
+        entry["morphism"]["evidence_ids"],
+        json!(["evidence:claim-with-artifact"])
+    );
+
+    let derives_from = payload["added_relations"]
+        .as_array()
+        .expect("added relations")
+        .iter()
+        .find(|relation| relation["relation_type"] == json!("derives_from"))
+        .expect("derives_from relation present in the payload");
+    assert_eq!(
+        derives_from["from_id"],
+        json!("evidence:claim-with-artifact")
+    );
+    assert_eq!(derives_from["to_id"], json!(artifact_id));
+    assert_eq!(derives_from["relation_strength"], json!("diagnostic"));
+
+    let reason = run_native_case_store_command(&directory, "reason");
+    let evaluation = &stdout_json(&reason)["result"]["evaluation"];
+    let unreviewed_inference_ids = evaluation["evidence_findings"]["unreviewed_inference_ids"]
+        .as_array()
+        .expect("unreviewed inference ids");
+    assert!(
+        unreviewed_inference_ids.contains(&json!("evidence:claim-with-artifact")),
+        "the claim is an inferred, unreviewed evidence cell"
+    );
+    assert!(
+        !unreviewed_inference_ids.contains(&json!(artifact_id)),
+        "the artifact is an observation, not a claim, so it must not surface as an \
+         unreviewed-inference finding"
+    );
+    let frontier_cell_ids = evaluation["frontier_cell_ids"]
+        .as_array()
+        .expect("frontier cell ids");
+    assert!(
+        !frontier_cell_ids.contains(&json!(artifact_id)),
+        "a resolved, non-evidence cell type still must not join the frontier"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn evidence_attach_dedupes_repeated_artifact_bytes_across_separate_attaches() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:artifact-dedupe-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let artifact_path = directory.join("shared.xcresult");
+    fs::write(&artifact_path, b"the same captured bytes\n").expect("write artifact file");
+    let content_hash = sha256_file(&artifact_path);
+    let artifact_id = format!("artifact:sha256-{content_hash}");
+
+    let first_claim_path = directory.join("first-claim.evidence.json");
+    write_json_value(
+        &first_claim_path,
+        &native_attached_evidence("evidence:artifact-dedupe-first", "unreviewed"),
+    );
+    let first_attach = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:artifact-dedupe-base",
+            "--input",
+            first_claim_path.to_str().expect("first claim path"),
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(
+        first_attach.status.success(),
+        "stderr: {}",
+        stderr(&first_attach)
+    );
+    let first_revision = stdout_json(&first_attach)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("first attach revision")
+        .to_owned();
+    assert!(
+        stdout_json(&first_attach)["result"]["entry"]["morphism"]["metadata"]["payload"]
+            ["added_cells"]
+            .as_array()
+            .expect("first added cells")
+            .iter()
+            .any(|cell| cell["id"] == json!(artifact_id))
+    );
+
+    let second_claim_path = directory.join("second-claim.evidence.json");
+    write_json_value(
+        &second_claim_path,
+        &native_attached_evidence("evidence:artifact-dedupe-second", "unreviewed"),
+    );
+    let second_attach = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &first_revision,
+            "--input",
+            second_claim_path.to_str().expect("second claim path"),
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(
+        second_attach.status.success(),
+        "stderr: {}",
+        stderr(&second_attach)
+    );
+    let second_payload =
+        &stdout_json(&second_attach)["result"]["entry"]["morphism"]["metadata"]["payload"];
+    assert_eq!(
+        second_payload["added_cells"]
+            .as_array()
+            .expect("second added cells"),
+        &vec![json!(second_payload["added_cells"][0])],
+        "the second attach must add only its own claim, not another copy of the artifact"
+    );
+    assert_eq!(
+        second_payload["added_cells"][0]["id"],
+        json!("evidence:artifact-dedupe-second")
+    );
+    let second_derives_from = second_payload["added_relations"]
+        .as_array()
+        .expect("second added relations")
+        .iter()
+        .find(|relation| relation["relation_type"] == json!("derives_from"))
+        .expect("second derives_from relation");
+    assert_eq!(second_derives_from["to_id"], json!(artifact_id));
+
+    let replay = run_native_case_store_command(&directory, "replay");
+    let replayed_cells = stdout_json(&replay)["result"]["replay"]["case_space"]["case_cells"]
+        .as_array()
+        .expect("replayed cells")
+        .clone();
+    assert_eq!(
+        replayed_cells
+            .iter()
+            .filter(|cell| cell["id"] == json!(artifact_id))
+            .count(),
+        1,
+        "only one artifact cell must ever exist for one content hash"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn morphism_propose_refuses_an_added_artifact_cell_and_a_derives_from_relation_into_one() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:artifact-propose-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let space_id = json_file(native_case_fixture())["space_id"].clone();
+
+    let propose = |value: &Value, morphism_path: &Path| {
+        write_json_value(morphism_path, value);
+        run_cli(&[
+            "morphism",
+            "propose",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--input",
+            morphism_path.to_str().expect("morphism path"),
+            "--format",
+            "json",
+        ])
+    };
+
+    let forged_artifact_cell = json!({
+        "id": "artifact:sha256-forged0000000000000000000000000000000000000000000000000000000",
+        "cell_type": "custom:artifact",
+        "lifecycle": "resolved",
+        "space_id": space_id,
+        "title": "Forged artifact",
+        "source_ids": [],
+        "structure_ids": [],
+        "metadata": {
+            "content_hash": "forged0000000000000000000000000000000000000000000000000000000",
+            "artifact_uri": "nowhere"
+        },
+        "provenance": {
+            "confidence": 1.0,
+            "review_status": "unreviewed",
+            "source": {"kind": "human", "title": "t"}
+        }
+    });
+    let add_artifact_path = directory.join("add-artifact.case_morphism.json");
+    let add_artifact = json!({
+        "morphism_id": "morphism:forged-artifact-add",
+        "morphism_type": "update",
+        "source_revision_id": "revision:artifact-propose-base",
+        "target_revision_id": "revision:forged-artifact-add",
+        "added_ids": [forged_artifact_cell["id"]],
+        "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+        "evidence_ids": [], "source_ids": ["source:native-cli"],
+        "violated_invariant_ids": [], "review_status": "unreviewed",
+        "metadata": {"payload": {"added_cells": [forged_artifact_cell]}}
+    });
+    let add_refused = propose(&add_artifact, &add_artifact_path);
+    assert!(!add_refused.status.success());
+    assert!(
+        stderr(&add_refused).contains("custom:artifact cells enter only through evidence attach"),
+        "stderr: {}",
+        stderr(&add_refused)
+    );
+
+    // A real artifact to target with a forged `derives_from` relation.
+    let claim_path = directory.join("propose-claim.evidence.json");
+    write_json_value(
+        &claim_path,
+        &native_attached_evidence("evidence:artifact-propose-claim", "unreviewed"),
+    );
+    let artifact_path = directory.join("propose.log");
+    fs::write(&artifact_path, b"artifact for a propose refusal test\n").expect("write artifact");
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:artifact-propose-base",
+            "--input",
+            claim_path.to_str().expect("claim path"),
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+    let artifact_id = format!("artifact:sha256-{}", sha256_file(&artifact_path));
+
+    let forged_relation_path = directory.join("add-derives-from.case_morphism.json");
+    let forged_relation = json!({
+        "morphism_id": "morphism:forged-derives-from",
+        "morphism_type": "relate",
+        "source_revision_id": attached_revision,
+        "target_revision_id": "revision:forged-derives-from",
+        "added_ids": ["relation:forged-derives-from"],
+        "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+        "evidence_ids": [], "source_ids": ["source:native-cli"],
+        "violated_invariant_ids": [], "review_status": "unreviewed",
+        "metadata": {"payload": {"added_relations": [{
+            "id": "relation:forged-derives-from",
+            "relation_type": "derives_from",
+            "relation_strength": "diagnostic",
+            "from_id": "evidence:artifact-propose-claim",
+            "to_id": artifact_id,
+            "evidence_ids": [],
+            "source_ids": ["source:native-cli"],
+            "metadata": {},
+            "provenance": {"confidence": 1.0, "review_status": "unreviewed",
+                           "source": {"kind": "human", "title": "t"}}
+        }]}}
+    });
+    let relation_refused = propose(&forged_relation, &forged_relation_path);
+    assert!(!relation_refused.status.success());
+    assert!(
+        stderr(&relation_refused).contains("a derives_from relation into artifact cell")
+            && stderr(&relation_refused).contains("enters only through evidence attach"),
+        "stderr: {}",
+        stderr(&relation_refused)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn genesis_lift_refuses_a_snapshot_containing_an_artifact_cell() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let mut fixture = json_file(native_case_fixture());
+    let space_id = fixture["space_id"].clone();
+    fixture["case_cells"]
+        .as_array_mut()
+        .expect("case cells array")
+        .push(json!({
+            "id": "artifact:sha256-genesis00000000000000000000000000000000000000000000000000000",
+            "cell_type": "custom:artifact",
+            "lifecycle": "resolved",
+            "space_id": space_id,
+            "title": "Artifact smuggled through genesis",
+            "source_ids": [],
+            "structure_ids": [],
+            "metadata": {
+                "content_hash": "genesis00000000000000000000000000000000000000000000000000000",
+                "artifact_uri": "nowhere"
+            },
+            "provenance": {
+                "confidence": 1.0,
+                "review_status": "unreviewed",
+                "source": {"kind": "human", "title": "t"}
+            }
+        }));
+    let fixture_path = directory.join("genesis-with-artifact.case.space.json");
+    write_json_value(&fixture_path, &fixture);
+
+    let lifted = run_cli(&[
+        "lift",
+        "native",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        fixture_path.to_str().expect("fixture path"),
+        "--revision-id",
+        "revision:genesis-with-artifact",
+        "--format",
+        "json",
+    ]);
+    assert!(!lifted.status.success());
+    assert!(
+        stderr(&lifted).contains("custom:artifact cells enter only through evidence attach"),
+        "stderr: {}",
+        stderr(&lifted)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn cell_transition_and_review_accept_refuse_an_artifact_cell() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:artifact-review-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let claim_path = directory.join("review-claim.evidence.json");
+    write_json_value(
+        &claim_path,
+        &native_attached_evidence("evidence:artifact-review-claim", "unreviewed"),
+    );
+    let artifact_path = directory.join("review.log");
+    fs::write(&artifact_path, b"artifact for a review refusal test\n").expect("write artifact");
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:artifact-review-base",
+            "--input",
+            claim_path.to_str().expect("claim path"),
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+    let artifact_id = format!("artifact:sha256-{}", sha256_file(&artifact_path));
+
+    let transitioned = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &attached_revision,
+            "--cell-id",
+            &artifact_id,
+            "--to",
+            "accepted",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(!transitioned.status.success());
+    assert!(
+        stderr(&transitioned).contains("an artifact is an immutable observation"),
+        "stderr: {}",
+        stderr(&transitioned)
+    );
+
+    let reviewed = run_cli_with_mutation_gate(
+        &[
+            "review",
+            "accept",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            &artifact_id,
+            "--reviewer-id",
+            "reviewer:human",
+            "--reason",
+            "trying to review the observation itself",
+            "--base-revision-id",
+            &attached_revision,
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(!reviewed.status.success());
+    assert!(
+        stderr(&reviewed).contains("an observation, not a claim"),
+        "stderr: {}",
+        stderr(&reviewed)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn generic_update_morphism_touching_an_artifact_cell_is_refused() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:artifact-update-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let claim_path = directory.join("update-claim.evidence.json");
+    write_json_value(
+        &claim_path,
+        &native_attached_evidence("evidence:artifact-update-claim", "unreviewed"),
+    );
+    let artifact_path = directory.join("update.log");
+    fs::write(&artifact_path, b"artifact for an update refusal test\n").expect("write artifact");
+    let attached = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:artifact-update-base",
+            "--input",
+            claim_path.to_str().expect("claim path"),
+            "--artifact",
+            artifact_path.to_str().expect("artifact path"),
+            "--format",
+            "json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+    let payload = &stdout_json(&attached)["result"]["entry"]["morphism"]["metadata"]["payload"];
+    let artifact_id = format!("artifact:sha256-{}", sha256_file(&artifact_path));
+    let mut updated_artifact_cell = payload["added_cells"]
+        .as_array()
+        .expect("added cells")
+        .iter()
+        .find(|cell| cell["id"] == json!(artifact_id))
+        .expect("artifact cell")
+        .clone();
+    updated_artifact_cell["title"] = json!("Renamed after the fact");
+
+    let update_path = directory.join("update-artifact.case_morphism.json");
+    let update = json!({
+        "morphism_id": "morphism:forged-artifact-update",
+        "morphism_type": "update",
+        "source_revision_id": attached_revision,
+        "target_revision_id": "revision:forged-artifact-update",
+        "added_ids": [], "retired_ids": [], "preserved_ids": [],
+        "updated_ids": [artifact_id],
+        "evidence_ids": [], "source_ids": ["source:native-cli"],
+        "violated_invariant_ids": [], "review_status": "unreviewed",
+        "metadata": {"payload": {"updated_cells": [updated_artifact_cell]}}
+    });
+    write_json_value(&update_path, &update);
+    let proposed = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        update_path.to_str().expect("update morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!proposed.status.success());
+    assert!(
+        stderr(&proposed).contains("an artifact is an immutable observation"),
+        "stderr: {}",
+        stderr(&proposed)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn batch_coverage_is_read_per_evidence_by_the_evaluator() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -9729,6 +11369,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/worker.report.example.json",
         "schemas/casegraphen/execution.trace.example.json",
         "schemas/casegraphen/operation-gate-profiles.example.json",
+        "schemas/casegraphen/evidence.packet.example.json",
         "schemas/casegraphen/report-schema-aliases.json",
         "schemas/casegraphen/case.graph.schema.json",
         "schemas/casegraphen/coverage.policy.schema.json",
@@ -9745,6 +11386,7 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/execution.trace.schema.json",
         "schemas/casegraphen/operation-gate-profiles.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
+        "schemas/casegraphen/evidence.packet.schema.json",
     ]
     .iter()
     .map(|path| repo_path(path))
@@ -9784,6 +11426,10 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/operation-gate-profiles.schema.json",
             "schemas/casegraphen/operation-gate-profiles.example.json",
+        ),
+        (
+            "schemas/casegraphen/evidence.packet.schema.json",
+            "schemas/casegraphen/evidence.packet.example.json",
         ),
     ]
     .iter()

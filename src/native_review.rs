@@ -1,7 +1,7 @@
 use crate::{
     native_eval::{
-        evaluate_native_case, NativeCaseEvaluation, NativeCloseInvariantResult, NativeEvalError,
-        NativeReviewGapType,
+        evaluate_native_case, latest_evidence_review_statuses, NativeCaseEvaluation,
+        NativeCloseInvariantResult, NativeEvalError, NativeReviewGapType,
     },
     native_model::{
         CaseCellLifecycle, CaseCellType, CaseMorphism, CaseSpace, ProjectionAudience, ReviewAction,
@@ -207,7 +207,19 @@ pub(crate) fn check_native_close_with_finding(
 ) -> NativeReviewResult<(NativeCloseCheck, bool)> {
     let evaluation = evaluate_native_case(case_space)?;
     let reviews = explicit_reviews(case_space);
-    let invariant_results = close_invariants(case_space, &request, &evaluation, &reviews);
+    // Computed once and threaded down to `evidence_accepted_invariant`, the
+    // same single source the evaluator's trust decision reads
+    // (`NativeCaseIndex::latest_evidence_review_status`), so the close check
+    // cannot answer "is this evidence accepted" differently than
+    // `space reason` does for the same revision.
+    let evidence_review_statuses = latest_evidence_review_statuses(case_space);
+    let invariant_results = close_invariants(
+        case_space,
+        &request,
+        &evaluation,
+        &reviews,
+        &evidence_review_statuses,
+    );
 
     let blocker_ids = dedupe_ids(
         invariant_results
@@ -410,6 +422,7 @@ fn close_invariants(
     request: &NativeCloseCheckRequest,
     evaluation: &NativeCaseEvaluation,
     reviews: &BTreeMap<Id, Vec<ExplicitReview>>,
+    evidence_review_statuses: &BTreeMap<&str, ReviewStatus>,
 ) -> Vec<NativeCloseInvariantResult> {
     vec![
         base_revision_invariant(case_space, request),
@@ -417,7 +430,7 @@ fn close_invariants(
         hard_obstructions_invariant(evaluation, reviews),
         completions_reviewed_invariant(evaluation, reviews),
         morphisms_reviewed_invariant(evaluation, reviews),
-        evidence_accepted_invariant(case_space, reviews),
+        evidence_accepted_invariant(case_space, reviews, evidence_review_statuses),
         projection_loss_declared_invariant(request, evaluation, reviews),
         policy_capability_gate_invariant(case_space, request),
         validation_evidence_invariant(case_space, request),
@@ -508,10 +521,11 @@ fn morphisms_reviewed_invariant(
 fn evidence_accepted_invariant(
     case_space: &CaseSpace,
     reviews: &BTreeMap<Id, Vec<ExplicitReview>>,
+    evidence_review_statuses: &BTreeMap<&str, ReviewStatus>,
 ) -> NativeCloseInvariantResult {
     close_invariant(
         "close:native-evidence-accepted-or-waived",
-        evidence_requirement_blockers(case_space, reviews),
+        evidence_requirement_blockers(case_space, reviews, evidence_review_statuses),
         "Required evidence must be source-backed, review-promoted, accepted, or explicitly waived.",
     )
 }

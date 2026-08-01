@@ -73,6 +73,13 @@ derive from it — do not read an empty `inspect` payload as an empty space. The
 text reason view renders the same evaluator result as JSON; use it for a human
 terminal read, not as a second decision rule.
 
+`space reason` reports two independent status axes, and you must read both:
+`Progress` (`active | blocked | complete`) says whether the work is moving or
+done; `Assurance` (`unreviewed | review_required | accepted | rejected`) says
+whether what it produced is trusted. `Progress: complete` with
+`Assurance: review_required` is the normal shape of finished-but-unreviewed
+work — it means run reviews, not stop.
+
 **2. Every durable mutation needs a valid operation gate.** Five resolved values
 are checked against the case space. Put reusable values in a strict named JSON
 profile and let the reference files below pass its argv selection as `$GATE`:

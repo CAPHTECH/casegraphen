@@ -146,6 +146,11 @@ node or edge needs no schema change. Everything else about a cell is fixed once
 created: `cell_type` is immutable, and for evidence cells so are `provenance`
 and `metadata.{evidence_boundary,content_hash,trace_id,worker_report_id}`.
 
+Two `custom:` names are the tool's, not yours. `custom:capability` enters only
+at genesis; `custom:artifact` enters only through `evidence attach --artifact`,
+which mints it from a file it hashed. A genesis snapshot carrying either an
+artifact cell or an id in the `artifact:sha256-` namespace is refused on lift.
+
 ## Check the model before building on it
 
 ```sh

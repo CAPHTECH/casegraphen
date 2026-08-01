@@ -15,6 +15,10 @@ mod util;
 mod validation;
 pub use types::*;
 pub use validation::validate_native_case_space;
+// The close check's own crate-internal surface onto the same derivation the
+// evaluator and `effective_evidence_review_status` read, so `native_review`
+// can compute the map once and pass it down instead of re-deriving it.
+pub(crate) use sections::latest_evidence_review_statuses;
 
 use graph::NativeCaseIndex;
 #[cfg(test)]
@@ -45,10 +49,12 @@ pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCa
         &review_gaps,
     );
     let frontier_cell_ids = frontier_cell_ids(&readiness, &context);
-    let status = reasoning_status(case_space, &readiness, &obstructions, &review_gaps);
+    let progress = progress_axis(case_space, &readiness, &obstructions);
+    let assurance = assurance_axis(&obstructions, &evidence_findings, &review_gaps);
 
     Ok(NativeCaseEvaluation {
-        status,
+        progress,
+        assurance,
         readiness,
         frontier_cell_ids,
         obstructions,
@@ -124,6 +130,64 @@ pub(crate) fn recorded_coverage_targets(case_space: &CaseSpace, evidence_id: &st
         .filter(|(covering_id, _)| covering_id == evidence_id)
         .map(|(_, target_id)| target_id)
         .collect()
+}
+
+/// This id's log-derived review status, if the log carries a canonical
+/// review for it — the single source `evidence_findings`, the trust
+/// decision, and the close check all consult
+/// (`sections::latest_evidence_review_statuses`). `None` means the log has no
+/// review for this id, full stop: no fallback to anything the cell itself
+/// stores.
+///
+/// This is deliberately a *different question* from
+/// [`effective_evidence_review_status`], and any caller that authorizes a
+/// durable mutation from a review status — `packet resume` is the one that
+/// exists today — must call this one, not that one. "No review in the log"
+/// must never read as accepted on a path that authorizes a transition; it
+/// legitimately does read as accepted for `evidence_findings`, which is
+/// reporting on a cell's status, not deciding whether to mutate anything
+/// because of it. Sharing one function across both questions is what let
+/// `packet resume` read a genesis-authored evidence cell's stored
+/// `provenance.review_status` as if a review had actually happened.
+pub(crate) fn latest_evidence_review_status(
+    case_space: &CaseSpace,
+    evidence_id: &str,
+) -> Option<ReviewStatus> {
+    sections::latest_evidence_review_statuses(case_space)
+        .get(evidence_id)
+        .copied()
+}
+
+/// This cell's effective review status **for reporting**, folding the two
+/// facts every caller otherwise had to fold themselves: whether it *is*
+/// evidence, and if so, what its review status actually is. `None` for
+/// anything that is not `cell_type: evidence` — nothing else has a review
+/// status this rule speaks for. For an evidence cell: the log-derived status
+/// when the log carries a canonical review for it, else the cell's own
+/// stored `provenance.review_status`, because a review morphism never
+/// rewrites the cell it reviews.
+///
+/// Do not call this to decide whether to authorize a mutation. The stored
+/// fallback is correct for `evidence_findings` — a genesis-authored evidence
+/// cell legitimately carries accepted provenance with no review morphism
+/// anywhere in the log, and findings must say so — but on a path that
+/// authorizes a transition, "no review in the log" must never read as
+/// accepted. `packet resume` once called this function for exactly that
+/// decision and let a packet whose `claim.id` named an unrelated
+/// already-accepted cell resume with no evidence review anywhere in the log;
+/// it must call [`latest_evidence_review_status`] instead, which has no
+/// fallback.
+pub(crate) fn effective_evidence_review_status(
+    case_space: &CaseSpace,
+    cell: &CaseCell,
+) -> Option<ReviewStatus> {
+    if cell.cell_type != CaseCellType::Evidence {
+        return None;
+    }
+    Some(
+        latest_evidence_review_status(case_space, cell.id.as_str())
+            .unwrap_or(cell.provenance.review_status),
+    )
 }
 
 struct CellEvaluation {
@@ -545,22 +609,57 @@ impl<'a> NativeEvaluationContext<'a> {
     }
 }
 
-fn reasoning_status(
+/// The Progress axis of the reasoning status. A projection of the evaluation
+/// already computed — it reads obstruction `blocking` flags and the readiness
+/// subject set and decides nothing itself. Its pair is [`assurance_axis`];
+/// both are registered as one rule in the invariant-duplication-auditor table.
+///
+/// `complete` means the space has cells and no readiness subject remains:
+/// every goal/work-like cell reached a complete lifecycle. An empty case
+/// space is `active` — open, with nothing achieved — not complete.
+fn progress_axis(
     case_space: &CaseSpace,
     readiness: &NativeReadiness,
     obstructions: &[NativeObstruction],
-    review_gaps: &[NativeReviewGap],
-) -> NativeReasoningStatus {
-    if case_space.case_cells.is_empty() {
-        NativeReasoningStatus::Incomplete
-    } else if obstructions.iter().any(|obstruction| obstruction.blocking) {
-        NativeReasoningStatus::Blocked
-    } else if !review_gaps.is_empty() {
-        NativeReasoningStatus::ReviewRequired
-    } else if readiness.ready_cell_ids.is_empty() {
-        NativeReasoningStatus::Incomplete
+) -> NativeProgress {
+    if obstructions.iter().any(|obstruction| obstruction.blocking) {
+        NativeProgress::Blocked
+    } else if !case_space.case_cells.is_empty() && readiness.evaluated_cell_ids.is_empty() {
+        NativeProgress::Complete
     } else {
-        NativeReasoningStatus::Ready
+        NativeProgress::Active
+    }
+}
+
+/// The Assurance axis of the reasoning status: a worst-wins fold over the
+/// review-relevant facts the evaluation already carries. Rejected evidence in
+/// use is worst; any open review gap, review-required obstruction, or evidence
+/// boundary violation is pending review; accepted evidence with a clean review
+/// story is accepted; a space where nothing was ever reviewed is unreviewed.
+fn assurance_axis(
+    obstructions: &[NativeObstruction],
+    evidence_findings: &NativeEvidenceFindings,
+    review_gaps: &[NativeReviewGap],
+) -> NativeAssurance {
+    let rejected_in_use = evidence_findings
+        .boundary_violations
+        .iter()
+        .any(|violation| {
+            violation.violation_type == NativeEvidenceBoundaryViolationType::RejectedEvidenceUsed
+        });
+    if rejected_in_use {
+        NativeAssurance::Rejected
+    } else if !review_gaps.is_empty()
+        || !evidence_findings.boundary_violations.is_empty()
+        || obstructions.iter().any(|obstruction| {
+            obstruction.obstruction_type == NativeObstructionType::ReviewRequired
+        })
+    {
+        NativeAssurance::ReviewRequired
+    } else if !evidence_findings.accepted_evidence_ids.is_empty() {
+        NativeAssurance::Accepted
+    } else {
+        NativeAssurance::Unreviewed
     }
 }
 

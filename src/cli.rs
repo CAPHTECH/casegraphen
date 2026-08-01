@@ -98,7 +98,7 @@ impl Command {
             Some(
                 segment @ ("lift" | "space" | "obstruction" | "completion" | "projection"
                 | "equivalence" | "invariant" | "morphism" | "plan" | "binding" | "run"
-                | "review" | "evidence" | "cell"),
+                | "review" | "evidence" | "cell" | "packet"),
             ) => NativeCliCommand::parse(segment, args)
                 .map(|command| Self::Native(Box::new(command)))
                 .map_err(CliError::from),

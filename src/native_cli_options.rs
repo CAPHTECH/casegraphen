@@ -101,6 +101,7 @@ pub(super) struct NativeOptions {
     pub(super) right_store: Option<PathBuf>,
     pub(super) input: Option<PathBuf>,
     pub(super) projection: Option<PathBuf>,
+    pub(super) packet: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
     pub(super) case_space_id: Option<Id>,
     pub(super) left_case_space_id: Option<Id>,
@@ -112,6 +113,7 @@ pub(super) struct NativeOptions {
     pub(super) morphism_id: Option<Id>,
     pub(super) target_id: Option<Id>,
     pub(super) cell_id: Option<Id>,
+    pub(super) completed_through: Option<Id>,
     pub(super) reviewer_id: Option<Id>,
     pub(super) close_policy_id: Option<Id>,
     pub(super) actor_id: Option<Id>,
@@ -211,9 +213,11 @@ impl NativeOptions {
                 self.evidence_attachments.push(NativeEvidenceAttachment {
                     input,
                     satisfies_ids: Vec::new(),
+                    artifact_paths: Vec::new(),
                 });
             }
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
+            Some("--packet") => self.packet = Some(require_path(args, "--packet")?),
             Some("--output") => self.output = Some(require_path(args, "--output")?),
             Some("--case-space-id") => {
                 self.case_space_id = Some(require_id(args, "--case-space-id")?)
@@ -233,6 +237,9 @@ impl NativeOptions {
             Some("--morphism-id") => self.morphism_id = Some(require_id(args, "--morphism-id")?),
             Some("--target-id") => self.target_id = Some(require_id(args, "--target-id")?),
             Some("--cell-id") => self.cell_id = Some(require_id(args, "--cell-id")?),
+            Some("--completed-through") => {
+                self.completed_through = Some(require_id(args, "--completed-through")?)
+            }
             Some("--reviewer-id") => self.reviewer_id = Some(require_id(args, "--reviewer-id")?),
             Some("--close-policy-id") => {
                 self.close_policy_id = Some(require_id(args, "--close-policy-id")?)
@@ -260,6 +267,16 @@ impl NativeOptions {
                 })?
                 .satisfies_ids
                 .push(require_id(args, "--satisfies")?),
+            Some("--artifact") => {
+                let artifact = require_path(args, "--artifact")?;
+                self.evidence_attachments
+                    .last_mut()
+                    .ok_or_else(|| {
+                        NativeCliError::usage("--artifact must follow the --input it belongs to")
+                    })?
+                    .artifact_paths
+                    .push(artifact);
+            }
             Some("--capability-id") => self
                 .capability_ids
                 .push(require_id(args, "--capability-id")?),
@@ -413,6 +430,7 @@ impl NativeOptions {
         match flag {
             "--input" => self.input.clone(),
             "--projection" => self.projection.clone(),
+            "--packet" => self.packet.clone(),
             "--left-store" => self.left_store.clone(),
             "--right-store" => self.right_store.clone(),
             _ => None,
@@ -432,6 +450,7 @@ impl NativeOptions {
             "--morphism-id" => self.morphism_id.clone(),
             "--target-id" => self.target_id.clone(),
             "--cell-id" => self.cell_id.clone(),
+            "--completed-through" => self.completed_through.clone(),
             "--actor-id" => self.actor_id.clone(),
             _ => None,
         }

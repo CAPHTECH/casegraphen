@@ -139,26 +139,38 @@ pub(super) fn completion_reviewed_or_deferred(
 pub(super) fn evidence_requirement_blockers(
     case_space: &CaseSpace,
     reviews: &BTreeMap<Id, Vec<ExplicitReview>>,
+    evidence_review_statuses: &BTreeMap<&str, ReviewStatus>,
 ) -> Vec<Id> {
     let cells = case_space
         .case_cells
         .iter()
         .map(|cell| (cell.id.clone(), cell))
         .collect::<BTreeMap<_, _>>();
+    // Whether a cell is acceptable evidence reads the same fail-closed,
+    // log-derived status the evaluator's trust decision reads
+    // (`latest_evidence_review_statuses`), not a raw review outcome computed
+    // here. A raw outcome reads a reopen as `unreviewed` and a waiver/deferral
+    // as `reviewed`; the log-derived status reads anything that is not a
+    // canonical accept or reject as `Rejected`, fail-closed. Reading the raw
+    // outcome here let a reopened, previously-accepted evidence cell still
+    // satisfy this invariant while `space reason` already reported it
+    // rejected and blocking on the same revision.
+    let is_acceptable = |cell: &crate::native_model::CaseCell| {
+        cell.cell_type == CaseCellType::Evidence
+            && evidence_is_acceptable(native_evidence_trust_input(
+                cell,
+                evidence_review_statuses.get(cell.id.as_str()).copied(),
+            ))
+    };
     // The same coverage the evaluator reads, from the same derivation. Asking
     // only whether the requirement is itself acceptable evidence meant a
     // requirement satisfied by `evidence attach --satisfies` plus `review
     // accept` still blocked the close, and the only way past it was to waive a
     // requirement the tool had just seen met.
     let covered = crate::native_eval::trusted_coverage_targets(case_space, |evidence_id| {
-        cells.values().any(|cell| {
-            cell.id.as_str() == evidence_id
-                && cell.cell_type == CaseCellType::Evidence
-                && evidence_is_acceptable(native_evidence_trust_input(
-                    cell,
-                    latest_review_for(reviews, &cell.id).map(|review| review.outcome),
-                ))
-        })
+        cells
+            .values()
+            .any(|cell| cell.id.as_str() == evidence_id && is_acceptable(cell))
     });
     let mut blockers = Vec::new();
     for relation in case_space
@@ -171,13 +183,10 @@ pub(super) fn evidence_requirement_blockers(
         {
             continue;
         }
-        let acceptable = cells.get(&relation.to_id).is_some_and(|cell| {
-            cell.cell_type == CaseCellType::Evidence
-                && evidence_is_acceptable(native_evidence_trust_input(
-                    cell,
-                    latest_review_for(reviews, &cell.id).map(|review| review.outcome),
-                ))
-        }) || covered.contains(relation.to_id.as_str())
+        let acceptable = cells
+            .get(&relation.to_id)
+            .is_some_and(|cell| is_acceptable(cell))
+            || covered.contains(relation.to_id.as_str())
             || covered.contains(relation.from_id.as_str());
         if !acceptable {
             blockers.push(relation.to_id.clone());

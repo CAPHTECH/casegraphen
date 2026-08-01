@@ -21,13 +21,15 @@ mod path_helpers;
 mod reporting;
 #[path = "native_cli_text.rs"]
 mod text;
+pub use ops::EVIDENCE_PACKET_SCHEMA;
 use ops::{
     binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
     case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
-    morphism_check, morphism_propose, morphism_reject, plan_check, plan_propose, plan_review,
-    projection_apply, review_apply, run_frontier, run_step, NativeCloseGateOptions,
-    NativeMutationGateOptions, NativePlanGateOptions, NativePlanReviewOptions,
-    NativeReviewApplyOptions, NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
+    morphism_check, morphism_propose, morphism_reject, packet_apply, packet_resume, plan_check,
+    plan_propose, plan_review, projection_apply, review_apply, run_frontier, run_step,
+    NativeCloseGateOptions, NativeMutationGateOptions, NativePlanGateOptions,
+    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
+    NativeRunGateOptions, NativeRunStepOptions,
 };
 use reporting::report;
 use text::render_native_case_evaluation;
@@ -36,6 +38,7 @@ use text::render_native_case_evaluation;
 pub(crate) struct NativeEvidenceAttachment {
     input: PathBuf,
     satisfies_ids: Vec<Id>,
+    artifact_paths: Vec<PathBuf>,
 }
 
 #[cfg(test)]
@@ -301,6 +304,23 @@ pub(crate) enum NativeCliCommand {
         gate_options: NativeMutationGateOptions,
         output: Option<PathBuf>,
     },
+    PacketApply {
+        store: PathBuf,
+        case_space_id: Id,
+        base_revision_id: Id,
+        packet: PathBuf,
+        gate_options: NativeMutationGateOptions,
+        output: Option<PathBuf>,
+    },
+    PacketResume {
+        store: PathBuf,
+        case_space_id: Id,
+        base_revision_id: Id,
+        packet: PathBuf,
+        completed_through: Id,
+        gate_options: NativeMutationGateOptions,
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -344,7 +364,9 @@ impl NativeCliCommand {
             | Self::RunFrontier { output, .. }
             | Self::Review { output, .. }
             | Self::EvidenceAttach { output, .. }
-            | Self::CellTransition { output, .. } => output.as_ref(),
+            | Self::CellTransition { output, .. }
+            | Self::PacketApply { output, .. }
+            | Self::PacketResume { output, .. } => output.as_ref(),
         }
     }
 
@@ -420,7 +442,9 @@ impl NativeCliCommand {
             | Self::RunFrontier { .. }
             | Self::Review { .. }
             | Self::EvidenceAttach { .. }
-            | Self::CellTransition { .. } => self.run_morphism_value(),
+            | Self::CellTransition { .. }
+            | Self::PacketApply { .. }
+            | Self::PacketResume { .. } => self.run_morphism_value(),
         }
     }
 
@@ -770,6 +794,30 @@ impl NativeCliCommand {
                 cell_id,
                 lifecycle,
                 reason.as_deref(),
+                gate_options,
+            )?,
+            Self::PacketApply {
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                gate_options,
+                ..
+            } => packet_apply(store, case_space_id, base_revision_id, packet, gate_options)?,
+            Self::PacketResume {
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                completed_through,
+                gate_options,
+                ..
+            } => packet_resume(
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                completed_through,
                 gate_options,
             )?,
             _ => unreachable!("run_morphism_value called for case command"),

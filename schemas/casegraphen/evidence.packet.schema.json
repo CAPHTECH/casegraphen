@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.evidence_packet.v1",
+  "title": "CaseGraphen Evidence Packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "case_space_id",
+    "target",
+    "claim",
+    "artifacts",
+    "satisfies",
+    "completion"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.evidence_packet.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "case_space_id": {
+      "$ref": "#/$defs/id"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_id",
+        "transition_to"
+      ],
+      "properties": {
+        "cell_id": {
+          "$ref": "#/$defs/id"
+        },
+        "transition_to": {
+          "$ref": "#/$defs/lifecycle"
+        }
+      }
+    },
+    "claim": {
+      "$ref": "#/$defs/case_cell"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "satisfies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "completion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "lifecycle": {
+      "enum": [
+        "proposed",
+        "active",
+        "waiting",
+        "resolved",
+        "retired",
+        "accepted",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "^(document|log|api|human|ai|code|external|custom:.+)$"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "source_local_id": {
+          "type": "string"
+        }
+      }
+    },
+    "review_status": {
+      "enum": [
+        "unreviewed",
+        "reviewed",
+        "rejected",
+        "accepted"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "confidence",
+        "review_status"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/source_ref"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "review_status": {
+          "$ref": "#/$defs/review_status"
+        },
+        "extraction_method": {
+          "type": "string"
+        },
+        "extractor_id": {
+          "type": "string"
+        },
+        "reviewer_id": {
+          "type": "string"
+        },
+        "reviewed_at": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "case_cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "cell_type",
+        "space_id",
+        "title",
+        "lifecycle",
+        "source_ids",
+        "structure_ids",
+        "provenance",
+        "metadata"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "cell_type": {
+          "type": "string",
+          "pattern": "^(case|scenario|goal|work|decision|event|evidence|proof|review|obstruction|completion|projection|revision|morphism|external_ref|custom:.+)$"
+        },
+        "space_id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/lifecycle"
+        },
+        "source_ids": {
+          "$ref": "#/$defs/id_array"
+        },
+        "structure_ids": {
+          "$ref": "#/$defs/id_array"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      }
+    }
+  }
+}

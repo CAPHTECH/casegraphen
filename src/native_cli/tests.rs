@@ -431,6 +431,10 @@ fn parses_native_mutation_command_families() {
             "goal:demo",
             "--satisfies",
             "case:demo",
+            "--artifact",
+            "build.log",
+            "--artifact",
+            "results.xcresult",
             "--input",
             "second-evidence.json",
             "--satisfies",
@@ -460,10 +464,15 @@ fn parses_native_mutation_command_families() {
                         Id::new("goal:demo").expect("goal id"),
                         Id::new("case:demo").expect("case id"),
                     ],
+                    artifact_paths: vec![
+                        PathBuf::from("build.log"),
+                        PathBuf::from("results.xcresult"),
+                    ],
                 },
                 NativeEvidenceAttachment {
                     input: PathBuf::from("second-evidence.json"),
                     satisfies_ids: vec![Id::new("work:demo").expect("work id")],
+                    artifact_paths: Vec::new(),
                 },
             ]
     ));

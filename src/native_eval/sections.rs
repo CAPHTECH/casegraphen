@@ -149,7 +149,14 @@ pub(super) fn evidence_findings(
         .iter()
         .filter(|cell| cell.cell_type == CaseCellType::Evidence)
     {
-        record_evidence(&mut accum, evidence);
+        // Delegated, not re-derived: the stored `provenance.review_status` is
+        // never updated by a review morphism, so reading it directly here
+        // would make findings disagree with the trust decision, which reads
+        // the same log-derived status. This loop already filtered to
+        // evidence cells, so the fold never returns `None`.
+        let effective_review_status = super::effective_evidence_review_status(case_space, evidence)
+            .expect("cell is evidence-typed by the filter above");
+        record_evidence(&mut accum, evidence, effective_review_status);
     }
     for obstruction in obstructions
         .iter()
@@ -186,21 +193,26 @@ struct EvidenceAccum {
     findings: Vec<NativeEvidenceFinding>,
 }
 
-fn record_evidence(accum: &mut EvidenceAccum, evidence: &CaseCell) {
+fn record_evidence(
+    accum: &mut EvidenceAccum,
+    evidence: &CaseCell,
+    effective_review_status: ReviewStatus,
+) {
     let boundary = evidence_boundary(evidence);
-    record_accepted_evidence(accum, evidence, boundary);
-    record_source_backed_evidence(accum, evidence, boundary);
-    record_inference_evidence(accum, evidence, boundary);
-    record_review_promotion(accum, evidence, boundary);
-    record_rejected_evidence(accum, evidence, boundary);
+    record_accepted_evidence(accum, evidence, boundary, effective_review_status);
+    record_source_backed_evidence(accum, evidence, boundary, effective_review_status);
+    record_inference_evidence(accum, evidence, boundary, effective_review_status);
+    record_review_promotion(accum, evidence, boundary, effective_review_status);
+    record_rejected_evidence(accum, evidence, boundary, effective_review_status);
 }
 
 fn record_accepted_evidence(
     accum: &mut EvidenceAccum,
     evidence: &CaseCell,
     boundary: EvidenceBoundary,
+    effective_review_status: ReviewStatus,
 ) {
-    if evidence.provenance.review_status != ReviewStatus::Accepted
+    if effective_review_status != ReviewStatus::Accepted
         && boundary != EvidenceBoundary::ReviewPromoted
     {
         return;
@@ -211,7 +223,7 @@ fn record_accepted_evidence(
         finding_type: NativeEvidenceFindingType::AcceptedEvidencePresent,
         evidence_ids: vec![evidence.id.clone()],
         summary: format!("{} is accepted or review-promoted evidence.", evidence.id),
-        review_status: evidence.provenance.review_status,
+        review_status: effective_review_status,
     });
 }
 
@@ -219,6 +231,7 @@ fn record_source_backed_evidence(
     accum: &mut EvidenceAccum,
     evidence: &CaseCell,
     boundary: EvidenceBoundary,
+    effective_review_status: ReviewStatus,
 ) {
     if !matches!(
         boundary,
@@ -238,7 +251,7 @@ fn record_source_backed_evidence(
                     .to_owned(),
                 severity: Severity::High,
             });
-    } else if evidence.provenance.review_status != ReviewStatus::Accepted {
+    } else if effective_review_status != ReviewStatus::Accepted {
         accum.findings.push(NativeEvidenceFinding {
             id: generated_id(
                 "finding",
@@ -247,7 +260,7 @@ fn record_source_backed_evidence(
             finding_type: NativeEvidenceFindingType::SourceBackedPendingReview,
             evidence_ids: vec![evidence.id.clone()],
             summary: format!("{} is source-backed but not accepted.", evidence.id),
-            review_status: evidence.provenance.review_status,
+            review_status: effective_review_status,
         });
     }
 }
@@ -256,12 +269,13 @@ fn record_inference_evidence(
     accum: &mut EvidenceAccum,
     evidence: &CaseCell,
     boundary: EvidenceBoundary,
+    effective_review_status: ReviewStatus,
 ) {
     if boundary != EvidenceBoundary::Inferred {
         return;
     }
     accum.inference_record_ids.push(evidence.id.clone());
-    if evidence.provenance.review_status == ReviewStatus::Unreviewed {
+    if effective_review_status == ReviewStatus::Unreviewed {
         accum.unreviewed_inference_ids.push(evidence.id.clone());
     }
     accum.findings.push(NativeEvidenceFinding {
@@ -269,7 +283,7 @@ fn record_inference_evidence(
         finding_type: NativeEvidenceFindingType::InferenceSeparated,
         evidence_ids: vec![evidence.id.clone()],
         summary: format!("{} is inference and is not accepted evidence.", evidence.id),
-        review_status: evidence.provenance.review_status,
+        review_status: effective_review_status,
     });
 }
 
@@ -277,18 +291,19 @@ fn record_review_promotion(
     accum: &mut EvidenceAccum,
     evidence: &CaseCell,
     boundary: EvidenceBoundary,
+    effective_review_status: ReviewStatus,
 ) {
     if boundary != EvidenceBoundary::ReviewPromoted {
         return;
     }
     accum.promoted_evidence_ids.push(evidence.id.clone());
-    if evidence.provenance.review_status != ReviewStatus::Accepted {
+    if effective_review_status != ReviewStatus::Accepted {
         accum.findings.push(NativeEvidenceFinding {
             id: generated_id("finding", &[evidence.id.as_str(), "promotion-required"]),
             finding_type: NativeEvidenceFindingType::PromotionRequired,
             evidence_ids: vec![evidence.id.clone()],
             summary: format!("{} requires accepted review before promotion.", evidence.id),
-            review_status: evidence.provenance.review_status,
+            review_status: effective_review_status,
         });
     }
 }
@@ -297,10 +312,9 @@ fn record_rejected_evidence(
     accum: &mut EvidenceAccum,
     evidence: &CaseCell,
     boundary: EvidenceBoundary,
+    effective_review_status: ReviewStatus,
 ) {
-    if evidence.provenance.review_status != ReviewStatus::Rejected
-        && boundary != EvidenceBoundary::Rejected
-    {
+    if effective_review_status != ReviewStatus::Rejected && boundary != EvidenceBoundary::Rejected {
         return;
     }
     accum
@@ -604,7 +618,7 @@ fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
     )
 }
 
-pub(super) fn latest_evidence_review_statuses(
+pub(crate) fn latest_evidence_review_statuses(
     case_space: &CaseSpace,
 ) -> BTreeMap<&str, ReviewStatus> {
     let mut statuses = BTreeMap::new();

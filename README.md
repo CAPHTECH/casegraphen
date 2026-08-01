@@ -133,6 +133,7 @@ casegraphen morphism propose|check|apply|reject   # apply/reject are gated
 casegraphen review accept|reject|reopen|waive     # gated
 casegraphen evidence attach                       # gated
 casegraphen cell transition                       # gated
+casegraphen packet apply|resume                   # gated; resume refuses until an independent review lands
 casegraphen binding register
 casegraphen plan propose|check|accept|reject      # accept/reject are gated
 casegraphen run --step|--frontier                 # gated; worker off by default
@@ -153,10 +154,15 @@ and the native derived commands answer what those commands answered.
 `casegraphen` with no arguments prints the full usage text.
 
 `evidence attach` may repeat the positional group `--input <path>
-[--satisfies <target-id>]...`. Each `--satisfies` belongs to the most recent
-`--input`. One invocation validates and normalizes every input before appending
-one morphism and one revision; a refusal in any group appends nothing. A single
-group retains the original command and report shape.
+[--satisfies <target-id>]... [--artifact <path>]...`. Each `--satisfies` and
+`--artifact` belongs to the most recent `--input`. `--artifact` names a file to
+record as the immutable observation the claim is about: the tool hashes it,
+mints a content-addressed `custom:artifact` cell (or reuses the one already
+recorded for that hash), and adds a `derives_from` relation from the claim.
+Review lands on the claim, not on the artifact it cites. One invocation
+validates and normalizes every input before appending one morphism and one
+revision; a refusal in any group appends nothing. A single group retains the
+original command and report shape.
 
 ## Driving it from an agent
 

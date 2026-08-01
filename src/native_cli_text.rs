@@ -1,13 +1,15 @@
 use crate::native_eval::{
-    NativeCaseEvaluation, NativeCompletionCandidate, NativeEvidenceBoundaryViolation,
-    NativeEvidenceFinding, NativeEvidenceFindings, NativeObstruction, NativeReasoningStatus,
+    NativeAssurance, NativeCaseEvaluation, NativeCompletionCandidate,
+    NativeEvidenceBoundaryViolation, NativeEvidenceFinding, NativeEvidenceFindings,
+    NativeObstruction, NativeProgress,
 };
 use higher_graphen_core::Id;
 use std::fmt::Write;
 
 pub(super) fn render_native_case_evaluation(evaluation: &NativeCaseEvaluation) -> String {
     render_reason_sections(
-        evaluation.status,
+        evaluation.progress,
+        evaluation.assurance,
         &evaluation.frontier_cell_ids,
         &evaluation.obstructions,
         &evaluation.evidence_findings,
@@ -16,14 +18,17 @@ pub(super) fn render_native_case_evaluation(evaluation: &NativeCaseEvaluation) -
 }
 
 fn render_reason_sections(
-    status: NativeReasoningStatus,
+    progress: NativeProgress,
+    assurance: NativeAssurance,
     frontier_cell_ids: &[Id],
     obstructions: &[NativeObstruction],
     evidence_findings: &NativeEvidenceFindings,
     completion_candidates: &[NativeCompletionCandidate],
 ) -> String {
     let mut output = String::new();
-    writeln!(output, "Status: {}", reasoning_status(status))
+    writeln!(output, "Progress: {}", progress_name(progress))
+        .expect("writing to String cannot fail");
+    writeln!(output, "Assurance: {}", assurance_name(assurance))
         .expect("writing to String cannot fail");
 
     push_id_section(&mut output, "Frontier", frontier_cell_ids);
@@ -134,12 +139,20 @@ fn push_ids(output: &mut String, label: &str, ids: &[Id]) {
     writeln!(output, "    {label}: {joined}").expect("writing to String cannot fail");
 }
 
-fn reasoning_status(status: NativeReasoningStatus) -> &'static str {
-    match status {
-        NativeReasoningStatus::Ready => "ready",
-        NativeReasoningStatus::Blocked => "blocked",
-        NativeReasoningStatus::Incomplete => "incomplete",
-        NativeReasoningStatus::ReviewRequired => "review_required",
+fn progress_name(progress: NativeProgress) -> &'static str {
+    match progress {
+        NativeProgress::Active => "active",
+        NativeProgress::Blocked => "blocked",
+        NativeProgress::Complete => "complete",
+    }
+}
+
+fn assurance_name(assurance: NativeAssurance) -> &'static str {
+    match assurance {
+        NativeAssurance::Unreviewed => "unreviewed",
+        NativeAssurance::ReviewRequired => "review_required",
+        NativeAssurance::Accepted => "accepted",
+        NativeAssurance::Rejected => "rejected",
     }
 }
 
@@ -188,7 +201,8 @@ mod tests {
                 };
 
                 let rendered = render_reason_sections(
-                    NativeReasoningStatus::Blocked,
+                    NativeProgress::Blocked,
+                    NativeAssurance::ReviewRequired,
                     &[],
                     &obstructions,
                     &evidence,

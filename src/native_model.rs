@@ -430,6 +430,7 @@ pub fn apply_morphism(
     for cell in payload.added_cells {
         require_not_capability_administration(morphism, &cell, "add", is_genesis)?;
         require_untrusted_added_evidence(morphism, &cell, is_genesis)?;
+        require_artifact_cell_entered_via_attach(morphism, &cell)?;
         if !known_ids.insert(cell.id.clone()) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -439,6 +440,11 @@ pub fn apply_morphism(
         next.case_cells.push(cell);
     }
     for relation in payload.added_relations {
+        require_artifact_relation_entered_via_attach(
+            morphism,
+            &relation,
+            is_artifact_cell_id(&relation.to_id, &next),
+        )?;
         if !known_ids.insert(relation.id.clone()) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add relation {}: id already exists",
@@ -487,6 +493,7 @@ pub fn apply_morphism(
             .find(|candidate| candidate.id == *id)
         {
             require_not_capability_administration(morphism, cell, "retire", is_genesis)?;
+            require_artifact_cell_unchanged(morphism, cell, "retire")?;
             require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
             cell.lifecycle = CaseCellLifecycle::Retired;
         } else if let Some(index) = next
@@ -585,6 +592,7 @@ pub(crate) fn apply_morphism_indexed(
     for cell in &payload.added_cells {
         require_not_capability_administration(morphism, cell, "add", is_genesis)?;
         require_untrusted_added_evidence(morphism, cell, is_genesis)?;
+        require_artifact_cell_entered_via_attach(morphism, cell)?;
         if index.contains(&cell.id) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add cell {}: id already exists",
@@ -593,6 +601,11 @@ pub(crate) fn apply_morphism_indexed(
         }
     }
     for relation in &payload.added_relations {
+        require_artifact_relation_entered_via_attach(
+            morphism,
+            relation,
+            is_artifact_cell_id_indexed(&relation.to_id, case_space, index, &payload.added_cells),
+        )?;
         if index.contains(&relation.id) {
             return Err(MorphismApplyError::new(format!(
                 "morphism {} cannot add relation {}: id already exists",
@@ -625,6 +638,7 @@ pub(crate) fn apply_morphism_indexed(
         if let Some(position) = index.cell_positions.get(id) {
             let cell = &case_space.case_cells[*position];
             require_not_capability_administration(morphism, cell, "retire", is_genesis)?;
+            require_artifact_cell_unchanged(morphism, cell, "retire")?;
             require_lifecycle_transition(morphism, id, cell.lifecycle, CaseCellLifecycle::Retired)?;
         } else if !index.relation_positions.contains_key(id) {
             return Err(MorphismApplyError::new(format!(
@@ -868,6 +882,82 @@ fn require_not_capability_administration(
     )))
 }
 
+/// The `custom:.+` cell-type convention this crate uses for tool-recognized
+/// extension types, applied to the artifact/evidence-assertion split: an
+/// artifact is the observed object (a log, an xcresult, a document), and an
+/// evidence cell is the claim about what it shows. Keeping the type string in
+/// one constant and matching it through this predicate — rather than writing
+/// `CaseCellType::Custom("artifact".to_owned())` at each call site — is what
+/// makes "is this cell an artifact" one question instead of as many spellings
+/// as there are call sites.
+pub(crate) const ARTIFACT_CELL_TYPE: &str = "artifact";
+
+pub(crate) fn is_artifact_cell(cell: &CaseCell) -> bool {
+    cell.cell_type == CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned())
+}
+
+fn is_artifact_cell_id(id: &Id, case_space: &CaseSpace) -> bool {
+    case_space
+        .case_cells
+        .iter()
+        .any(|cell| cell.id == *id && is_artifact_cell(cell))
+}
+
+fn is_artifact_cell_id_indexed(
+    id: &Id,
+    case_space: &CaseSpace,
+    index: &MorphismApplicationIndex,
+    added_cells: &[CaseCell],
+) -> bool {
+    match index.cell_positions.get(id) {
+        Some(position) => is_artifact_cell(&case_space.case_cells[*position]),
+        None => added_cells
+            .iter()
+            .any(|cell| cell.id == *id && is_artifact_cell(cell)),
+    }
+}
+
+/// An artifact cell is a content-addressed claim about a file's bytes: its id
+/// names the hash, `evidence attach` is the one place that opened the file and
+/// computed that hash, and the same morphism records the claim citing it. A
+/// `custom:artifact` cell (or a `derives_from` relation pointing at one)
+/// minted anywhere else — a morphism proposal, a lift snapshot, even genesis —
+/// would assert a hash this tool never checked against actual bytes. Unlike
+/// capability administration and untrusted evidence above, genesis is not
+/// exempt here: an artifact is a fact about one file, not a source boundary a
+/// human authored and can vouch for as a whole.
+fn require_artifact_cell_entered_via_attach(
+    morphism: &CaseMorphism,
+    cell: &CaseCell,
+) -> Result<(), MorphismApplyError> {
+    if !is_artifact_cell(cell) || morphism.morphism_type == CaseMorphismType::EvidenceAttach {
+        return Ok(());
+    }
+    Err(MorphismApplyError::new(format!(
+        "morphism {} cannot add artifact cell {}: custom:artifact cells enter only through \
+         evidence attach, which computes their content hash from the file it read",
+        morphism.morphism_id, cell.id
+    )))
+}
+
+fn require_artifact_relation_entered_via_attach(
+    morphism: &CaseMorphism,
+    relation: &CaseRelation,
+    to_cell_is_artifact: bool,
+) -> Result<(), MorphismApplyError> {
+    if relation.relation_type != CaseRelationType::DerivesFrom
+        || !to_cell_is_artifact
+        || morphism.morphism_type == CaseMorphismType::EvidenceAttach
+    {
+        return Ok(());
+    }
+    Err(MorphismApplyError::new(format!(
+        "morphism {} cannot add relation {}: a derives_from relation into artifact cell {} \
+         enters only through evidence attach, alongside the artifact it cites",
+        morphism.morphism_id, relation.id, relation.to_id
+    )))
+}
+
 /// Evidence entering the log after genesis is untrusted by construction.
 ///
 /// `evidence_boundary` decides whether a cell satisfies a hard requirement with
@@ -954,6 +1044,32 @@ fn require_immutable_relation_update_fields(
     Ok(())
 }
 
+/// An artifact cell refuses every appearance in every mutation path that
+/// could change or remove it, not only an update: `cell transition` (an
+/// ordinary Update morphism), a generic update proposal, AND a retire — an
+/// artifact is a completed observation, so nothing about it, including
+/// whether it continues to exist, is a review decision to revisit. One
+/// predicate, called from all four sites that could otherwise touch one: the
+/// update loop and the retire loop in both `apply_morphism` and
+/// `apply_morphism_indexed`. A retire that reached only the update loop's
+/// check once let a `morphism_type: retire` proposal move an artifact's
+/// lifecycle to `retired` — the same mutation `cell transition` was already
+/// refused for, through the one door that never called this check.
+fn require_artifact_cell_unchanged(
+    morphism: &CaseMorphism,
+    cell: &CaseCell,
+    operation: &str,
+) -> Result<(), MorphismApplyError> {
+    if !is_artifact_cell(cell) {
+        return Ok(());
+    }
+    Err(MorphismApplyError::new(format!(
+        "morphism {} cannot {operation} artifact cell {}: an artifact is an immutable \
+         observation; review the claim that cites it instead",
+        morphism.morphism_id, cell.id
+    )))
+}
+
 fn require_immutable_cell_update_fields(
     morphism: &CaseMorphism,
     existing: &CaseCell,
@@ -965,6 +1081,7 @@ fn require_immutable_cell_update_fields(
             morphism.morphism_id, existing.id, existing.cell_type, updated.cell_type
         )));
     }
+    require_artifact_cell_unchanged(morphism, existing, "update")?;
     if existing.cell_type != CaseCellType::Evidence {
         return Ok(());
     }
@@ -1557,6 +1674,177 @@ mod tests {
             )
             .unwrap_or_else(|error| panic!("{boundary} refused by the fold reducer: {error}"));
         }
+    }
+
+    #[test]
+    fn both_reducer_entry_points_refuse_an_artifact_cell_added_outside_evidence_attach() {
+        let space = fixture_space();
+        let mut artifact = space.case_cells[0].clone();
+        artifact.id = id("artifact:sha256-unit-test-added-outside-attach");
+        artifact.cell_type = CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned());
+        artifact.lifecycle = CaseCellLifecycle::Resolved;
+        let mut morphism = fixture_morphism(&space);
+        morphism.added_ids = vec![artifact.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_cells: vec![artifact],
+                ..MorphismPayload::default()
+            },
+        );
+
+        for error in [
+            apply_morphism(&mut space.clone(), &morphism).expect_err("append reducer"),
+            apply_morphism_indexed(
+                &mut space.clone(),
+                &morphism,
+                &mut MorphismApplicationIndex::new(&space),
+            )
+            .expect_err("fold reducer"),
+        ] {
+            assert!(
+                error
+                    .to_string()
+                    .contains("custom:artifact cells enter only through evidence attach"),
+                "{error}"
+            );
+        }
+
+        // The identical addition is legal through the one door for it.
+        let mut attach_morphism = morphism;
+        attach_morphism.morphism_type = CaseMorphismType::EvidenceAttach;
+        apply_morphism(&mut space.clone(), &attach_morphism)
+            .expect("evidence_attach may mint an artifact cell");
+    }
+
+    #[test]
+    fn both_reducer_entry_points_refuse_a_derives_from_relation_into_an_artifact_cell_outside_evidence_attach(
+    ) {
+        let mut space = fixture_space();
+        let mut artifact = space.case_cells[0].clone();
+        artifact.id = id("artifact:sha256-unit-test-existing");
+        artifact.cell_type = CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned());
+        artifact.lifecycle = CaseCellLifecycle::Resolved;
+        space.case_cells.push(artifact.clone());
+        let evidence = space
+            .case_cells
+            .iter()
+            .find(|cell| cell.cell_type == CaseCellType::Evidence)
+            .expect("fixture evidence")
+            .clone();
+
+        let relation = CaseRelation {
+            id: id("relation:unit-test-forged-derives-from"),
+            relation_type: CaseRelationType::DerivesFrom,
+            relation_strength: RelationStrength::Diagnostic,
+            from_id: evidence.id.clone(),
+            to_id: artifact.id.clone(),
+            evidence_ids: Vec::new(),
+            source_ids: Vec::new(),
+            provenance: evidence.provenance.clone(),
+            metadata: Map::new(),
+        };
+        let mut morphism = fixture_morphism(&space);
+        morphism.added_ids = vec![relation.id.clone()];
+        set_payload(
+            &mut morphism,
+            MorphismPayload {
+                added_relations: vec![relation.clone()],
+                ..MorphismPayload::default()
+            },
+        );
+
+        for error in [
+            apply_morphism(&mut space.clone(), &morphism).expect_err("append reducer"),
+            apply_morphism_indexed(
+                &mut space.clone(),
+                &morphism,
+                &mut MorphismApplicationIndex::new(&space),
+            )
+            .expect_err("fold reducer"),
+        ] {
+            assert!(
+                error.to_string().contains(
+                    "a derives_from relation into artifact cell artifact:sha256-unit-test-existing \
+                     enters only through evidence attach"
+                ),
+                "{error}"
+            );
+        }
+
+        // The identical relation is legal through the one door for it.
+        let mut attach_morphism = morphism;
+        attach_morphism.morphism_type = CaseMorphismType::EvidenceAttach;
+        apply_morphism(&mut space.clone(), &attach_morphism)
+            .expect("evidence_attach may add a derives_from relation into an artifact cell");
+    }
+
+    #[test]
+    fn reducer_refuses_updating_an_artifact_cell_including_its_lifecycle() {
+        let mut space = fixture_space();
+        let mut artifact = space.case_cells[0].clone();
+        artifact.id = id("artifact:sha256-unit-test-immutable");
+        artifact.cell_type = CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned());
+        artifact.lifecycle = CaseCellLifecycle::Resolved;
+        space.case_cells.push(artifact.clone());
+
+        let mut updated = artifact.clone();
+        updated.title = "Renamed after the fact".to_owned();
+        let error = rejected_cell_update(&space, updated);
+        assert!(
+            error.contains("an artifact is an immutable observation"),
+            "{error}"
+        );
+
+        // Even a lifecycle transition that would otherwise be legal is refused,
+        // because `cell transition` builds an ordinary Update morphism and this
+        // is the same check.
+        let mut transitioned = artifact;
+        transitioned.lifecycle = CaseCellLifecycle::Accepted;
+        let transition_error = rejected_cell_update(&space, transitioned);
+        assert!(
+            transition_error.contains("an artifact is an immutable observation"),
+            "{transition_error}"
+        );
+    }
+
+    #[test]
+    fn both_reducer_entry_points_refuse_retiring_an_artifact_cell() {
+        // The update path was refused, but a `morphism_type: retire` proposal
+        // naming the artifact in `retired_ids` reached a different loop that
+        // never called the artifact guard, so the artifact's lifecycle still
+        // became `retired`. One predicate now gates both loops in both entry
+        // points; this proves all four sites.
+        let mut space = fixture_space();
+        let mut artifact = space.case_cells[0].clone();
+        artifact.id = id("artifact:sha256-unit-test-retire");
+        artifact.cell_type = CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned());
+        artifact.lifecycle = CaseCellLifecycle::Resolved;
+        space.case_cells.push(artifact.clone());
+
+        let mut morphism = fixture_morphism(&space);
+        morphism.retired_ids = vec![artifact.id.clone()];
+
+        let append_error =
+            apply_morphism(&mut space.clone(), &morphism).expect_err("append reducer");
+        assert!(
+            append_error
+                .to_string()
+                .contains("an artifact is an immutable observation"),
+            "{append_error}"
+        );
+        let fold_error = apply_morphism_indexed(
+            &mut space.clone(),
+            &morphism,
+            &mut MorphismApplicationIndex::new(&space),
+        )
+        .expect_err("fold reducer");
+        assert!(
+            fold_error
+                .to_string()
+                .contains("an artifact is an immutable observation"),
+            "{fold_error}"
+        );
     }
 
     #[test]
