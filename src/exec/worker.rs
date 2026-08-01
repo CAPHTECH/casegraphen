@@ -431,16 +431,29 @@ fn find_executable(candidates: &[&str]) -> Option<PathBuf> {
 }
 
 fn kill_process_group(kill_path: &Path, child_id: u32) -> SignalOutcome {
-    if signal_process_group(kill_path, "-KILL", child_id) {
-        SignalOutcome::Terminated
-    } else if !signal_process_group(kill_path, "-0", child_id) {
-        SignalOutcome::GroupAlreadyEmpty
+    let kill = signal_process_group(kill_path, "-KILL", child_id);
+    let probe = if kill == Some(true) {
+        None
     } else {
-        SignalOutcome::Failed
+        signal_process_group(kill_path, "-0", child_id)
+    };
+    signal_outcome(kill, probe)
+}
+
+/// `GroupAlreadyEmpty` is only concluded from a probe that actually ran and
+/// reported no such process. A probe the host could not spawn measured
+/// nothing, so it cannot claim the group is empty.
+fn signal_outcome(kill: Option<bool>, probe: Option<bool>) -> SignalOutcome {
+    match (kill, probe) {
+        (Some(true), _) => SignalOutcome::Terminated,
+        (_, Some(false)) => SignalOutcome::GroupAlreadyEmpty,
+        _ => SignalOutcome::Failed,
     }
 }
 
-fn signal_process_group(kill_path: &Path, signal: &str, child_id: u32) -> bool {
+/// `None` when the utility could not be run at all, which is not the same
+/// answer as its running and reporting failure.
+fn signal_process_group(kill_path: &Path, signal: &str, child_id: u32) -> Option<bool> {
     Command::new(kill_path)
         .args([signal, "--"])
         .arg(format!("-{child_id}"))
@@ -448,7 +461,8 @@ fn signal_process_group(kill_path: &Path, signal: &str, child_id: u32) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success())
+        .ok()
+        .map(|status| status.success())
 }
 
 #[derive(Clone)]
@@ -666,6 +680,27 @@ mod tests {
                     !decision.descendants_may_survive,
                     utilities_available && conclusive
                 );
+                Ok(())
+            },
+        );
+    }
+
+    #[test]
+    fn a_signal_that_never_ran_never_claims_an_empty_group() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let outcomes = [Some(true), Some(false), None];
+                let kill = *u.choose(&outcomes)?;
+                let probe = *u.choose(&outcomes)?;
+
+                match signal_outcome(kill, probe) {
+                    SignalOutcome::Terminated => assert_eq!(kill, Some(true)),
+                    SignalOutcome::GroupAlreadyEmpty => {
+                        assert_ne!(kill, Some(true));
+                        assert_eq!(probe, Some(false));
+                    }
+                    SignalOutcome::Failed => assert!(kill != Some(true) && probe != Some(false)),
+                }
                 Ok(())
             },
         );
