@@ -1920,15 +1920,9 @@ fn worker_report(
 }
 
 fn existing_requirement_ids(case_space: &CaseSpace, step: &ExecutionStep) -> Vec<Id> {
-    let evidence_cell_ids = case_space
-        .case_cells
-        .iter()
-        .filter(|cell| cell.cell_type == CaseCellType::Evidence)
-        .map(|cell| &cell.id)
-        .collect::<BTreeSet<_>>();
     step.success_evidence_requirement_ids
         .iter()
-        .filter(|id| evidence_cell_ids.contains(id))
+        .filter(|id| super::mutations::is_coverage_target(case_space, id))
         .cloned()
         .collect()
 }

@@ -4639,7 +4639,7 @@ fn native_typed_morphism_materializes_payload_end_to_end() {
                         "relation_type": "depends_on",
                         "relation_strength": "hard",
                         "from_id": "work:native-typed-reducer",
-                        "to_id": "goal:native-case-contract",
+                        "to_id": "evidence:native-schema-json-valid",
                         "evidence_ids": [],
                         "source_ids": ["source:native-typed-integration"],
                         "provenance": {
@@ -5005,7 +5005,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
         "--input",
         input_path.to_str().expect("evidence path"),
         "--satisfies",
-        "goal:native-case-contract",
+        "evidence:native-schema-json-valid",
         "--format",
         "json",
         "--output",
@@ -5063,7 +5063,7 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
             "relation_type": "satisfies_evidence_requirement",
             "relation_strength": "diagnostic",
             "from_id": "evidence:attached-cli",
-            "to_id": "goal:native-case-contract",
+            "to_id": "evidence:native-schema-json-valid",
             "evidence_ids": ["evidence:attached-cli"],
             "source_ids": ["source:attached-cli"],
             "provenance": attached_cell["provenance"],
@@ -5112,6 +5112,73 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     import_native_case_space(&directory, "revision:batch-evidence-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    // A coverage target must be an evidence cell, so the second requirement is
+    // installed as an ordinary placeholder rather than aimed at a work or goal
+    // cell — the fixture used to name a goal, which is what let coverage
+    // discharge every requirement that cell had.
+    let setup_path = directory.join("batch-second-requirement.case_morphism.json");
+    write_json_value(
+        &setup_path,
+        &json!({
+            "morphism_id": "morphism:batch-second-requirement",
+            "morphism_type": "create",
+            "source_revision_id": "revision:batch-evidence-base",
+            "target_revision_id": "revision:batch-second-requirement",
+            "added_ids": ["evidence:batch-second-requirement"],
+            "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+            "evidence_ids": [], "source_ids": ["source:native-cli"],
+            "violated_invariant_ids": [], "review_status": "unreviewed",
+            "metadata": {"payload": {"added_cells": [{
+                "id": "evidence:batch-second-requirement", "cell_type": "evidence",
+                "lifecycle": "proposed",
+                "space_id": json_file(native_case_fixture())["space_id"].clone(),
+                "title": "Required: the second batch proof",
+                "source_ids": ["source:native-cli"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            }], "added_relations": [], "updated_cells": [], "updated_relations": []}}
+        }),
+    );
+    assert!(run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        setup_path.to_str().expect("setup path"),
+        "--format",
+        "json",
+    ])
+    .status
+    .success());
+    assert!(run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:batch-second-requirement",
+            "--base-revision-id",
+            "revision:batch-evidence-base",
+            "--reviewer-id",
+            "reviewer:batch",
+            "--reason",
+            "install the second requirement placeholder",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    )
+    .status
+    .success());
+
     let first_path = directory.join("batch-first.evidence.json");
     let second_path = directory.join("batch-second.evidence.json");
     write_json_value(
@@ -5132,15 +5199,15 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
             "--case-space-id",
             native_case_space_id(),
             "--base-revision-id",
-            "revision:batch-evidence-base",
+            "revision:batch-second-requirement",
             "--input",
             first_path.to_str().expect("first evidence path"),
             "--satisfies",
-            "goal:native-case-contract",
+            "evidence:native-schema-json-valid",
             "--input",
             second_path.to_str().expect("second evidence path"),
             "--satisfies",
-            "case:native-contract-example",
+            "evidence:batch-second-requirement",
             "--format",
             "json",
         ],
@@ -5152,11 +5219,11 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
     let payload = &entry["morphism"]["metadata"]["payload"];
     assert_eq!(
         entry["morphism"]["morphism_id"],
-        json!("morphism:evidence-attach:evidence~3abatch-first:2")
+        json!("morphism:evidence-attach:evidence~3abatch-first:3")
     );
     assert_eq!(
         entry["morphism"]["target_revision_id"],
-        json!("revision:evidence-attach:evidence~3abatch-first:2")
+        json!("revision:evidence-attach:evidence~3abatch-first:3")
     );
     assert_eq!(
         entry["morphism"]["added_ids"],
@@ -5186,7 +5253,7 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
                 "relation_type": "satisfies_evidence_requirement",
                 "relation_strength": "diagnostic",
                 "from_id": "evidence:batch-first",
-                "to_id": "goal:native-case-contract",
+                "to_id": "evidence:native-schema-json-valid",
                 "evidence_ids": ["evidence:batch-first"],
                 "source_ids": ["source:native-cli"],
                 "provenance": payload["added_cells"][0]["provenance"],
@@ -5197,7 +5264,7 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
                 "relation_type": "satisfies_evidence_requirement",
                 "relation_strength": "diagnostic",
                 "from_id": "evidence:batch-second",
-                "to_id": "case:native-contract-example",
+                "to_id": "evidence:batch-second-requirement",
                 "evidence_ids": ["evidence:batch-second"],
                 "source_ids": ["source:native-cli"],
                 "provenance": payload["added_cells"][1]["provenance"],
@@ -5220,8 +5287,8 @@ fn native_evidence_attach_batches_cells_and_coverage_in_one_revision() {
             .as_array()
             .expect("history entries")
             .len(),
-        2,
-        "genesis plus one batch attach must be the whole log"
+        3,
+        "genesis, the requirement setup, and one batch attach must be the whole log"
     );
     let validation = run_native_case_store_command(&directory, "validate");
     assert_eq!(
@@ -5444,7 +5511,7 @@ fn batch_evidence_attach_refuses_everything_when_the_second_input_is_invalid() {
                 "--input",
                 first_path.to_str().expect("first evidence path"),
                 "--satisfies",
-                "goal:native-case-contract",
+                "evidence:native-schema-json-valid",
                 "--input",
                 second_path.to_str().expect("second evidence path"),
                 "--satisfies",
@@ -5455,7 +5522,7 @@ fn batch_evidence_attach_refuses_everything_when_the_second_input_is_invalid() {
             "actor:native-evidence-cli",
         )
     };
-    let refused = attach("case:native-contract-example");
+    let refused = attach("evidence:native-schema-json-valid");
 
     assert!(!refused.status.success());
     assert!(
@@ -5467,7 +5534,7 @@ fn batch_evidence_attach_refuses_everything_when_the_second_input_is_invalid() {
         &second_path,
         &native_attached_evidence("relation:evidence:evidence~3avalid-first:1", "unreviewed"),
     );
-    let collision = attach("case:native-contract-example");
+    let collision = attach("evidence:native-schema-json-valid");
     assert!(!collision.status.success());
     assert!(
         stderr(&collision).contains(second_path.to_str().expect("second evidence path")),
@@ -5574,7 +5641,7 @@ fn evidence_attach_appends_exactly_one_revision_or_none_for_any_input_list() {
                     0 => {
                         fs::write(&path, b"{").expect("write invalid JSON");
                         every_input_valid = false;
-                        "goal:native-case-contract"
+                        "evidence:native-schema-json-valid"
                     }
                     1 => {
                         write_json_value(
@@ -5585,7 +5652,7 @@ fn evidence_attach_appends_exactly_one_revision_or_none_for_any_input_list() {
                             ),
                         );
                         every_input_valid = false;
-                        "goal:does-not-exist"
+                        "evidence:does-not-exist"
                     }
                     2 => {
                         write_json_value(
@@ -5596,7 +5663,7 @@ fn evidence_attach_appends_exactly_one_revision_or_none_for_any_input_list() {
                             ),
                         );
                         every_input_valid = false;
-                        "goal:native-case-contract"
+                        "evidence:native-schema-json-valid"
                     }
                     _ => {
                         write_json_value(
@@ -5606,7 +5673,7 @@ fn evidence_attach_appends_exactly_one_revision_or_none_for_any_input_list() {
                                 "unreviewed",
                             ),
                         );
-                        "goal:native-case-contract"
+                        "evidence:native-schema-json-valid"
                     }
                 };
                 args.extend([
@@ -6487,6 +6554,87 @@ fn lift_native_derives_the_genesis_materialization_from_the_authored_state() {
     assert_eq!(
         stdout_json(&validation)["result"]["validation"]["valid"],
         json!(true)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn coverage_can_only_be_aimed_at_an_evidence_cell() {
+    // The evaluator treats coverage recorded against a work cell as satisfying
+    // every evidence and proof requirement that cell has, so `--satisfies` on a
+    // work cell discharged requirements no morphism named and no reviewer saw.
+    // Reproduced against the walkthrough store: one attach aimed at
+    // work:tag-release plus one review accept cleared a blocking hard
+    // requirement on evidence:changelog-updated. `run --step` already answered
+    // this question with "evidence cells only"; both now read one rule.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let store = directory.to_str().expect("temp path").to_owned();
+    import_native_case_space_from_input(
+        &directory,
+        &repo_path("docs/guides/release-decision/genesis.case.space.json"),
+        "revision:coverage-target",
+    );
+    let case_space_id = "case_space:casegraphen-release-0-9-0";
+    let evidence_path = directory.join("aimed.evidence.json");
+    fs::write(
+        &evidence_path,
+        serde_json::to_string_pretty(&json!({
+            "id": "evidence:aimed", "cell_type": "evidence", "lifecycle": "active",
+            "space_id": "space:casegraphen", "title": "my own uploaded file",
+            "source_ids": ["source:release-intent"], "structure_ids": [], "metadata": {},
+            "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                           "source": {"kind": "document", "title": "ci"}}
+        }))
+        .expect("serialize evidence"),
+    )
+    .expect("write evidence");
+
+    let attach = |target: &str| {
+        run_cli(&[
+            "evidence",
+            "attach",
+            "--store",
+            &store,
+            "--case-space-id",
+            case_space_id,
+            "--base-revision-id",
+            "revision:coverage-target",
+            "--input",
+            evidence_path.to_str().expect("evidence path"),
+            "--satisfies",
+            target,
+            "--actor-id",
+            "actor:release-manager",
+            "--capability-id",
+            "capability:release-durable-mutation",
+            "--operation-scope-id",
+            case_space_id,
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:release-0-9-0-intent",
+            "--format",
+            "json",
+        ])
+    };
+
+    for target in ["work:tag-release", "capability:release-durable-mutation"] {
+        let refused = attach(target);
+        assert!(
+            !refused.status.success(),
+            "coverage was accepted against {target}"
+        );
+        assert!(
+            stderr(&refused).contains("is not an evidence cell"),
+            "stderr: {}",
+            stderr(&refused)
+        );
+    }
+    assert!(
+        attach("evidence:changelog-updated").status.success(),
+        "the canonical evidence target must still be accepted"
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");

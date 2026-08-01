@@ -185,6 +185,23 @@ struct PreparedEvidenceAttachment {
     relations: Vec<CaseRelation>,
 }
 
+/// What a coverage claim may name, answered once.
+///
+/// The evaluator treats coverage recorded against a *work* cell as satisfying
+/// every evidence and proof requirement that cell has, so an attach naming a
+/// work cell discharged requirements no morphism ever named and no reviewer
+/// ever saw — `--satisfies work:tag-release` plus one `review accept` cleared
+/// a blocking hard requirement on an unrelated evidence cell. `run --step`
+/// already restricted its own coverage targets to evidence cells
+/// (`existing_requirement_ids`); this is that same rule, and the two must not
+/// answer it differently.
+pub(in crate::native_cli) fn is_coverage_target(case_space: &CaseSpace, target_id: &Id) -> bool {
+    case_space
+        .case_cells
+        .iter()
+        .any(|cell| cell.id == *target_id && cell.cell_type == CaseCellType::Evidence)
+}
+
 fn prepare_evidence_attachments(
     case_space: &CaseSpace,
     attachments: &[NativeEvidenceAttachment],
@@ -205,14 +222,12 @@ fn prepare_evidence_attachments(
         .iter()
         .map(|attachment| {
             for target_id in &attachment.satisfies_ids {
-                if !case_space
-                    .case_cells
-                    .iter()
-                    .any(|cell| cell.id == *target_id)
-                {
+                if !is_coverage_target(case_space, target_id) {
                     return Err(input_refusal(
                         &attachment.input,
-                        format!("unknown satisfies target {target_id}"),
+                        format!(
+                            "satisfies target {target_id} is not an evidence cell in this case space"
+                        ),
                     ));
                 }
             }
