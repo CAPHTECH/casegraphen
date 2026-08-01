@@ -208,14 +208,46 @@ in one critical section, and `seal_capture` stops both together, so the
 published bytes and the finalised hash are the same bytes by construction.
 
 The new repair rule was then attacked in its own right, since accepting a
-head/log disagreement is a new way in. Five shapes, all refused: a head ahead
-of the log after a truncation, a forged `replay_checksum`, a forged
-`entry_hash`, a genuine crash state with the tail entry tampered, the entry
-the head names tampered, and a dropped middle entry. The last three are caught
-by the fold rather than by the new rule — `--adopt-existing-log` still
-verifies the hash chain and recomputes the replay checksum — which is the
-reason the rule is safe to relax at all: it decides only which head to write,
-never whether the log is believed.
+head/log disagreement is a new way in. Six shapes refused: a head ahead of the
+log after a truncation, a forged `replay_checksum`, a forged `entry_hash`, a
+genuine crash state with the tail entry tampered, the entry the head names
+tampered, and a dropped middle entry. The last three are caught by the fold
+rather than by the new rule — `--adopt-existing-log` still verifies the hash
+chain and recomputes the replay checksum — which is the reason the rule is
+safe to relax at all: it decides only which head to write, never whether the
+log is believed.
+
+**And the rule was still too wide, which is the entry in this document that
+matters most.** It accepted a head naming *any* earlier entry, while the crash
+it exists for can only ever lag by one: `append_morphism` takes a single entry
+and holds the case lock across exactly one append and one head write, so no
+path leaves more than one entry unaccounted for. Saving a head, running one
+`run --step` — three separate appends — and restoring it produced a lag of
+three, which no crash makes, and the repair blessed it. The condition is now
+the signature rather than a superset of it.
+
+That is the fourth instance today of a check wider or narrower than the rule
+it implements, and the first one written *by this pass* and caught only
+because the fix was reviewed as hard as the defect. Writing the justification
+in a doc comment did not stop the code testing something else; the reviewer
+found it by comparing the comment to the condition.
+
+A killed dispatch also could not say which of its reserved steps had ever
+spawned — every trace read `started`, `worker_invoked: false`, empty streams,
+whether or not a process had existed. `--supersede-trace` asks an operator to
+assert that a dispatch is dead, and the tool held that information at spawn
+time and discarded it; `worker_invoked` is now written to the trace file
+before the spawn.
+
+Concurrency was driven for the first time in this round, after every earlier
+claim in this document had rested on single-process reproductions. The
+integrity properties held: twelve concurrent `run --step` on one step produced
+exactly one dispatch and one worker invocation measured by side effect;
+`--max-parallel 4` ran genuinely parallel and applied all four transitions;
+and two concurrent `run --frontier` rounds left the loser recording
+reservation failures with no double execution. Two races remain undriven — a
+`--supersede-trace` against a live dispatch as that dispatch applies its
+result, and `run --step` racing `run --frontier` on one step.
 
 ## Where the next round should start
 
@@ -239,7 +271,10 @@ This host has no `setsid`, so the two real-binary containment tests take the
 "no utilities" branch and cannot fail here no matter how broken the code is;
 the property tests carry the rule, the platform coverage does not exist, and a
 Linux CI job would settle it along with the three containment limits in
-residual risk 4 that are code-read only. And **nothing has been driven with
-two `casegraphen` processes against one store**, or with `--max-parallel > 1`
-— which is precisely where `--supersede-trace`'s rationale lives. Every
-concurrency claim in this document rests on single-process reproductions.
+residual risk 4 that are code-read only. Concurrency is no longer wholly
+undriven — twelve concurrent `run --step`, `--max-parallel 4`, and two racing
+`run --frontier` rounds all held — but two races are still open: a
+`--supersede-trace` issued against a live dispatch as that dispatch applies
+its result, and `run --step` racing `run --frontier` on one step. Those are
+the sharpest questions left, and they sit exactly where `--supersede-trace`'s
+rationale lives.
