@@ -141,3 +141,12 @@ casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format jso
 
 Report what the obstructions say, not what you intended. A case space whose
 blockers you have not read is a case space you have not advanced.
+
+`space validate` proves the log reproduces the snapshot; it cannot prove the
+tail was not rolled back, because the head lives in the store. When a decision
+leaves the store — a PR, a ticket, a deploy — copy the anchored pair from the
+mutating response (`current_revision_id`) and the store's
+`morphism_log.head.json` (`replay_checksum`) into that record. Before trusting
+a later read, check the anchored revision still appears in `space inspect`
+revisions with the same checksum; missing means rollback, changed means
+rewrite — stop and investigate.

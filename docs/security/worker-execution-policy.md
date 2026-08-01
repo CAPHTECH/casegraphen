@@ -183,9 +183,12 @@ workers under a dedicated OS user or container is the operator's control.
   whether `setsid` is present) and the working directory must resolve to a
   directory.
 - Timeout is mandatory. On Unix, when absolute `setsid` and `kill` utilities
-  are available, the worker is launched in a dedicated session and timeout
-  kills the process group. Otherwise the direct child is killed and the worker
-  report records `descendants_may_survive: true`.
+  are available, the worker is launched in a dedicated session and its process
+  group is signalled on every exit path, including clean exit, timeout, and
+  incomplete output. `descendants_may_survive: false` means that group signal
+  succeeded; `true` means it did not. Hosts without both utilities therefore
+  report `true` unconditionally, because the tool cannot measure whether the
+  direct child left descendants.
 - Stdout/stderr reader waits are bounded by a two-second grace. Captured output
   records whether the stream was incomplete, so descendants holding a pipe
   cannot block dispatch indefinitely.
@@ -275,6 +278,27 @@ revision replay.
    `replay_checksum` wherever the decision they represent is acted on, and
    compare before trusting a later read. The store directory must be
    access-controlled and, for high-assurance use, backed up append-only.
+
+   The worked recipe (issue #15 decided this stays an operator recipe — the
+   tool gets no read-side assertion flag, because a refusal that only some
+   read commands honoured would be a decision rule in one place and not its
+   sibling, this project's recurring defect). When you act on a decision,
+   record the store's head next to wherever the decision lands (a PR
+   description, a ticket, a deploy record):
+
+   ```sh
+   cat "$STORE/native_case_spaces/<escaped case space id>/morphism_log.head.json"
+   # {"target_revision_id": "...", "entry_hash": "...", "replay_checksum": "sha256:..."}
+   ```
+
+   Before trusting a later read, compare two strings against
+   `space inspect --format json` output: the anchored `target_revision_id`
+   must still appear under `result.record.revisions[]`, and that entry's
+   `replay_checksum` must equal the anchored one. The anchored revision
+   missing from the list is a rollback; the same revision id with a different
+   checksum is a rewrite. Either finding means the store no longer contains
+   the history the decision was made against — stop and investigate before
+   appending anything.
 3. `env_allowlist` review remains a human judgment beyond the built-in loader,
    path, and reserved-namespace deny-list; a reviewer can still approve another
    secret-bearing variable.
