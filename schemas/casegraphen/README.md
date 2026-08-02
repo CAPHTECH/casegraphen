@@ -42,6 +42,13 @@ CLI.
   when native morphism-log ordering is available.
 - `report-schema-aliases.json` records operation-specific report IDs that are
   intentionally validated by shared report-envelope schemas.
+- `native-cli.refusal.schema.json` validates the JSON a native CLI command
+  writes to stderr when it refuses under `--format json`, with
+  `highergraphen.case.native_cli.refusal.v1`. A refusal is a tool failure
+  (exit 1): it is a sibling of the report envelope, not a variant of it, and
+  is never written to `--output`. `error_code` is a stable classification
+  derived from the Rust error variant; `data` is intentionally broad and
+  varies per `error_code`, the same way a report's `result` does.
 
 The matching `*.example.json` files are used by package tests. Input fixtures
 such as `case.graph.example.json`, `workflow.graph.example.json`,

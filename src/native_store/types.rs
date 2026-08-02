@@ -155,6 +155,34 @@ pub(crate) struct MorphismLogHead {
     pub replay_checksum: String,
 }
 
+impl NativeStoreError {
+    /// The stable, machine-readable classification for this refusal.
+    ///
+    /// Derived from the variant alone — never from `to_string()` — so the
+    /// mapping cannot drift from what the variant already distinguishes.
+    /// `ReplayMismatch` and `InvalidMorphism` share `store_integrity`: both
+    /// mean the on-disk log disagrees with what replaying it (or the
+    /// checksum it carries) produces, which calls for the same response
+    /// (stop and investigate, do not retry). `UnsupportedSchema` and
+    /// `UnsupportedVersion` share `unsupported_schema` for the same reason:
+    /// both mean this build cannot read the file's declared shape. `Io` and
+    /// `Json` share `store_io`: a lower-level filesystem or parse failure
+    /// reading or writing a store file, distinct from the higher-level
+    /// integrity and shape checks above it.
+    pub(crate) fn error_code(&self) -> &'static str {
+        match self {
+            Self::Io { .. } | Self::Json { .. } => "store_io",
+            Self::UnsupportedSchema { .. } | Self::UnsupportedVersion { .. } => {
+                "unsupported_schema"
+            }
+            Self::MissingCase { .. } => "missing_case_space",
+            Self::ExistingCase { .. } => "existing_case_space",
+            Self::LockUnavailable { .. } => "lock_unavailable",
+            Self::ReplayMismatch { .. } | Self::InvalidMorphism { .. } => "store_integrity",
+        }
+    }
+}
+
 impl std::fmt::Display for NativeStoreError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

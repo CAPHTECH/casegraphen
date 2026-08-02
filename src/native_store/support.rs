@@ -107,14 +107,17 @@ impl CaseLockGuard {
                         .is_some_and(|age| age >= LOCK_STALE_AFTER);
                     if stale {
                         match remove_lock_if_owned(&path, &observed_token) {
-                            Ok(true) => {
-                                eprintln!(
-                                    "{}: broke stale native case-space lock older than {} seconds",
-                                    path.display(),
-                                    LOCK_STALE_AFTER.as_secs()
-                                );
-                                continue;
-                            }
+                            // Not reported: `native_store` has no notion of
+                            // `--format`, and printing prose here shares
+                            // stderr with a refusal from the very same
+                            // invocation this call is part of, breaking the
+                            // "stderr under --format json is one JSON
+                            // object" contract for any command that also
+                            // goes on to refuse. Breaking the lock and
+                            // proceeding is already visible in the
+                            // successful result; there is nothing this line
+                            // told a caller that the outcome does not.
+                            Ok(true) => continue,
                             Ok(false) => {}
                             Err(source) => {
                                 return Err(NativeStoreError::Io {
@@ -156,12 +159,14 @@ impl CaseLockGuard {
 
 impl Drop for CaseLockGuard {
     fn drop(&mut self) {
-        if let Err(source) = remove_lock_if_owned(&self.path, &self.lock_contents) {
-            eprintln!(
-                "{}: failed to inspect or remove native case-space lock: {source}",
-                self.path.display()
-            );
-        }
+        // Not reported, for the same reason as the stale-lock recovery
+        // notice above: a `Drop` impl has no notion of `--format` and no
+        // way to know whether this invocation is about to print a JSON
+        // refusal to the same stream. A failure here means a `.lock` file
+        // may outlive this process; the next acquire attempt surfaces that
+        // as `LockUnavailable` on its own, which is the actionable form of
+        // this failure, not a line here.
+        let _ = remove_lock_if_owned(&self.path, &self.lock_contents);
     }
 }
 

@@ -351,15 +351,26 @@ same origin. Confinement is three ordered stages:
    directory — the case stage 1 cannot see, since the entry itself is an
    ordinary relative name.
 
-All three confined failure modes — lexical rejection, canonicalization
-failure, and a resolved-but-outside-the-root result — refuse with the
-identical, generic message, naming neither the io error nor any resolved
-path. Confinement is a filesystem-existence and symlink-target oracle if this
-is not uniform: an untrusted packet that gets a different-shaped refusal for
-`/etc/hosts` (exists) versus `/etc/zzz-no-such-file` (does not), or whose
-refusal names the canonical path a symlink resolved to, has learned something
-about the operator's filesystem from a command that never opened either
-target for the packet's benefit.
+A resolved, in-root path can still fail a fourth way: it names a directory,
+or is otherwise unreadable (a permission error, ...). That read failure is
+folded into the identical confinement refusal too, not reported as the raw
+io error — see below.
+
+All four confined failure modes — lexical rejection, canonicalization
+failure, a resolved-but-outside-the-root result, and a resolved-in-root
+path that cannot be read — refuse with the identical, generic message,
+naming neither the io error nor any resolved path. Confinement is a
+filesystem-existence and symlink-target oracle if this is not uniform: an
+untrusted packet that gets a different-shaped refusal for `/etc/hosts`
+(exists) versus `/etc/zzz-no-such-file` (does not), or whose refusal names
+the canonical path a symlink resolved to, has learned something about the
+operator's filesystem from a command that never opened either target for
+the packet's benefit. The fourth mode is scoped strictly in-root (a relative
+name inside the packet's own directory), so it does not extend the oracle
+to arbitrary absolute paths the way the first three would if left unfixed —
+it only means "exists as a directory" and "does not exist" stay
+indistinguishable for a name inside the packet's own directory, same as the
+others.
 
 In both directions, `artifact_uri` records the canonicalized path that was
 actually opened and hashed — with one exception, which is a provenance

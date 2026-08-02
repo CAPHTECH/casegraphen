@@ -270,6 +270,13 @@ fn space_rebuild_refuses_to_adopt_a_tampered_log_and_leaves_head_missing() {
 
     assert!(!refused.status.success());
     assert!(stderr(&refused).contains("disagrees with folded log"));
+    // A store integrity mismatch (issue #22): the on-disk log disagrees
+    // with what folding it produces, distinct from every other refusal
+    // code — the correct response is to stop and investigate, not retry.
+    assert_eq!(
+        stderr_json(&refused)["error_code"],
+        json!("store_integrity")
+    );
     assert!(
         !head_path.exists(),
         "refused adoption must not write a head"
@@ -321,6 +328,10 @@ fn space_rebuild_adoption_refuses_a_disagreeing_existing_head_without_overwritin
 
     assert!(!refused.status.success());
     assert!(stderr(&refused).contains("morphism log head is stale or disagrees"));
+    assert_eq!(
+        stderr_json(&refused)["error_code"],
+        json!("store_integrity")
+    );
     assert_eq!(
         fs::read(&head_path).expect("read refused morphism log head"),
         original_head
@@ -1291,6 +1302,23 @@ fn a_capability_authorizes_only_the_operations_it_names() {
         ),
         "stderr: {}",
         stderr(&wrong_capability)
+    );
+    // A gate violation is its own error_code (issue #22): the correct
+    // response is "a different actor or capability is required", not "fix
+    // this call's shape and retry with the same identity" — a different
+    // kind of answer from a plain usage or business-rule refusal.
+    let wrong_capability_refusal = stderr_json(&wrong_capability);
+    assert_eq!(
+        wrong_capability_refusal["error_code"],
+        json!("gate_violation")
+    );
+    assert!(
+        wrong_capability_refusal["data"]["witness_ids"]
+            .as_array()
+            .expect("witness_ids is an array")
+            .contains(&json!("capability:plan-review")),
+        "witness_ids: {}",
+        wrong_capability_refusal["data"]["witness_ids"]
     );
 
     let right_capability = transition("capability:durable-mutation");
@@ -4278,6 +4306,23 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
     ]);
     assert!(!fabricated_capability.status.success());
     assert!(stderr(&fabricated_capability).contains("existing case cell"));
+    // The plan surface's own gate check must classify identically to the
+    // mutation surface's (issue #22 batch 2): both go through the same
+    // `From<NativeOperationGateError>` conversion now, so a fabricated
+    // capability here is `gate_violation` with witnesses, not `invalid`.
+    let fabricated_capability_refusal = stderr_json(&fabricated_capability);
+    assert_eq!(
+        fabricated_capability_refusal["error_code"],
+        json!("gate_violation")
+    );
+    assert!(
+        fabricated_capability_refusal["data"]["witness_ids"]
+            .as_array()
+            .expect("witness_ids is an array")
+            .contains(&json!("capability:fabricated")),
+        "witness_ids: {}",
+        fabricated_capability_refusal["data"]["witness_ids"]
+    );
 
     let unknown_path = directory.join("execution-plan.unknown-work.json");
     write_execution_plan(
@@ -4375,6 +4420,53 @@ fn native_execution_plan_accept_requires_gate_and_unknown_work_is_rejected() {
             .expect("history entries")
             .len(),
         1
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn plan_propose_refuses_a_plan_authored_against_a_revision_that_is_no_longer_current() {
+    // Distinct from the mutation surface's `stale_revision` (issue #22
+    // batch 2): the subject here is the plan file itself, authored against
+    // a base revision the case space has since moved past, not a caller's
+    // concurrency token on an otherwise-current call. Recovery differs too
+    // — regenerate the plan against the current revision, not retry the
+    // same plan with a corrected `--base-revision-id`.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:plan-stale-base");
+
+    let stale_path = directory.join("execution-plan.stale-base.json");
+    write_execution_plan(
+        &stale_path,
+        "plan:stale-base",
+        "revision:not-the-current-revision",
+        "work:review-native-contract",
+    );
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        stale_path.to_str().expect("plan path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!propose.status.success());
+    let refusal = stderr_json(&propose);
+    assert_eq!(refusal["error_code"], json!("stale_plan_revision"));
+    assert_eq!(refusal["data"]["plan_id"], json!("plan:stale-base"));
+    assert_eq!(
+        refusal["data"]["base_revision_id"],
+        json!("revision:not-the-current-revision")
+    );
+    assert_eq!(
+        refusal["data"]["current_revision_id"],
+        json!("revision:plan-stale-base")
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -7028,6 +7120,47 @@ fn native_run_step_and_frontier_are_mutually_exclusive() {
 }
 
 #[test]
+fn unsupported_audience_value_carries_the_accepted_set_structurally() {
+    // `--audience` is an enum-valued flag the parser already holds the
+    // closed set for (issue #22): a bad value hands the accepted set back
+    // in `data`, not only enumerated inside `message` prose.
+    let output = run_cli(&[
+        "run",
+        "--frontier",
+        "--store",
+        "unused",
+        "--case-space-id",
+        "case_space:unused",
+        "--plan-id",
+        "plan:unused",
+        "--base-revision-id",
+        "revision:unused",
+        "--actor-id",
+        "actor:unused",
+        "--capability-id",
+        "capability:unused",
+        "--operation-scope-id",
+        "case_space:unused",
+        "--audience",
+        "not-a-real-audience",
+        "--source-boundary-id",
+        "source_boundary:unused",
+        "--format",
+        "json",
+    ]);
+
+    assert!(!output.status.success());
+    let refusal = stderr_json(&output);
+    assert_eq!(refusal["error_code"], json!("usage"));
+    assert_eq!(refusal["data"]["flag"], json!("--audience"));
+    assert_eq!(refusal["data"]["value"], json!("not-a-real-audience"));
+    assert_eq!(
+        refusal["data"]["accepted_values"],
+        json!(["human_review", "ai_agent", "audit", "system", "migration"])
+    );
+}
+
+#[test]
 fn native_typed_morphism_materializes_payload_end_to_end() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -7407,6 +7540,93 @@ fn native_review_accept_appends_history_and_satisfies_close_review() {
     assert!(stderr(&stale).contains(&format!(
         "base revision revision:native-review-base is stale; current revision is {current_revision}"
     )));
+    // A stale base revision carries the current revision back structurally
+    // (issue #22), not only in prose: recovery is re-reading
+    // `data.current_revision_id` and retrying, which `error_code` marks as
+    // a different kind of answer from a plain usage or business-rule
+    // refusal.
+    let stale_refusal = stderr_json(&stale);
+    assert_eq!(stale_refusal["error_code"], json!("stale_revision"));
+    assert_eq!(
+        stale_refusal["data"]["base_revision_id"],
+        json!("revision:native-review-base")
+    );
+    assert_eq!(
+        stale_refusal["data"]["current_revision_id"],
+        json!(current_revision)
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn a_refusal_after_a_successful_parse_renders_in_the_format_parsing_resolved() {
+    // Regression: `--reason` (a free-text flag) takes the very next token
+    // unconditionally as its value, with no quoting distinction between "a
+    // flag" and "data" — pre-existing behaviour, not something issue #22
+    // introduced. If that token is literally the string `--format`, a
+    // *second*, later `--format <value>` is the one the parser actually
+    // recognizes, and parsing genuinely succeeds with that value.
+    //
+    // Before the fix, `main_entry` re-derived the refusal's render format
+    // from a raw-argv scan for every refusal, even when `Command::parse`
+    // had already succeeded and `command.format()` was known with
+    // certainty. That scan finds the *first* `--format` token pair — whose
+    // value is the unrecognized literal string "--format" — and never
+    // revisits the second, real one, so it silently fell back to the
+    // default (json) even when parsing had resolved text.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:format-survives-failure");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let trick_args = |case_space_id: &str, format: &str| {
+        run_cli(&[
+            "space",
+            "reason",
+            "--store",
+            &store,
+            "--case-space-id",
+            case_space_id,
+            "--reason",
+            "--format",
+            "--format",
+            format,
+        ])
+    };
+
+    // First prove the trick genuinely parses, rather than merely looking
+    // plausible: against the case space that *does* exist, it succeeds and
+    // renders in the format the second `--format` names.
+    let succeeds = trick_args(native_case_space_id(), "text");
+    assert!(succeeds.status.success(), "stderr: {}", stderr(&succeeds));
+    assert!(
+        !stdout(&succeeds).trim_start().starts_with('{'),
+        "a command parsed with format text must render as prose: {}",
+        stdout(&succeeds)
+    );
+
+    // Now the regression case: the same trick, but execution fails (a
+    // second case-space-id that was never imported) *after* parsing already
+    // resolved format to text. The refusal must be prose, not JSON.
+    let text_refusal = trick_args("case_space:does-not-exist", "text");
+    assert!(!text_refusal.status.success());
+    let text_refusal_stderr = stderr(&text_refusal);
+    assert!(
+        !text_refusal_stderr.trim_start().starts_with('{'),
+        "a refusal from a command that parsed with format text must render as prose, not JSON: {text_refusal_stderr}"
+    );
+    assert!(text_refusal_stderr.contains("missing native case space case_space:does-not-exist"));
+
+    // Mirror case: the same trick with the second `--format` naming json
+    // must still render JSON — the fix is "use whatever `Command::parse`
+    // actually resolved", not "the renderer now always prefers text".
+    let json_refusal = trick_args("case_space:does-not-exist", "json");
+    assert!(!json_refusal.status.success());
+    assert_eq!(
+        stderr_json(&json_refusal)["error_code"],
+        json!("missing_case_space")
+    );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -7542,6 +7762,166 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
             .expect("evidence ids")
             .contains(&json!("evidence:attached-cli"))
     );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn a_refusal_after_a_landed_mutation_reports_completed_through() {
+    // Regression: `--output` naming a directory that does not exist fails
+    // *after* the append already landed. Before the fix, the refusal threw
+    // away the very revision id the just-built report already held,
+    // leaving the caller to replay the store and diff to find out what
+    // happened — exactly the hand-driven reconstruction ADR 0016 exists to
+    // delete.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:completed-through-base");
+    let input_path = directory.join("attached-evidence-cell.json");
+    let mut evidence_cell = json_file(native_case_fixture())["case_cells"][3].clone();
+    evidence_cell["id"] = json!("evidence:completed-through");
+    evidence_cell["title"] = json!("Completed-through evidence");
+    evidence_cell["lifecycle"] = json!("active");
+    evidence_cell["provenance"]["review_status"] = json!("unreviewed");
+    evidence_cell["source_ids"] = json!(["source:completed-through"]);
+    evidence_cell["metadata"] =
+        json!({"evidence_boundary": "source_backed", "content_hash": "caller-bogus-hash"});
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&evidence_cell).expect("serialize evidence cell"),
+    )
+    .expect("write evidence cell");
+
+    let history_before = stdout_json(&run_native_case_store_command(&directory, "history"))
+        ["result"]["entries"]
+        .as_array()
+        .expect("history entries")
+        .len();
+
+    let attach_args = [
+        "evidence",
+        "attach",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:completed-through-base",
+        "--input",
+        input_path.to_str().expect("evidence path"),
+        "--satisfies",
+        "evidence:native-schema-json-valid",
+        "--format",
+        "json",
+        "--output",
+        "/nonexistent-dir-completed-through-xyz/report.json",
+    ];
+    let attach = run_cli_with_mutation_gate(&attach_args, "actor:native-evidence-cli");
+    assert!(!attach.status.success());
+    let refusal = stderr_json(&attach);
+    assert_eq!(refusal["error_code"], json!("io_error"));
+
+    let history_after_output = stdout_json(&run_native_case_store_command(&directory, "history"));
+    let history_after = history_after_output["result"]["entries"]
+        .as_array()
+        .expect("history entries");
+    assert_eq!(
+        history_after.len(),
+        history_before + 1,
+        "the append must have landed despite the --output failure"
+    );
+    let new_head = history_after.last().expect("new entry")["target_revision_id"].clone();
+    assert_ne!(new_head, Value::Null);
+    assert_eq!(
+        refusal["completed_through"], new_head,
+        "the refusal must report the revision the mutation actually reached"
+    );
+
+    let refusal_path = directory.join("completed-through.refusal.json");
+    fs::write(
+        &refusal_path,
+        serde_json::to_string_pretty(&refusal).expect("serialize refusal"),
+    )
+    .expect("write refusal fixture");
+    assert_jsonschema_valid(
+        &repo_path("schemas/casegraphen/native-cli.refusal.schema.json"),
+        &refusal_path,
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn stderr_stays_one_json_object_when_a_refusal_follows_a_broken_stale_lock() {
+    // Regression: acquiring the store lock used to print a bare prose
+    // notice to stderr when it broke a stale lock, unconditionally,
+    // regardless of `--format` — a second writer to the same channel a
+    // refusal from the same invocation also uses. Forge a stale lock, then
+    // fail this same invocation *after* the append succeeds (the same
+    // `--output` failure shape as the `completed_through` regression
+    // above) so the old code would have put two lines on stderr: the
+    // lock-break notice, then the JSON refusal. `stderr_json` asserts
+    // exactly one line — this is the test that would have caught the
+    // notice if it were still there.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let imported = import_native_case_space(&directory, "revision:stale-lock-base");
+    let imported_json = stdout_json(&imported);
+    let log_path = imported_native_log_path(&directory, &imported_json);
+    let lock_path = log_path.with_file_name(".lock");
+    fs::write(&lock_path, "token=forged-stale-lock\n").expect("forge a lock file");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("open forged lock")
+        .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
+        .expect("age forged lock past the stale threshold");
+
+    let input_path = directory.join("attached-evidence-cell.json");
+    let mut evidence_cell = json_file(native_case_fixture())["case_cells"][3].clone();
+    evidence_cell["id"] = json!("evidence:stale-lock");
+    evidence_cell["title"] = json!("Stale-lock evidence");
+    evidence_cell["lifecycle"] = json!("active");
+    evidence_cell["provenance"]["review_status"] = json!("unreviewed");
+    evidence_cell["source_ids"] = json!(["source:stale-lock"]);
+    evidence_cell["metadata"] =
+        json!({"evidence_boundary": "source_backed", "content_hash": "caller-bogus-hash"});
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&evidence_cell).expect("serialize evidence cell"),
+    )
+    .expect("write evidence cell");
+
+    let attach = run_cli_with_mutation_gate(
+        &[
+            "evidence",
+            "attach",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            "revision:stale-lock-base",
+            "--input",
+            input_path.to_str().expect("evidence path"),
+            "--satisfies",
+            "evidence:native-schema-json-valid",
+            "--format",
+            "json",
+            "--output",
+            "/nonexistent-dir-stale-lock-xyz/report.json",
+        ],
+        "actor:native-evidence-cli",
+    );
+    assert!(!attach.status.success());
+    assert!(
+        !lock_path.exists(),
+        "the forged stale lock must have been broken to let the append through"
+    );
+    // `stderr_json` itself is the assertion: it panics if stderr is not
+    // exactly one line of valid JSON.
+    let refusal = stderr_json(&attach);
+    assert_eq!(refusal["error_code"], json!("io_error"));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -10697,6 +11077,9 @@ fn strict_exit_codes_distinguish_domain_findings_from_tool_failures() {
                 && invariant["passed"] == json!(false))
     );
 
+    // A missing case space is a refusal with its own error_code, not just
+    // exit 1 (issue #22): `--store` names a directory that was never
+    // created, so `NativeStoreError::MissingCase` is what surfaces.
     let missing_store = directory.join("missing-store");
     let tool_failure = run_cli(&[
         "obstruction",
@@ -10715,7 +11098,16 @@ fn strict_exit_codes_distinguish_domain_findings_from_tool_failures() {
         "stderr: {}",
         stderr(&tool_failure)
     );
+    let missing_refusal = stderr_json(&tool_failure);
+    assert_eq!(missing_refusal["error_code"], json!("missing_case_space"));
+    assert_eq!(
+        missing_refusal["data"]["case_space_id"],
+        json!("case_space:missing")
+    );
 
+    // `space inspect` does not accept `--strict` (only report-with-findings
+    // commands do): an unsupported-flag refusal, a different error_code
+    // from the missing-case-space one above.
     let unsupported = run_cli(&[
         "space",
         "inspect",
@@ -10728,7 +11120,16 @@ fn strict_exit_codes_distinguish_domain_findings_from_tool_failures() {
         "json",
     ]);
     assert_eq!(unsupported.status.code(), Some(1));
-    assert!(stderr(&unsupported).contains("unsupported native argument \"--strict\""));
+    let unsupported_refusal = stderr_json(&unsupported);
+    assert_eq!(unsupported_refusal["error_code"], json!("usage"));
+    assert_ne!(
+        unsupported_refusal["error_code"], missing_refusal["error_code"],
+        "an unknown flag and a missing case space must not share an error_code"
+    );
+    assert!(unsupported_refusal["message"]
+        .as_str()
+        .expect("message is a string")
+        .contains("unsupported native argument \"--strict\" for space"));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -12243,6 +12644,15 @@ fn stdout_json(output: &Output) -> Value {
     serde_json::from_str(stdout.trim_end()).expect("stdout JSON")
 }
 
+/// Parses a `--format json` refusal from stderr (issue #22). A refusal
+/// never touches stdout or `--output`, so this reads stderr, mirroring
+/// `stdout_json` for the success path.
+fn stderr_json(output: &Output) -> Value {
+    let stderr = stderr(output);
+    assert_eq!(stderr.lines().count(), 1, "stderr: {stderr}");
+    serde_json::from_str(stderr.trim_end()).expect("stderr refusal JSON")
+}
+
 fn json_file(path: PathBuf) -> Value {
     serde_json::from_str(&fs::read_to_string(&path).expect("read JSON file"))
         .unwrap_or_else(|error| panic!("{} should be valid JSON: {error}", path.display()))
@@ -12316,6 +12726,8 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/operation-gate-profiles.schema.json",
         "schemas/casegraphen/native-cli.report.schema.json",
         "schemas/casegraphen/evidence.packet.schema.json",
+        "schemas/casegraphen/native-cli.refusal.schema.json",
+        "schemas/casegraphen/native-cli.refusal.example.json",
     ]
     .iter()
     .map(|path| repo_path(path))
@@ -12359,6 +12771,10 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/evidence.packet.schema.json",
             "schemas/casegraphen/evidence.packet.example.json",
+        ),
+        (
+            "schemas/casegraphen/native-cli.refusal.schema.json",
+            "schemas/casegraphen/native-cli.refusal.example.json",
         ),
     ]
     .iter()

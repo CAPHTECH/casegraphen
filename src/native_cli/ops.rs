@@ -766,8 +766,7 @@ fn validated_mutation_gate(
             .clone()
             .expect("required gate resolution checked source_boundary_id"),
     };
-    check_operation_gate(case_space, &gate, operation)
-        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    check_operation_gate(case_space, &gate, operation)?;
     Ok(gate)
 }
 
@@ -818,9 +817,10 @@ fn require_current_revision(
     if current_revision_id == base_revision_id {
         Ok(())
     } else {
-        Err(NativeCliError::invalid(format!(
-            "base revision {base_revision_id} is stale; current revision is {current_revision_id}"
-        )))
+        Err(NativeCliError::StaleRevision {
+            base_revision_id: base_revision_id.clone(),
+            current_revision_id: current_revision_id.clone(),
+        })
     }
 }
 

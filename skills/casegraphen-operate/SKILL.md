@@ -49,6 +49,54 @@ mutations. The same applies inside a morphism proposal: its `source_revision_id`
 must equal `$REV` at apply time, so write the proposal file immediately before
 applying it.
 
+**Read `--format json` refusals as JSON, not prose.** Every refusal — not only
+a successful report — honors `--format json` and is written to stderr as
+`{"error_code": ..., "message": ..., "data": {...}}`, never to stdout or
+`--output`. A stale-revision refusal (`"error_code": "stale_revision"`) hands
+back the current revision directly in `data.current_revision_id`: read that
+instead of calling `cur()` to recover. `error_code` also distinguishes what
+kind of retry makes sense:
+
+- `"usage"` and `"invalid"` mean fix the call and do not retry as-is —
+  including the specific case of a gate flag missing entirely
+  (`--capability-id`, `--actor-id`, ...): that is a pre-flight completeness
+  check, not a gate decision, so it classifies as `"usage"` even though the
+  message is about a gate.
+- `"gate_violation"` means the gate was actually evaluated and refused: a
+  different actor or capability is required, not a different call shape with
+  the same identity. **On `plan accept`/`plan reject` specifically, treat
+  this as escalate to a human reviewer holding the right capability, not
+  retry** — plan review is the one operation
+  `docs/security/worker-execution-policy.md` marks always-human, and this is
+  that checkpoint refusing.
+- `"stale_revision"` means re-read `data.current_revision_id` and retry the
+  same call with it.
+- `"stale_plan_revision"` looks similar but is not the same recovery: the
+  *plan* was built against a case space that has since moved, so regenerate
+  the plan against `data.current_revision_id` — retrying the same plan file
+  with a corrected `--base-revision-id` will not help, since the plan's own
+  content is what is stale.
+- `"missing_case_space"` / `"store_integrity"` mean stop and check `--store`
+  before retrying at all — `store_integrity` also covers a plan whose stored
+  review no longer matches the operation gate it was accepted under, not
+  only a store replay mismatch.
+- `"io_error"` means the command may already have completed a durable
+  mutation and then failed on something unrelated (a bad `--output` path,
+  a JSON re-render failure) — **do not blindly retry**, since the mutation
+  may have already landed. Check `completed_through` on the refusal first;
+  if absent, re-read the current revision before deciding whether the
+  original call is still needed at all.
+
+**A refusal can carry `completed_through` at the top level** (a sibling of
+`error_code`, not inside `data`): the `current_revision_id` after the last
+durable mutation the command completed, when the command already knows it —
+e.g. an append succeeded and only a later `--output` path or JSON re-render
+failed afterward. Present only when the command that refused already held
+that revision; absent otherwise, including when the mutation this refusal
+itself blocked never landed. When present, use it the same way as
+`data.current_revision_id` on a `stale_revision` refusal — as `$REV` for the
+next call — instead of calling `cur()`.
+
 Every command accepts `--output <path>`. It writes the full JSON report there
 and emits nothing on stdout — measured 0 bytes. For anything but the smallest
 report, use `--output`, then extract only the field you need:

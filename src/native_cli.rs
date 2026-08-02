@@ -12,8 +12,8 @@ use std::{
 mod ops;
 #[path = "native_cli_options.rs"]
 mod options;
-pub(crate) use options::NativeOutputFormat;
 pub use options::OPERATION_GATE_PROFILES_SCHEMA;
+pub(crate) use options::{scan_requested_format, NativeOutputFormat};
 mod parser;
 #[path = "native_cli_path.rs"]
 mod path_helpers;
@@ -826,17 +826,31 @@ impl NativeCliCommand {
     }
 }
 
+// The one table both the parser and the refusal's accepted-values list
+// project from — a hand-written second list beside this match was itself a
+// small instance of the duplication this crate forbids: it agreed with the
+// match today only because someone kept them in sync by hand.
+const PROJECTION_AUDIENCE_ENTRIES: &[(&str, ProjectionAudience)] = &[
+    ("human_review", ProjectionAudience::HumanReview),
+    ("ai_agent", ProjectionAudience::AiAgent),
+    ("audit", ProjectionAudience::Audit),
+    ("system", ProjectionAudience::System),
+    ("migration", ProjectionAudience::Migration),
+];
+
 pub(super) fn parse_projection_audience(value: &str) -> Result<ProjectionAudience, NativeCliError> {
-    match value {
-        "human_review" => Ok(ProjectionAudience::HumanReview),
-        "ai_agent" => Ok(ProjectionAudience::AiAgent),
-        "audit" => Ok(ProjectionAudience::Audit),
-        "system" => Ok(ProjectionAudience::System),
-        "migration" => Ok(ProjectionAudience::Migration),
-        _ => Err(NativeCliError::usage(format!(
-            "unsupported projection audience {value:?}"
-        ))),
-    }
+    PROJECTION_AUDIENCE_ENTRIES
+        .iter()
+        .find(|(name, _)| *name == value)
+        .map(|(_, audience)| *audience)
+        .ok_or_else(|| NativeCliError::UnsupportedArgumentValue {
+            flag: "--audience",
+            value: value.to_owned(),
+            accepted: PROJECTION_AUDIENCE_ENTRIES
+                .iter()
+                .map(|(name, _)| *name)
+                .collect(),
+        })
 }
 
 fn case_list(store: &Path) -> Result<Value, NativeCliError> {
@@ -964,7 +978,75 @@ fn equivalence_check(
 #[derive(Debug)]
 pub enum NativeCliError {
     Usage(String),
+    /// An enum-valued flag (the parser already holds the closed set — e.g.
+    /// `--audience`) was given a value outside it. Kept distinct from the
+    /// plain `Usage(String)` an unrecognized flag *name* gets: both are the
+    /// same kind of answer (fix the call, never retry), so they share
+    /// `error_code`, but this one hands back the accepted set structurally
+    /// instead of leaving an agent to parse it out of prose.
+    UnsupportedArgumentValue {
+        flag: &'static str,
+        value: String,
+        accepted: Vec<&'static str>,
+    },
     Invalid(String),
+    /// `base_revision_id` no longer names the case space's current
+    /// revision. Distinct from `Invalid`: the correct response is to
+    /// re-read `current_revision_id` and retry, not to fix the call and
+    /// give up on retrying (ADR 0008's refused `--base-revision current`
+    /// still stands; this only returns the value a caller already has to
+    /// re-read for itself).
+    StaleRevision {
+        base_revision_id: Id,
+        current_revision_id: Id,
+    },
+    /// An execution plan's own `base_revision_id` no longer names the case
+    /// space's current revision. Kept distinct from `StaleRevision`, not
+    /// merged into it, because the subject and the recovery both differ: a
+    /// mutation's stale base revision is the caller's own concurrency
+    /// token, and re-reading `current_revision_id` and retrying with the
+    /// same plan is correct; a plan's stale base revision means the plan
+    /// was built against a case space that has since moved, so the plan
+    /// itself — not just the base revision argument — is stale, and the
+    /// correct response is to propose a fresh plan against the current
+    /// revision, not to retry the same plan file with a new
+    /// `--base-revision-id`.
+    StalePlanRevision {
+        plan_id: Id,
+        base_revision_id: Id,
+        current_revision_id: Id,
+    },
+    /// The operation gate `check_operation_gate` computed does not match
+    /// what the actor presented, at a **live authorization** site: the
+    /// actor is asking to do something right now. Distinct from `Invalid`:
+    /// the correct response is "a different actor or capability is
+    /// required", not "fix this call's shape and retry with the same
+    /// identity". Live-authorization call sites use the
+    /// `From<NativeOperationGateError>` impl below via `?` instead of
+    /// hand-building their own `Invalid`.
+    ///
+    /// Not every `check_operation_gate` failure is this variant — see
+    /// `StoreIntegrity`'s doc comment for the other kind, which this
+    /// variant must not absorb.
+    GateViolation {
+        message: String,
+        witness_ids: Vec<Id>,
+    },
+    /// A tamper-detection re-verification of already-recorded state
+    /// disagreed with itself. The CLI-level counterpart to
+    /// `NativeStoreError`'s replay-time integrity codes (which share this
+    /// same `error_code`), for a check that runs inside `native_cli`
+    /// rather than inside the store — e.g. `plan.rs::verified_plan_review_status`
+    /// re-running `check_operation_gate` against the operation gate a
+    /// plan's *stored* review recorded, to confirm the log has not been
+    /// tampered with since. That is not live authorization — the actor
+    /// asked for nothing just now — so it must not become `GateViolation`:
+    /// the correct response is "stop and investigate", not "get a
+    /// different actor or capability". A `check_operation_gate` failure
+    /// inside a re-verification of previously-recorded state is always
+    /// this variant, never `GateViolation`, regardless of which gate
+    /// failure produced it.
+    StoreIntegrity(String),
     Core(higher_graphen_core::CoreError),
     Store(NativeStoreError),
     Review(crate::native_review::NativeReviewError),
@@ -984,6 +1066,123 @@ impl NativeCliError {
 
     fn invalid(message: impl Into<String>) -> Self {
         Self::Invalid(message.into())
+    }
+
+    /// The stable, machine-readable classification for this refusal — what
+    /// kind of answer this is, so a caller can branch without parsing
+    /// `to_string()`. Exactly one match over the variants that already
+    /// exist; a nested error's own variant-derived code is delegated to
+    /// rather than re-decided (`Core`, `Store`), and a code is shared
+    /// across variants only when the correct response to both is the same
+    /// (see `UnsupportedArgumentValue`'s doc comment).
+    ///
+    /// `Core(error) => error.code()` means part of this vocabulary is
+    /// published by `higher-graphen-core`, not minted here — `invalid_id`,
+    /// `invalid_source_kind`, `parse_failure`, and its own
+    /// `"unsupported_version"` all come from that crate's `CoreError::code`.
+    /// A core minor version could add or rename one of those independent of
+    /// a release of this crate; the refusal schema's `error_code`
+    /// description says so. That core `"unsupported_version"` and
+    /// `NativeStoreError::UnsupportedVersion`'s `"unsupported_schema"`
+    /// read similarly in English is not the same condition answered twice:
+    /// core's is about a single primitive value's encoding, the store's is
+    /// about a whole case-space file's declared schema version — different
+    /// layers, coincidentally similar names. Deliberately not unified.
+    pub(crate) fn error_code(&self) -> &'static str {
+        match self {
+            Self::Usage(_) | Self::UnsupportedArgumentValue { .. } => "usage",
+            Self::Invalid(_) | Self::Json(_) => "invalid",
+            Self::StaleRevision { .. } => "stale_revision",
+            Self::StalePlanRevision { .. } => "stale_plan_revision",
+            Self::GateViolation { .. } => "gate_violation",
+            Self::StoreIntegrity(_) => "store_integrity",
+            Self::Core(error) => error.code(),
+            Self::Store(error) => error.error_code(),
+            Self::Review(_) => "invalid",
+            Self::Eval(_) => "evaluation_failed",
+            Self::Worker(_) => "worker_error",
+            Self::Io { .. } => "io_error",
+        }
+    }
+
+    /// Structured recovery data alongside the human-readable message, for
+    /// the refusals that have any. Unlike `error_code`, this match ends in
+    /// a wildcard: a refusal with no case here simply carries no recovery
+    /// data beyond its message, and a new variant added later silently
+    /// falls into that wildcard rather than the compiler forcing a
+    /// decision the way it does for `error_code`. That is the safe
+    /// direction — `data` is additive, never authority-bearing, so an
+    /// omission under-informs rather than misleads — but it is not the
+    /// same compile-time guarantee `error_code` has, and should not be
+    /// described as one. The packet-confinement refusals in particular
+    /// must stay in the wildcard group — see `Invalid`'s security note in
+    /// `native_cli/ops/packet.rs`.
+    pub(crate) fn refusal_data(&self) -> Option<Value> {
+        match self {
+            Self::UnsupportedArgumentValue {
+                flag,
+                value,
+                accepted,
+            } => Some(json!({
+                "flag": flag,
+                "value": value,
+                "accepted_values": accepted,
+            })),
+            Self::StaleRevision {
+                base_revision_id,
+                current_revision_id,
+            } => Some(json!({
+                "base_revision_id": base_revision_id,
+                "current_revision_id": current_revision_id,
+            })),
+            Self::StalePlanRevision {
+                plan_id,
+                base_revision_id,
+                current_revision_id,
+            } => Some(json!({
+                "plan_id": plan_id,
+                "base_revision_id": base_revision_id,
+                "current_revision_id": current_revision_id,
+            })),
+            Self::GateViolation { witness_ids, .. } => Some(json!({
+                "witness_ids": witness_ids,
+            })),
+            Self::Eval(error) => Some(json!({ "violations": error.violations })),
+            Self::Store(NativeStoreError::MissingCase { case_space_id, .. }) => Some(json!({
+                "case_space_id": case_space_id,
+            })),
+            _ => None,
+        }
+    }
+}
+
+/// A `check_operation_gate` failure at a **live-authorization** call site
+/// becomes this variant through this one conversion — `?` on the
+/// `Result<(), NativeOperationGateError>`, never a hand-built `GateViolation`
+/// (or, worse, an `Invalid`) constructed around the error's `.to_string()`.
+/// `ops.rs::validated_mutation_gate` and `ops/plan.rs::plan_review`'s own
+/// gate check both use it; they once independently hand-built `Invalid`
+/// around the identical failure, which is the two-classifications-for-one-
+/// question shape this crate forbids.
+///
+/// This is **not** the only place a `check_operation_gate` failure can
+/// surface as a refusal, and the other places must not route through this
+/// conversion: `native_store.rs`'s replay-time gate re-validation folds its
+/// own `check_operation_gate` failure into `NativeStoreError::InvalidMorphism`
+/// (`store_integrity`), and `ops/plan.rs::verified_plan_review_status`
+/// re-verifying a *stored* review's recorded gate maps to
+/// `NativeCliError::StoreIntegrity` by hand for the same reason. Both are
+/// tamper detection over already-recorded state, not live authorization —
+/// the actor asked for nothing just now — so "stop and investigate" is
+/// correct there and "get a different actor or capability" (what this
+/// variant means) would be wrong. Two different questions with different
+/// correct answers, not the same question decided twice.
+impl From<crate::native_review::NativeOperationGateError> for NativeCliError {
+    fn from(error: crate::native_review::NativeOperationGateError) -> Self {
+        Self::GateViolation {
+            message: error.to_string(),
+            witness_ids: error.witness_ids().to_vec(),
+        }
     }
 }
 
@@ -1021,6 +1220,33 @@ impl fmt::Display for NativeCliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage(message) | Self::Invalid(message) => formatter.write_str(message),
+            Self::UnsupportedArgumentValue {
+                flag,
+                value,
+                accepted,
+            } => write!(
+                formatter,
+                "unsupported value {value:?} for {flag}; expected one of {}",
+                accepted.join(", ")
+            ),
+            Self::StaleRevision {
+                base_revision_id,
+                current_revision_id,
+            } => write!(
+                formatter,
+                "base revision {base_revision_id} is stale; current revision is {current_revision_id}"
+            ),
+            Self::StalePlanRevision {
+                plan_id,
+                base_revision_id,
+                current_revision_id,
+            } => write!(
+                formatter,
+                "execution plan {plan_id} base revision {base_revision_id} is stale; current \
+                 revision is {current_revision_id}"
+            ),
+            Self::GateViolation { message, .. } => formatter.write_str(message),
+            Self::StoreIntegrity(message) => formatter.write_str(message),
             Self::Core(error) => write!(formatter, "{error}"),
             Self::Store(error) => write!(formatter, "{error}"),
             Self::Review(error) => write!(formatter, "{error}"),

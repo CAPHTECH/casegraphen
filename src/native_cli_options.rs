@@ -45,7 +45,6 @@ pub(super) enum OperationGateRequirement<'a> {
     Optional,
     Required {
         command: &'a str,
-        operation: &'a str,
         actor_command: Option<&'a str>,
     },
 }
@@ -152,23 +151,40 @@ pub(crate) enum NativeOutputFormat {
 }
 
 impl NativeOptions {
-    pub(super) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        Self::parse_internal(args, false, false)
+    /// `segment` names the command being parsed, purely for the
+    /// unknown-argument refusal below. Every real call site passes only
+    /// the top-level group (`"space"`, `"cell"`, `"morphism"`, ...), not
+    /// the full two-word command — so `space inspect --strict` refuses
+    /// with "...for space", not "...for space inspect", and `space reason
+    /// --strict` (which does accept it) is not distinguished from the
+    /// sibling operations that do not. That coarser granularity is
+    /// intentional, not an oversight: it is not a flag registry — inventing
+    /// one to enumerate *valid* flags per command, or even per-operation
+    /// labels, would be new code the minimalism rule rejects. Naming the
+    /// group being parsed is the cheap half that is actually useful.
+    pub(super) fn parse(
+        segment: &'static str,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        Self::parse_internal(segment, args, false, false)
     }
 
     pub(super) fn parse_with_strict(
+        segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(args, true, false)
+        Self::parse_internal(segment, args, true, false)
     }
 
     pub(super) fn parse_reason(
+        segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(args, true, true)
+        Self::parse_internal(segment, args, true, true)
     }
 
     fn parse_internal(
+        segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
         strict_allowed: bool,
         text_allowed: bool,
@@ -178,6 +194,7 @@ impl NativeOptions {
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             options.consume_arg(
+                segment,
                 &arg,
                 &mut args,
                 &mut format_seen,
@@ -193,6 +210,7 @@ impl NativeOptions {
 
     fn consume_arg(
         &mut self,
+        segment: &'static str,
         arg: &OsString,
         args: &mut impl Iterator<Item = OsString>,
         format_seen: &mut bool,
@@ -317,7 +335,7 @@ impl NativeOptions {
             Some("--strict") if strict_allowed => self.strict = true,
             Some(_) | None => {
                 return Err(NativeCliError::usage(format!(
-                    "unsupported native argument {arg:?}"
+                    "unsupported native argument {arg:?} for {segment}"
                 )))
             }
         }
@@ -347,7 +365,6 @@ impl NativeOptions {
         let resolved = resolve_operation_gate_inputs(flags, profile);
         if let OperationGateRequirement::Required {
             command,
-            operation,
             actor_command,
         } = requirement
         {
@@ -358,9 +375,17 @@ impl NativeOptions {
                     }
                     None => "--actor-id <id> is required".to_owned(),
                 }),
-                MissingOperationGateField::Capability => NativeCliError::invalid(format!(
-                    "operation gate for {operation:?} violates: capability_ids must not be empty"
-                )),
+                // A pre-flight completeness check, not a gate decision: the
+                // flag is missing and nothing was evaluated, so this is
+                // `usage` (fix the call), not `gate_violation` — and the
+                // message says plainly what is missing instead of wearing
+                // `check_operation_gate`'s "violates: ..." phrasing, which
+                // is how a caller (and the SKILL.md guidance) could mistake
+                // the single most common gate mistake for something it
+                // is not.
+                MissingOperationGateField::Capability => {
+                    NativeCliError::usage(format!("--capability-id <id> is required for {command}"))
+                }
                 MissingOperationGateField::OperationScope => NativeCliError::usage(format!(
                     "--operation-scope-id <id> is required for {command}"
                 )),
@@ -553,15 +578,87 @@ pub(super) fn required_segment(
         .ok_or_else(|| NativeCliError::usage(format!("{label} is required")))
 }
 
+/// The single recognizer for what a `--format` value token means. Both the
+/// strict per-command parser below (which requires the flag be present and
+/// rejects `text` unless the command allows it) and `scan_requested_format`
+/// (a lenient pre-scan of raw argv, used to render a refusal from a parse
+/// that may have failed before ever reaching `--format`) resolve a token
+/// through this one match. A second recognizer answering "is this token a
+/// format" differently from this one is exactly the one-rule-two-places
+/// shape this crate forbids.
+fn recognized_format(value: &str) -> Option<NativeOutputFormat> {
+    match value {
+        "json" => Some(NativeOutputFormat::Json),
+        "text" => Some(NativeOutputFormat::Text),
+        _ => None,
+    }
+}
+
 fn require_format(
     args: &mut impl Iterator<Item = OsString>,
     text_allowed: bool,
 ) -> Result<NativeOutputFormat, NativeCliError> {
-    match required_segment(args, "--format value")?.to_str() {
-        Some("json") => Ok(NativeOutputFormat::Json),
-        Some("text") if text_allowed => Ok(NativeOutputFormat::Text),
-        Some(_) | None => Err(NativeCliError::usage("--format json is required")),
+    match required_segment(args, "--format value")?
+        .to_str()
+        .and_then(recognized_format)
+    {
+        Some(NativeOutputFormat::Text) if !text_allowed => {
+            Err(NativeCliError::usage("--format json is required"))
+        }
+        Some(format) => Ok(format),
+        None => Err(NativeCliError::usage("--format json is required")),
     }
+}
+
+/// Resolves the `--format` a refusal should render as, from the same raw
+/// argv `Command::parse` was given, for the one case where that is the only
+/// information available: `Command::parse` itself failed, so there is no
+/// `Command` to ask (`main_entry::parse_and_run` never reaches this scanner
+/// once parsing has succeeded — the resolved `command.format()` is
+/// authoritative there instead).
+///
+/// This does **not** match `parse_internal`'s left-to-right *consumption* —
+/// it matches token *order*, which is a different thing. `parse_internal`
+/// knows which flags take a following token as a value and skips over
+/// those; this scan does not, because it cannot: it exists precisely for
+/// the case where parsing never got far enough to know that. A value-typed
+/// flag (`--reason`, `--title`, ...) whose value is literally the string
+/// `--format` will make this scan see two `--format` tokens where the real
+/// parser — had it succeeded — would have seen only the second as the
+/// actual flag. Teaching this scanner that distinction would mean copying
+/// `consume_arg`'s knowledge of every flag's arity, which is worse than the
+/// residual: in the parse-failure domain there is no authoritative answer
+/// to disagree with regardless, so **first** recognized `--format <value>`
+/// wins, not last. First-wins fails toward the machine-readable form a
+/// caller most likely wants: a spurious later `--format text` sitting in a
+/// value position cannot silently override a real, earlier `--format
+/// json`.
+///
+/// An argv with **no** `--format` token anywhere defaults to `Text`, not
+/// `NativeOutputFormat::default()` (json) — deliberately not the same
+/// default a successful command uses. `--format json` is required for
+/// every successful command, so "no `--format` anywhere in this argv" only
+/// happens for an invocation malformed enough that it never got there: a
+/// bare `casegraphen`, a missing sub-command, a segment typo. Those are
+/// exactly the callers who gave no signal they wanted machine-readable
+/// output at all, and a plain-prose usage refusal (which is what `casegraphen`
+/// printed before this scanner existed) serves them better than a
+/// single-line JSON object that quietly drops the appended usage block
+/// `CliError::Usage`'s `Display` carries.
+pub(crate) fn scan_requested_format(args: &[OsString]) -> NativeOutputFormat {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg.to_str() == Some("--format") {
+            if let Some(format) = iter
+                .next()
+                .and_then(|value| value.to_str())
+                .and_then(recognized_format)
+            {
+                return format;
+            }
+        }
+    }
+    NativeOutputFormat::Text
 }
 
 pub(super) fn require_path(

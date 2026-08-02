@@ -383,12 +383,18 @@ impl<'a> ClaimPreparationState<'a> {
 ///    catches an in-tree symlink whose target leaves the directory; a
 ///    lexical check cannot see through a symlink.
 ///
-/// All three confined failure modes — lexical rejection, canonicalization
-/// failure, and a resolved-but-outside-the-root result — refuse with the
-/// identical message, naming neither the io error nor any resolved path:
-/// only the caller-supplied string is echoed back, because the proposer
-/// already wrote it. Unconfined (`None`) keeps the ordinary, informative io
-/// error, because the operator already knows what they typed.
+/// All four confined failure modes — lexical rejection, canonicalization
+/// failure, a resolved-but-outside-the-root result, and a resolved-and-
+/// in-root path that cannot be read (a directory, a permission error, ...)
+/// — refuse with the identical message, naming neither the io error nor any
+/// resolved path: only the caller-supplied string is echoed back, because
+/// the proposer already wrote it. The fourth mode is scoped strictly
+/// in-root, so it does not extend the oracle to arbitrary absolute paths —
+/// it only means "exists as a directory" and "does not exist" stay
+/// indistinguishable for a name inside the packet's own directory, same as
+/// the other three. Unconfined (`None`) keeps the ordinary, informative io
+/// error for all failure modes including this one, because the operator
+/// already knows what they typed.
 pub(super) fn prepare_claim(
     case_space: &CaseSpace,
     state: &mut ClaimPreparationState<'_>,
@@ -464,8 +470,24 @@ pub(super) fn prepare_claim(
             None => fs::canonicalize(artifact_path)
                 .map_err(|source| input_refusal(artifact_path, source))?,
         };
-        let artifact_bytes = fs::read(&canonical_artifact_path)
-            .map_err(|source| input_refusal(artifact_path, source))?;
+        // A fourth confined failure mode, distinct from the three above:
+        // an entry that resolves *in-root* and passes containment but
+        // cannot be read (a directory, a permission error, ...) would
+        // otherwise report the raw io error here, splitting "exists as a
+        // directory" from "does not exist" for any relative name inside
+        // the packet's own directory. Scope is strictly in-root, so this
+        // does not extend the confinement oracle to arbitrary absolute
+        // paths, but it is the same class — fold it into the identical
+        // confinement refusal whenever confinement applies. Unconfined
+        // (`evidence attach --artifact`) keeps the raw io error: there is
+        // no oracle to close there.
+        let artifact_bytes = fs::read(&canonical_artifact_path).map_err(|source| {
+            if confine_artifacts_within.is_some() {
+                input_refusal(artifact_path, CONFINEMENT_REFUSAL)
+            } else {
+                input_refusal(artifact_path, source)
+            }
+        })?;
         let (artifact_cell, relation) = resolve_artifact(
             case_space,
             &mut state.staged_artifact_ids,
@@ -514,10 +536,10 @@ fn artifact_confined(canonical_artifact_path: &Path, canonical_root: &Path) -> b
     canonical_artifact_path.starts_with(canonical_root)
 }
 
-/// The one confined-artifact refusal message, shared verbatim by all three
-/// confined failure modes (lexical rejection, canonicalization failure, and
-/// resolved-but-outside-the-root) so they cannot be told apart — see
-/// `prepare_claim`'s doc comment.
+/// The one confined-artifact refusal message, shared verbatim by all four
+/// confined failure modes (lexical rejection, canonicalization failure,
+/// resolved-but-outside-the-root, and resolved-in-root-but-unreadable) so
+/// they cannot be told apart — see `prepare_claim`'s doc comment.
 const CONFINEMENT_REFUSAL: &str = "does not resolve inside the packet's directory";
 
 /// The id namespace `resolve_artifact` mints into and nothing else may enter:
@@ -1128,11 +1150,34 @@ mod tests {
     /// `.to_string()` output so an assertion that two refusals are identical
     /// also proves both are the same *kind* of refusal, not merely two
     /// values that happen to render the same text.
+    ///
+    /// **This is the guard against reopening issue #21's existence oracle**,
+    /// and every confined-artifact test in this module goes through it: the
+    /// `Err(NativeCliError::Invalid(message))` **pattern** below only
+    /// matches production code that actually constructed `Invalid`. If a
+    /// future change carved one of the three confined failure modes —
+    /// lexical rejection, canonicalization failure, resolved-but-outside —
+    /// into its own variant, the real `prepare_claim` call for that mode
+    /// would return that new variant instead, and this pattern would fail
+    /// to match and panic via the `Err(other)` arm below — on the real code
+    /// path, not on a copy of it. The `assert_eq!` on `error_code()` right
+    /// after is *not* that guard: it rebuilds a fresh `Invalid` from the
+    /// already-extracted message and checks that copy's own code, which is
+    /// "invalid" unconditionally — a tautology kept here only as a
+    /// documentation-level reminder of what code this variant carries, not
+    /// as enforcement.
     fn expect_confined_refusal(
         result: Result<PreparedEvidenceAttachment, NativeCliError>,
     ) -> String {
         match result {
-            Err(NativeCliError::Invalid(message)) => message,
+            Err(NativeCliError::Invalid(message)) => {
+                assert_eq!(
+                    NativeCliError::Invalid(message.clone()).error_code(),
+                    "invalid",
+                    "a confined-artifact refusal must keep the single generic error_code"
+                );
+                message
+            }
             Err(other) => panic!("expected NativeCliError::Invalid, got {other:?}"),
             Ok(_) => panic!("expected the confined artifact to be refused"),
         }
@@ -1229,6 +1274,23 @@ mod tests {
                  must refuse identically"
             );
         }
+
+        // A fourth confined failure mode: an entry that resolves in-root
+        // and passes containment but cannot be read, because it names a
+        // directory rather than a file. Before the fix, this reported the
+        // raw io error ("Is a directory"), splitting "exists as a
+        // directory" from "does not exist" (`missing_error` above) for any
+        // relative name inside the packet's own directory — a smaller
+        // version of the same oracle class, still worth closing. The
+        // message must match the other three modes exactly, not merely end
+        // with the shared suffix, since all four are meant to be one
+        // refusal.
+        fs::create_dir_all(packet_dir.join("inside-dir")).expect("create in-root subdirectory");
+        let directory_error = expect_confined_refusal(prepare("inside-dir"));
+        assert!(
+            directory_error.ends_with(CONFINEMENT_REFUSAL),
+            "{directory_error}"
+        );
 
         // Unconfined: the identical escaping path is accepted with no
         // confinement root — `evidence attach --artifact` is operator-typed,

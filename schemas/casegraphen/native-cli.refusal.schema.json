@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.native_cli.refusal.v1",
+  "title": "Native CaseGraphen CLI Refusal",
+  "description": "The JSON shape a native CLI command writes to stderr when it refuses under --format json (issue #22). Distinct from native-cli.report.schema.json: a refusal is a tool failure (exit 1), never a report body, and never written to --output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "refusal_version",
+    "error_code",
+    "message"
+  ],
+  "properties": {
+    "schema": {
+      "const": "highergraphen.case.native_cli.refusal.v1"
+    },
+    "refusal_version": {
+      "const": 1
+    },
+    "error_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A stable classification of what kind of refusal this is (e.g. stale_revision, gate_violation, missing_case_space), derived from the casegraphen Rust error variant that produced it. Callers branch on this, not on message. A small number of codes (e.g. invalid_id, invalid_source_kind, parse_failure) originate one level down, from higher-graphen-core's own error variants, when a refusal wraps one directly -- those are that crate's published vocabulary, not casegraphen's, and a version bump there could add or rename one independent of a casegraphen release."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A human-readable explanation. Not a stable contract by itself; error_code and data are."
+    },
+    "data": {
+      "type": "object",
+      "description": "Refusal-specific recovery data. Intentionally broad, like native-cli.report.schema.json's result: its shape varies per error_code (e.g. stale_revision carries base_revision_id and current_revision_id; missing_case_space carries case_space_id). Absent when a refusal has no structured recovery data beyond its message."
+    },
+    "completed_through": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The current_revision_id after the last durable mutation this command completed, when the command already held it at the point it refused -- e.g. a mutation's append succeeded and only a later --output write or JSON re-render failed. Top-level, not inside data, because it is not per-error_code recovery data: it is the same 'how far did the ledger get' fact stale_revision and stale_plan_revision already report inside data for their own case, generalized to any refusal a command reaches after a mutation has landed. Present only when the command that refused already knows how far it got; absent for every other refusal, including one where the mutation this refusal itself blocked never landed at all. Not yet populated for multi-step dispatch (run --step / run --frontier); that is a v2 decision, not an omission to read as 'no mutation happened'."
+    }
+  }
+}

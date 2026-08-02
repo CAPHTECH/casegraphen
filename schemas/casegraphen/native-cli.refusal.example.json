@@ -1,0 +1,10 @@
+{
+  "schema": "highergraphen.case.native_cli.refusal.v1",
+  "refusal_version": 1,
+  "error_code": "stale_revision",
+  "message": "base revision revision:old is stale; current revision is revision:new",
+  "data": {
+    "base_revision_id": "revision:old",
+    "current_revision_id": "revision:new"
+  }
+}

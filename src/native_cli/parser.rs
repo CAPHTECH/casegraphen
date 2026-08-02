@@ -66,9 +66,9 @@ impl NativeCliCommand {
             args.remove(0);
         }
         let options = if operation == "reason" {
-            NativeOptions::parse_reason(args)?
+            NativeOptions::parse_reason("space", args)?
         } else {
-            NativeOptions::parse(args)?
+            NativeOptions::parse("space", args)?
         };
         match operation {
             "new" => Ok(Self::CaseNew {
@@ -138,7 +138,7 @@ impl NativeCliCommand {
         let adapter = adapter
             .to_str()
             .ok_or_else(|| NativeCliError::usage("lift adapter must be UTF-8"))?;
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("lift", args)?;
         match adapter {
             "native" => Ok(Self::CaseImport {
                 store: options.require_store()?,
@@ -163,7 +163,7 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         match operation.to_str() {
             Some("list") => Self::parse_reason(
-                NativeOptions::parse_with_strict(args)?,
+                NativeOptions::parse_with_strict("obstruction", args)?,
                 NativeReasonSection::Obstructions,
             ),
             Some(_) | None => Err(NativeCliError::usage("unsupported obstruction command")),
@@ -176,7 +176,7 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         match operation.to_str() {
             Some("candidates") => Self::parse_reason(
-                NativeOptions::parse(args)?,
+                NativeOptions::parse("completion", args)?,
                 NativeReasonSection::Completions,
             ),
             Some(_) | None => Err(NativeCliError::usage("unsupported completion command")),
@@ -187,7 +187,7 @@ impl NativeCliCommand {
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("projection", args)?;
         match operation.to_str() {
             Some("apply") => {
                 let projection = options.require_path("--projection")?;
@@ -206,7 +206,7 @@ impl NativeCliCommand {
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("equivalence", args)?;
         match operation.to_str() {
             Some("check") => Ok(Self::EquivalenceCheck {
                 left_store: options.require_path("--left-store")?,
@@ -224,7 +224,7 @@ impl NativeCliCommand {
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse_with_strict(args)?;
+        let options = NativeOptions::parse_with_strict("invariant", args)?;
         match operation.to_str() {
             Some("check") => Ok(Self::InvariantCheck {
                 store: options.require_store()?,
@@ -279,7 +279,7 @@ impl NativeCliCommand {
         let operation = operation
             .to_str()
             .ok_or_else(|| NativeCliError::usage("morphism operation must be UTF-8"))?;
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("morphism", args)?;
         match operation {
             "propose" => Ok(Self::MorphismPropose {
                 store: options.require_store()?,
@@ -297,7 +297,6 @@ impl NativeCliCommand {
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "morphism apply",
-                        operation: "morphism-apply",
                         actor_command: Some("morphism apply"),
                     })?;
                 Ok(Self::MorphismApply {
@@ -321,7 +320,6 @@ impl NativeCliCommand {
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "morphism reject",
-                        operation: "morphism-reject",
                         actor_command: Some("morphism reject"),
                     })?;
                 Ok(Self::MorphismReject {
@@ -346,7 +344,7 @@ impl NativeCliCommand {
         let operation = operation
             .to_str()
             .ok_or_else(|| NativeCliError::usage("plan operation must be UTF-8"))?;
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("plan", args)?;
         match operation {
             "propose" => Ok(Self::PlanPropose {
                 store: options.require_store()?,
@@ -364,7 +362,6 @@ impl NativeCliCommand {
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "plan review",
-                        operation: "plan-review",
                         actor_command: Some("plan review"),
                     })?;
                 Ok(Self::PlanReview {
@@ -393,7 +390,7 @@ impl NativeCliCommand {
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("binding", args)?;
         match operation.to_str() {
             Some("register") => Ok(Self::BindingRegister {
                 store: options.require_store()?,
@@ -405,7 +402,7 @@ impl NativeCliCommand {
     }
 
     fn parse_run(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse_with_strict(args)?;
+        let options = NativeOptions::parse_with_strict("run", args)?;
         if options.run_step == options.run_frontier {
             return Err(NativeCliError::usage(
                 "run requires exactly one of --step or --frontier",
@@ -419,7 +416,6 @@ impl NativeCliCommand {
         let resolved_gate =
             options.resolve_operation_gate_options(OperationGateRequirement::Required {
                 command: mode,
-                operation: "dispatch",
                 actor_command: None,
             })?;
         let actor_id = resolved_gate
@@ -500,11 +496,10 @@ impl NativeCliCommand {
                 return Err(NativeCliError::usage("unsupported native review command"))
             }
         };
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("review", args)?;
         let gate_options =
             options.resolve_operation_gate_options(OperationGateRequirement::Required {
                 command: "review",
-                operation: "review",
                 actor_command: Some("review"),
             })?;
         Ok(Self::Review {
@@ -531,11 +526,10 @@ impl NativeCliCommand {
         if operation.to_str() != Some("attach") {
             return Err(NativeCliError::usage("unsupported native evidence command"));
         }
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("evidence", args)?;
         let gate_options =
             options.resolve_operation_gate_options(OperationGateRequirement::Required {
                 command: "evidence attach",
-                operation: "evidence-attach",
                 actor_command: Some("evidence attach"),
             })?;
         options.require_path("--input")?;
@@ -559,11 +553,10 @@ impl NativeCliCommand {
         if operation.to_str() != Some("transition") {
             return Err(NativeCliError::usage("unsupported native cell command"));
         }
-        let options = NativeOptions::parse(args)?;
+        let options = NativeOptions::parse("cell", args)?;
         let gate_options =
             options.resolve_operation_gate_options(OperationGateRequirement::Required {
                 command: "cell transition",
-                operation: "cell-transition",
                 actor_command: Some("cell transition"),
             })?;
         Ok(Self::CellTransition {
@@ -587,11 +580,10 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         match operation.to_str() {
             Some("apply") => {
-                let options = NativeOptions::parse(args)?;
+                let options = NativeOptions::parse("packet", args)?;
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "packet apply",
-                        operation: "evidence-attach",
                         actor_command: Some("packet apply"),
                     })?;
                 Ok(Self::PacketApply {
@@ -606,11 +598,10 @@ impl NativeCliCommand {
                 })
             }
             Some("resume") => {
-                let options = NativeOptions::parse(args)?;
+                let options = NativeOptions::parse("packet", args)?;
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "packet resume",
-                        operation: "cell-transition",
                         actor_command: Some("packet resume"),
                     })?;
                 Ok(Self::PacketResume {

@@ -71,6 +71,16 @@ pub struct NativeOperationGateError {
     witness_ids: Vec<Id>,
 }
 
+impl NativeOperationGateError {
+    /// The ids a caller would need to inspect to see why the gate was
+    /// refused — e.g. the capability that failed to authorize, or the
+    /// actor that does not match. Exposed so a CLI-level refusal can hand
+    /// these back structurally instead of a caller regexing the message.
+    pub fn witness_ids(&self) -> &[Id] {
+        &self.witness_ids
+    }
+}
+
 impl std::fmt::Display for NativeOperationGateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.message)

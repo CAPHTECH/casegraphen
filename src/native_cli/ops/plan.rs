@@ -121,15 +121,14 @@ pub(in crate::native_cli) fn plan_review(
     if prior_status == ReviewStatus::Unreviewed
         && plan.base_revision_id != replay.case_space.revision.revision_id
     {
-        return Err(NativeCliError::invalid(format!(
-            "execution plan {} base revision {} is stale; current revision is {}",
-            plan.plan_id, plan.base_revision_id, replay.case_space.revision.revision_id
-        )));
+        return Err(stale_plan_revision(
+            &plan,
+            &replay.case_space.revision.revision_id,
+        ));
     }
     let content_hash = plan_content_hash(&plan)?;
     let operation_gate = resolve_plan_review_gate(options.gate_options)?;
-    check_operation_gate(&replay.case_space, &operation_gate, "plan-review")
-        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    check_operation_gate(&replay.case_space, &operation_gate, "plan-review")?;
     let request = NativeReviewRequest {
         target_kind: NativeReviewTargetKind::Plan,
         target_id: plan.plan_id.clone(),
@@ -222,12 +221,25 @@ fn validate_plan_for_current_case_space(
         )));
     }
     if plan.base_revision_id != case_space.revision.revision_id {
-        return Err(NativeCliError::invalid(format!(
-            "execution plan {} base revision {} is stale; current revision is {}",
-            plan.plan_id, plan.base_revision_id, case_space.revision.revision_id
-        )));
+        return Err(stale_plan_revision(plan, &case_space.revision.revision_id));
     }
     Ok(())
+}
+
+/// The one place that builds a stale-plan-base-revision refusal — used by
+/// both `plan_review` (a plan already unreviewed, base revision moved since
+/// propose) and `validate_plan_for_current_case_space` (propose/check
+/// against a plan whose base revision has already moved). Kept as its own
+/// `NativeCliError::StalePlanRevision` rather than reusing the mutation
+/// surface's `StaleRevision` or the two hand-built `Invalid` strings this
+/// replaced: see `StalePlanRevision`'s doc comment for why the subject and
+/// the recovery both differ from a plain stale base revision.
+fn stale_plan_revision(plan: &ExecutionPlan, current_revision_id: &Id) -> NativeCliError {
+    NativeCliError::StalePlanRevision {
+        plan_id: plan.plan_id.clone(),
+        base_revision_id: plan.base_revision_id.clone(),
+        current_revision_id: current_revision_id.clone(),
+    }
 }
 
 fn validate_plan_shape_and_references(
@@ -286,6 +298,15 @@ fn validate_plan_shape_and_references(
     Ok(())
 }
 
+/// Re-verifies a plan's *stored* review against the log it was recorded in
+/// — tamper detection over already-recorded state, never live
+/// authorization, since nothing is being asked for right now. Every
+/// refusal this function returns is `NativeCliError::StoreIntegrity`, not
+/// `Invalid` and never `GateViolation`: the correct response to any of
+/// them is "stop and investigate", not "fix the call" or "get a different
+/// actor or capability". Do not let a future check added here reach for
+/// `NativeCliError::invalid` or `?` on a `NativeOperationGateError` out of
+/// habit — both are the wrong classification for what this function does.
 pub(super) fn verified_plan_review_status(
     plan: &ExecutionPlan,
     case_space: &CaseSpace,
@@ -297,7 +318,7 @@ pub(super) fn verified_plan_review_status(
     });
     let Some(entry) = latest else {
         if plan.review_status != ReviewStatus::Unreviewed {
-            return Err(NativeCliError::invalid(format!(
+            return Err(NativeCliError::StoreIntegrity(format!(
                 "execution plan {} stored review_status {:?} disagrees with log-derived status unreviewed; possible plan tampering",
                 plan.plan_id, plan.review_status
             )));
@@ -306,7 +327,7 @@ pub(super) fn verified_plan_review_status(
     };
     let metadata = &entry.morphism.metadata;
     let malformed = |field: &str| {
-        NativeCliError::invalid(format!(
+        NativeCliError::StoreIntegrity(format!(
             "latest plan review for {} has invalid canonical field {field}",
             plan.plan_id
         ))
@@ -369,7 +390,7 @@ pub(super) fn verified_plan_review_status(
         .and_then(Value::as_str)
         .ok_or_else(|| malformed("plan_content_hash"))?;
     if !crate::exec::accepted_plan_content_hash_matches(plan, recorded_hash)? {
-        return Err(NativeCliError::invalid(format!(
+        return Err(NativeCliError::StoreIntegrity(format!(
             "latest plan review for {} has plan_content_hash {recorded_hash}, but the stored plan content no longer matches",
             plan.plan_id
         )));
@@ -381,13 +402,22 @@ pub(super) fn verified_plan_review_status(
             .ok_or_else(|| malformed("operation_gate"))?,
     )
     .map_err(|_| malformed("operation_gate"))?;
+    // Re-verifying a *stored* review's recorded gate, not authorizing a
+    // live request — the same shape as the store's own replay-time gate
+    // re-validation, and classified the same way for the same reason: the
+    // actor asked for nothing just now, so a failure here means the log
+    // disagrees with itself, not that a different actor or capability is
+    // needed. `?` alone would route this through `GateViolation` via the
+    // blanket `From<NativeOperationGateError>` conversion, which is wrong
+    // here specifically — see `NativeCliError::StoreIntegrity`'s doc
+    // comment.
     check_operation_gate(case_space, &gate, "plan-review")
-        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+        .map_err(|error| NativeCliError::StoreIntegrity(error.to_string()))?;
     if entry.actor_id != gate.actor_id {
         return Err(malformed("operation_gate.actor_id"));
     }
     if plan.review_status != derived_status {
-        return Err(NativeCliError::invalid(format!(
+        return Err(NativeCliError::StoreIntegrity(format!(
             "execution plan {} stored review_status {:?} disagrees with log-derived status {:?}; possible plan tampering",
             plan.plan_id, plan.review_status, derived_status
         )));
@@ -449,4 +479,132 @@ fn record_worker_binding_hashes(
     plan.metadata
         .insert("worker_binding_hashes".to_owned(), Value::Object(hashes));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_model::{CaseMorphism, MorphismLogEntry, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA};
+    use higher_graphen_core::SourceKind;
+    use serde_json::Map;
+
+    const NATIVE_EXAMPLE: &str =
+        include_str!("../../../schemas/casegraphen/native.case.space.example.json");
+
+    /// A tampered *stored* review's recorded operation gate is tamper
+    /// detection over already-recorded state, not live authorization — the
+    /// actor asked for nothing just now — so it must classify as
+    /// `StoreIntegrity` ("stop and investigate"), never `GateViolation`
+    /// ("get a different actor or capability"). This was wrong once: an
+    /// earlier version of this check routed through the same `?`/
+    /// `From<NativeOperationGateError>` conversion the live-authorization
+    /// check at `plan_review`'s own gate uses, which produced
+    /// `GateViolation` here too.
+    ///
+    /// Reaching this specific branch through the real store is not
+    /// feasible as a regression test: every entry in the morphism log is
+    /// hash-chained (`previous_entry_hash`) and the tail is additionally
+    /// cross-checked against `morphism_log.head.json` on every read, so
+    /// tampering *any* entry's content — the tail or an interior one — is
+    /// always caught by that integrity check first, before
+    /// `verified_plan_review_status` ever inspects the gate. That is
+    /// correct, desired behaviour, not a gap: it means this exact failure
+    /// can only be exercised in memory, against a `CaseSpace` built
+    /// directly rather than replayed from a store.
+    #[test]
+    fn verified_plan_review_status_classifies_a_tampered_stored_gate_as_store_integrity() {
+        let case_space: CaseSpace =
+            serde_json::from_str(NATIVE_EXAMPLE).expect("native case space example");
+
+        let plan = ExecutionPlan {
+            schema: "highergraphen.case.workflow.execution_plan.v1".to_owned(),
+            schema_version: 1,
+            plan_id: id_lossy("plan:gate-tamper-unit"),
+            case_space_id: case_space.case_space_id.clone(),
+            base_revision_id: case_space.revision.revision_id.clone(),
+            steps: Vec::new(),
+            provenance: super::super::io::provenance(SourceKind::Human, ReviewStatus::Unreviewed),
+            review_status: ReviewStatus::Accepted,
+            metadata: Map::new(),
+        };
+        let content_hash = execution_plan_content_hash(&plan).expect("plan content hash");
+
+        // Empty `capability_ids` fails `check_operation_gate`'s own first
+        // check, independent of whether any capability cell exists — the
+        // simplest reliable way to fail the gate re-verification without
+        // also needing a real, authorized capability grant.
+        let mut gate_metadata = Map::new();
+        gate_metadata.insert("actor_id".to_owned(), json!("actor:plan-review-unit"));
+        gate_metadata.insert("operation".to_owned(), json!("plan-review"));
+        gate_metadata.insert(
+            "operation_scope_id".to_owned(),
+            json!(case_space.case_space_id),
+        );
+        gate_metadata.insert("audience".to_owned(), json!("audit"));
+        gate_metadata.insert("capability_ids".to_owned(), json!([]));
+        gate_metadata.insert(
+            "source_boundary_id".to_owned(),
+            json!("source_boundary:native-case-management-contract"),
+        );
+
+        let mut metadata = Map::new();
+        metadata.insert("native_review_schema_version".to_owned(), json!(1));
+        metadata.insert("target_kind".to_owned(), json!("plan"));
+        metadata.insert("target_id".to_owned(), json!(plan.plan_id));
+        metadata.insert("action".to_owned(), json!("accept"));
+        metadata.insert("outcome_review_status".to_owned(), json!("accepted"));
+        metadata.insert("review_id".to_owned(), json!("review:plan-review-unit"));
+        metadata.insert("reviewer_id".to_owned(), json!("reviewer:plan-review-unit"));
+        metadata.insert("reviewed_at".to_owned(), json!("unix:0"));
+        metadata.insert("reason".to_owned(), json!("unit test review"));
+        metadata.insert("plan_content_hash".to_owned(), json!(content_hash));
+        metadata.insert("operation_gate".to_owned(), Value::Object(gate_metadata));
+
+        let review_morphism = CaseMorphism {
+            morphism_id: id_lossy("morphism:review:plan-gate-tamper-unit"),
+            morphism_type: CaseMorphismType::Review,
+            source_revision_id: Some(case_space.revision.revision_id.clone()),
+            target_revision_id: id_lossy("revision:plan-review:plan-gate-tamper-unit"),
+            added_ids: Vec::new(),
+            updated_ids: Vec::new(),
+            retired_ids: Vec::new(),
+            preserved_ids: Vec::new(),
+            violated_invariant_ids: Vec::new(),
+            review_status: ReviewStatus::Accepted,
+            evidence_ids: Vec::new(),
+            source_ids: Vec::new(),
+            metadata,
+        };
+        let review_entry = MorphismLogEntry {
+            schema: NATIVE_MORPHISM_LOG_ENTRY_SCHEMA.to_owned(),
+            schema_version: 1,
+            case_space_id: case_space.case_space_id.clone(),
+            sequence: case_space.morphism_log.len() as u64 + 1,
+            entry_id: id_lossy("morphism_log_entry:review:plan-gate-tamper-unit"),
+            morphism_id: review_morphism.morphism_id.clone(),
+            source_revision_id: review_morphism.source_revision_id.clone(),
+            target_revision_id: review_morphism.target_revision_id.clone(),
+            actor_id: id_lossy("actor:plan-review-unit"),
+            recorded_at: "unix:0".to_owned(),
+            provenance: super::super::io::provenance(SourceKind::Human, ReviewStatus::Accepted),
+            source_ids: Vec::new(),
+            previous_entry_hash: None,
+            replay_checksum: String::new(),
+            morphism: review_morphism,
+        };
+
+        let mut tampered_case_space = case_space;
+        tampered_case_space.morphism_log.push(review_entry);
+
+        let error = verified_plan_review_status(&plan, &tampered_case_space)
+            .expect_err("empty capability_ids must fail the stored gate re-verification");
+        assert!(
+            matches!(error, NativeCliError::StoreIntegrity(_)),
+            "expected StoreIntegrity, got {error:?}"
+        );
+    }
+
+    fn id_lossy(value: &str) -> Id {
+        Id::new(value.to_owned()).expect("test id")
+    }
 }
