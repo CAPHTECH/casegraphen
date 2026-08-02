@@ -1,0 +1,227 @@
+// Design-layer spec for CaseGraphen ADR 0016 — "a halt is a recorded reason".
+//
+// Source of truth for this formalization: the ADR 0016 draft (issue #23). Every
+// declaration below traces to a numbered decision in it. Nothing here invents a
+// rule the ADR does not state; where the formalization forced a choice the ADR
+// left open, the choice is tagged MODEL- or ASSUME- rather than REQ-.
+//
+// Modelling bound (representation only, no behavioural content): three steps,
+// one of each initial shape, and a round budget of three.
+
+spec CaseGraphenOperate {
+  const MAX_ROUNDS = 3
+
+  // A unit of work the frontier can select. `type` rather than `entity` because
+  // init distinguishes the three instances by index to give each halt reason a
+  // reachable origin.
+  type Step = 0..2
+
+  symmetric enum Actor { A1, A2 }
+
+  // A step's position, as the evaluator derives it. Never stored: this is the
+  // model's stand-in for readiness/frontier/blockers, which CaseGraphen derives.
+  enum StepState {
+    AwaitingExternal,
+    MissingEvidence,
+    OutsidePlan,
+    FailedDispatch,
+    Dispatchable,
+    PendingReview,
+    Done
+  }
+
+  // ADR 0016 decision 1: the halt vocabulary. `Progress` is the non-halt.
+  enum Halt {
+    Progress,
+    RoundBudgetExhausted,
+    NeedsReview,
+    NeedsRetryDecision,
+    NeedsPlanReview,
+    NeedsEvidence,
+    NeedsExternal,
+    NothingEligible
+  }
+
+  state {
+    st: Map<Step, StepState>,
+    dispatched_by: Map<Step, Option<Actor>>,
+    reviewed_by: Map<Step, Option<Actor>>,
+    // The single actor whose gate authorizes this invocation (ADR 0016 dec. 6).
+    operator: Actor,
+    rounds_used: 0..MAX_ROUNDS
+  }
+
+  init {
+    st[0] = Dispatchable
+    st[1] = MissingEvidence
+    st[2] = AwaitingExternal
+    forall s: Step {
+      dispatched_by[s] = none
+      reviewed_by[s] = none
+    }
+    operator = A1
+    rounds_used = 0
+  }
+
+  def has(k: StepState) = exists s: Step { st[s] == k }
+
+  // ADR 0016 decision 1: ONE derivation of the halt reason. It is a function of
+  // state, never an assignment — which is what "derived, not recorded" means.
+  // Every command that can stop reports this value; none of them re-decides it.
+  def halt() =
+    if rounds_used == MAX_ROUNDS and has(Dispatchable) then RoundBudgetExhausted
+    else if has(Dispatchable) then Progress
+    else if has(PendingReview) then NeedsReview
+    else if has(FailedDispatch) then NeedsRetryDecision
+    else if has(OutsidePlan) then NeedsPlanReview
+    else if has(MissingEvidence) then NeedsEvidence
+    else if has(AwaitingExternal) then NeedsExternal
+    else NothingEligible
+
+  // ---------------------------------------------------------------- the loop
+
+  // ADR 0016 decision 3. The loop may only repeat the selection `run --frontier`
+  // already performs: its guard is `st[s] == Dispatchable` and nothing wider.
+  // The three outcomes are the dispatch results that already exist.
+
+  @requirement("REQ-OPERATE-001", "a round advances one dispatchable step and produces a claim")
+  fair action round_produces(s: Step) {
+    requires st[s] == Dispatchable
+    requires rounds_used < MAX_ROUNDS
+    st[s] = PendingReview
+    dispatched_by[s] = some(operator)
+    rounds_used = rounds_used + 1
+  }
+
+  @requirement("REQ-OPERATE-002", "a failed dispatch ends the step's round without retrying it")
+  fair action round_fails(s: Step) {
+    requires st[s] == Dispatchable
+    requires rounds_used < MAX_ROUNDS
+    st[s] = FailedDispatch
+    rounds_used = rounds_used + 1
+  }
+
+  @requirement("REQ-OPERATE-003", "a transition outside the accepted plan is kept as a proposal")
+  fair action round_unauthorized(s: Step) {
+    requires st[s] == Dispatchable
+    requires rounds_used < MAX_ROUNDS
+    st[s] = OutsidePlan
+    rounds_used = rounds_used + 1
+  }
+
+  // ------------------------------------------- the acts that clear each halt
+  // None of these is the loop. Each is a separate invocation carrying its own
+  // gate, which is the only actor boundary the tool can observe.
+
+  @requirement("REQ-OPERATE-004", "an accepted review by a different actor clears NeedsReview")
+  fair action review_accept(s: Step, a: Actor) {
+    requires st[s] == PendingReview
+    requires dispatched_by[s] != some(a)
+    st[s] = Done
+    reviewed_by[s] = some(a)
+  }
+
+  @requirement("REQ-OPERATE-005", "retry is an explicit act, never something the loop decides")
+  fair action retry_decision(s: Step) {
+    requires st[s] == FailedDispatch
+    st[s] = Dispatchable
+  }
+
+  @requirement("REQ-OPERATE-006", "a plan reviewer clears NeedsPlanReview")
+  fair action plan_review(s: Step) {
+    requires st[s] == OutsidePlan
+    st[s] = Dispatchable
+  }
+
+  @requirement("REQ-OPERATE-007", "attaching evidence clears NeedsEvidence")
+  fair action evidence_attached(s: Step) {
+    requires st[s] == MissingEvidence
+    st[s] = Dispatchable
+  }
+
+  @requirement("REQ-OPERATE-008", "an event outside the system clears NeedsExternal")
+  fair action external_event(s: Step) {
+    requires st[s] == AwaitingExternal
+    st[s] = Dispatchable
+  }
+
+  // ------------------------------------------------------------- properties
+
+  // ADR 0016 decision 3/4 and ADR 0002's exclusions, stated as one two-state
+  // rule: whenever the loop consumed a round, the only step it touched was a
+  // dispatchable one. So the loop never retries a failure, never waits out an
+  // external event, never authorizes a transition, and never accepts a review.
+  @requirement("INV-OPERATE-001", "the loop advances dispatchable work and resolves no halt")
+  trans LoopResolvesNoHalt {
+    forall s: Step {
+      (rounds_used != old(rounds_used) and st[s] != old(st[s]))
+        => old(st[s]) == Dispatchable
+    }
+  }
+
+  // ADR 0015 and ADR 0016 decision 4. The tool cannot check that two minds were
+  // involved; it can check that two actor ids were, and this is that check.
+  @requirement("INV-OPERATE-002", "no actor accepts the claim it dispatched")
+  invariant NoSelfReview {
+    forall s: Step {
+      st[s] == Done => (reviewed_by[s] != none and reviewed_by[s] != dispatched_by[s])
+    }
+  }
+
+  // The invariant the whole ADR exists to establish, in the direction that has
+  // content: whenever the loop cannot move, some named halt says why. There is
+  // no state in which work is stopped and the reason is absent.
+  @requirement("INV-OPERATE-003", "the ledger stops only for a reason it recorded")
+  invariant EveryStopIsTyped {
+    (not exists s: Step { st[s] == Dispatchable and rounds_used < MAX_ROUNDS })
+      => halt() != Progress
+  }
+
+  // The converse, which is what stops the vocabulary from being a way to stop
+  // early: while the loop can still move, it does not get to claim a halt.
+  @requirement("INV-OPERATE-004", "advancing work is never reported as a halt")
+  invariant ProgressIsNotAHalt {
+    (exists s: Step { st[s] == Dispatchable and rounds_used < MAX_ROUNDS })
+      => halt() == Progress
+  }
+
+  // Each halt reason must be reachable, or it is dead vocabulary.
+  @requirement("MODEL-OPERATE-001", "NeedsReview is reachable")
+  reachable ReachNeedsReview { halt() == NeedsReview }
+
+  @requirement("MODEL-OPERATE-002", "NeedsRetryDecision is reachable")
+  reachable ReachNeedsRetry { halt() == NeedsRetryDecision }
+
+  @requirement("MODEL-OPERATE-003", "NeedsPlanReview is reachable")
+  reachable ReachNeedsPlanReview { halt() == NeedsPlanReview }
+
+  @requirement("MODEL-OPERATE-004", "NeedsEvidence is reachable")
+  reachable ReachNeedsEvidence { halt() == NeedsEvidence }
+
+  @requirement("MODEL-OPERATE-005", "NeedsExternal is reachable")
+  reachable ReachNeedsExternal { halt() == NeedsExternal }
+
+  @requirement("MODEL-OPERATE-006", "the round budget is a halt reason, not a silent stop")
+  reachable ReachBudgetExhausted { halt() == RoundBudgetExhausted }
+
+  @requirement("MODEL-OPERATE-007", "the case can finish with everything reviewed")
+  reachable ReachNothingEligible { halt() == NothingEligible }
+
+  // Every halt names something that actually clears it. A halt with no exit is
+  // a deadlock wearing a vocabulary word.
+  @requirement("REQ-OPERATE-009", "the review seam has an exit")
+  leadsTo ReviewSeamClears { halt() == NeedsReview ~> within 4 halt() != NeedsReview }
+
+  @requirement("REQ-OPERATE-010", "a failed step can be retried out of its halt")
+  leadsTo RetryClears { halt() == NeedsRetryDecision ~> within 4 halt() != NeedsRetryDecision }
+
+  // A recorded reason is a legitimate stop, and nothing else is. Written this
+  // way the built-in deadlock check becomes the mechanical statement of the
+  // ADR's invariant: any state where the machine stops while `halt()` still
+  // says `Progress` is reported as a deadlock — that is precisely "stopped
+  // because nobody pushed", and it is the thing this design removes.
+  terminal { halt() != Progress }
+}
+
+verify {
+}
