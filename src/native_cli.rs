@@ -23,16 +23,15 @@ mod reporting;
 mod text;
 pub use ops::EVIDENCE_PACKET_SCHEMA;
 use ops::{
-    binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
-    case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
-    morphism_check, morphism_propose, morphism_reject, operate, packet_apply, packet_resume,
-    plan_check, plan_propose, plan_review, projection_apply, review_apply, run_frontier, run_step,
-    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
-    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
-    NativeRunGateOptions, NativeRunStepOptions,
+    binding_register, case_close_check, case_history_text, case_import, case_new, case_reason,
+    case_reason_text, case_topology, case_topology_diff, cell_transition, evidence_attach,
+    lift_structured_source, morphism_apply, morphism_check, morphism_propose, morphism_reject,
+    operate, packet_apply, packet_resume, plan_check, plan_propose, plan_review, projection_apply,
+    review_apply, run_frontier, run_step, NativeCloseGateOptions, NativeMutationGateOptions,
+    NativeOperateOptions, NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
+    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use reporting::report;
-use text::render_native_case_evaluation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NativeEvidenceAttachment {
@@ -118,6 +117,7 @@ pub(crate) enum NativeCliCommand {
     CaseHistory {
         store: PathBuf,
         case_space_id: Id,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     CaseReplay {
@@ -148,6 +148,7 @@ pub(crate) enum NativeCliCommand {
         section: NativeReasonSection,
         strict: bool,
         format: NativeOutputFormat,
+        since_revision_id: Option<Id>,
         output: Option<PathBuf>,
     },
     ProjectionApply {
@@ -402,16 +403,22 @@ impl NativeCliCommand {
                 case_space_id,
                 section: NativeReasonSection::Reason,
                 format: NativeOutputFormat::Text,
+                since_revision_id,
                 ..
-            } => ops::case_reason_evaluation(store, case_space_id)
-                .map(|result| result.map(|evaluation| render_native_case_evaluation(&evaluation))),
+            } => case_reason_text(store, case_space_id, since_revision_id.as_ref()),
+            Self::CaseHistory {
+                store,
+                case_space_id,
+                format: NativeOutputFormat::Text,
+                ..
+            } => case_history_text(store, case_space_id),
             _ => self.run_json(),
         }
     }
 
     pub fn format(&self) -> NativeOutputFormat {
         match self {
-            Self::CaseReason { format, .. } => *format,
+            Self::CaseReason { format, .. } | Self::CaseHistory { format, .. } => *format,
             _ => NativeOutputFormat::Json,
         }
     }

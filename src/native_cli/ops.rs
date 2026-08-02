@@ -190,6 +190,82 @@ pub(super) fn case_reason_evaluation(
     ))
 }
 
+/// `space reason --format text`. `since_revision_id` is an assertion, not a
+/// lookup — the same discipline `--base-revision-id`/`--completed-through`
+/// already use: absence in this space's history is refused rather than
+/// resolved to "nearest" or silently ignored.
+pub(super) fn case_reason_text(
+    store: &Path,
+    case_space_id: &Id,
+    since_revision_id: Option<&Id>,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let replay =
+        NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
+    let evaluation = evaluate_native_case(&replay.case_space)?;
+    let domain_finding = evaluation_carries_domain_finding(&evaluation);
+    let changes_since = since_revision_id
+        .map(|revision_id| {
+            let index = replay
+                .history
+                .iter()
+                .position(|entry| entry.target_revision_id == *revision_id)
+                .ok_or_else(|| {
+                    NativeCliError::invalid(format!(
+                        "space reason refused: --since-revision {revision_id} is not a \
+                         revision recorded in this case space's history"
+                    ))
+                })?;
+            Ok::<_, NativeCliError>(replay.history[index + 1..].to_vec())
+        })
+        .transpose()?;
+    let rendered =
+        super::text::render_native_case_evaluation(&evaluation, changes_since.as_deref());
+    Ok(NativeCommandResult::with_domain_finding(
+        rendered,
+        domain_finding,
+    ))
+}
+
+/// `space history --format text`. Folds superseded execution-trace-anchor
+/// entries per `native_cli_text.rs::render_case_history`'s three rules.
+///
+/// Deliberately does **not** call `run::read_execution_traces`: that
+/// function's `Result` mixes two failures that must not share a disposition
+/// here. A content-hash mismatch on a trace the log itself anchored
+/// (`verify_recorded_trace_anchors`) is the log disagreeing with the file it
+/// points at — CLAUDE.md's "integrity mismatches are tool failures" — so it
+/// is propagated with `?` exactly as `run --frontier`/`operate` propagate it,
+/// never softened into a rendering note. Only a failure confined to
+/// `merge_verified_and_unanchored_traces` (a stray or malformed file under
+/// `runs/` that no anchor names) degrades to unfolded rendering: nothing
+/// recorded is in doubt there, so `space history`'s JSON form — which
+/// answers for the log alone — is unaffected either way.
+pub(super) fn case_history_text(
+    store: &Path,
+    case_space_id: &Id,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let replay =
+        NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
+    let verified_traces = run::verify_recorded_trace_anchors(store, &replay.case_space)?;
+    let rendered = match run::merge_verified_and_unanchored_traces(store, verified_traces) {
+        Ok(traces) => {
+            let traces = traces
+                .into_iter()
+                .filter(|trace| trace.case_space_id == *case_space_id)
+                .collect::<Vec<_>>();
+            super::text::render_case_history(
+                &replay.history,
+                super::text::TraceAvailability::Available(&traces),
+            )
+        }
+        Err(error) => super::text::render_case_history(
+            &replay.history,
+            super::text::TraceAvailability::Unreadable(error.to_string()),
+        ),
+    };
+    Ok(NativeCommandResult::success(rendered))
+}
+
 pub(super) fn projection_apply(
     store: &Path,
     case_space_id: &Id,

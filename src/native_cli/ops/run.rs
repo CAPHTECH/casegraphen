@@ -1808,11 +1808,40 @@ fn select_steps(
     }
 }
 
-fn read_execution_traces(
+/// `pub(in crate::native_cli)` rather than private: `space history --format
+/// text` (native_cli_text.rs's fold) reuses this walk instead of duplicating
+/// it, so `ops::case_history_text` calls it directly.
+///
+/// Two failures live inside this one `Result`, and `run --frontier`/`operate`
+/// are right to treat both as a tool failure to propagate: a content-hash
+/// mismatch on an *anchored* trace (`verify_recorded_trace_anchors`) is the
+/// log's own record disagreeing with the file it points at — CLAUDE.md's
+/// "integrity mismatches are tool failures" — while a stray or malformed file
+/// under `runs/` that no anchor names is merely `runs/` being untidy.
+/// `ops::case_history_text` needs to tell them apart (it must refuse the
+/// first and degrade the second), so it does not call this function — it
+/// calls `verify_recorded_trace_anchors` and
+/// [`merge_verified_and_unanchored_traces`] itself, one `?` for the anchored
+/// half and a caught `Result` for the rest.
+pub(in crate::native_cli) fn read_execution_traces(
     store: &Path,
     case_space: &CaseSpace,
 ) -> Result<Vec<ExecutionTrace>, NativeCliError> {
-    let mut verified_traces = verify_recorded_trace_anchors(store, case_space)?;
+    let verified_traces = verify_recorded_trace_anchors(store, case_space)?;
+    merge_verified_and_unanchored_traces(store, verified_traces)
+}
+
+/// The rest of `read_execution_traces`: folds `verified_traces` (already
+/// hash-checked against the log's own anchors) together with every other
+/// trace file found under `runs/` that no anchor names. Every failure this
+/// can return — an unreadable or malformed file, a run directory whose name
+/// does not match its trace's id, a verified trace that disappeared — is
+/// about a file the log makes no claim about, which is exactly the class
+/// `ops::case_history_text` degrades instead of refusing.
+pub(in crate::native_cli) fn merge_verified_and_unanchored_traces(
+    store: &Path,
+    mut verified_traces: BTreeMap<PathBuf, ExecutionTrace>,
+) -> Result<Vec<ExecutionTrace>, NativeCliError> {
     let root = store.join(RUN_DIRECTORY);
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
@@ -1878,7 +1907,10 @@ fn read_execution_traces(
     Ok(traces)
 }
 
-fn verify_recorded_trace_anchors(
+/// `pub(in crate::native_cli)`: `ops::case_history_text` calls this directly
+/// (see `read_execution_traces`'s doc comment) so it can propagate this half
+/// of the split without going through the merge that would catch it.
+pub(in crate::native_cli) fn verify_recorded_trace_anchors(
     store: &Path,
     case_space: &CaseSpace,
 ) -> Result<BTreeMap<PathBuf, ExecutionTrace>, NativeCliError> {

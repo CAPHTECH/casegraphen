@@ -818,6 +818,176 @@ fn space_reason_text_renders_the_evaluation_without_changing_json_or_exit_semant
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// `--since-revision` is an assertion (ADR 0008's `--base-revision-id`
+/// discipline): a revision this case space's history actually reached
+/// produces exactly the log slice recorded after it, and a revision it never
+/// reached is refused rather than resolved to "nearest".
+#[test]
+fn space_reason_text_since_revision_lists_the_log_slice_recorded_after_it() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let base_revision = "revision:native-cli-imported";
+    import_native_case_space(&directory, base_revision);
+    let case_space_id = native_case_space_id();
+
+    let transitioned = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            case_space_id,
+            "--base-revision-id",
+            base_revision,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "resolved",
+            "--reason",
+            "since-revision fixture transition",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
+    assert!(
+        transitioned.status.success(),
+        "stderr: {}",
+        stderr(&transitioned)
+    );
+    let transitioned_json = stdout_json(&transitioned);
+    let next_revision = transitioned_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("transitioned revision")
+        .to_owned();
+
+    let since = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+        "--since-revision",
+        base_revision,
+    ]);
+    assert!(since.status.success(), "stderr: {}", stderr(&since));
+    let since_text = stdout(&since);
+    assert!(since_text.contains("\nChanged since:"));
+    assert!(since_text.contains(&next_revision));
+    assert!(since_text.contains("goal:native-case-contract"));
+
+    // Asking from the space's own current revision must report no changes,
+    // not an error — the slice after the tip of history is empty.
+    let since_tip = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+        "--since-revision",
+        &next_revision,
+    ]);
+    assert!(since_tip.status.success(), "stderr: {}", stderr(&since_tip));
+    assert!(stdout(&since_tip).contains("\nChanged since:\n  (none)"));
+
+    // A revision this space's history never reached is refused, not resolved
+    // to the nearest one.
+    let unknown = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+        "--since-revision",
+        "revision:never-reached",
+    ]);
+    // Refusals on a `--format text` command render as the same prose the
+    // report itself would have used, not the JSON refusal envelope
+    // (`cli.rs::refusal_text` renders in the command's own resolved
+    // format) — so this refusal is read off stderr as text, not JSON.
+    assert!(!unknown.status.success());
+    assert!(stderr(&unknown)
+        .contains("--since-revision revision:never-reached is not a revision recorded"));
+
+    // `--since-revision` only means something for the text rendering it
+    // feeds; combined with `--format json` it must be refused rather than
+    // silently ignored. This refusal is a parse-time usage error, rendered
+    // in the format `scan_requested_format` reads off the raw argv (`json`
+    // here), so it does come back as the structured envelope.
+    let wrong_format = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+        "--since-revision",
+        base_revision,
+    ]);
+    assert!(!wrong_format.status.success());
+    assert_eq!(stderr_json(&wrong_format)["error_code"], json!("usage"));
+    assert!(stderr_json(&wrong_format)["message"]
+        .as_str()
+        .expect("usage message")
+        .contains("--since-revision is only valid on space reason --format text"));
+
+    // `--since-revision` is extracted from argv only for `space reason`
+    // (`parser.rs::extract_since_revision`, called from `parse_space`'s
+    // "reason" arm alone) — every other reason-family operation, and
+    // `space history`, never scan for the token at all, so it is refused as
+    // a plain unrecognized argument rather than through a second copy of
+    // the "only valid on space reason" message.
+    let frontier_refused = run_cli(&[
+        "space",
+        "frontier",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+        "--since-revision",
+        base_revision,
+    ]);
+    assert!(!frontier_refused.status.success());
+    assert_eq!(stderr_json(&frontier_refused)["error_code"], json!("usage"));
+    assert!(stderr_json(&frontier_refused)["message"]
+        .as_str()
+        .expect("usage message")
+        .contains("unsupported native argument \"--since-revision\""));
+
+    // `--format text` here, so this refusal renders as prose, not the JSON
+    // envelope (same `scan_requested_format`-driven rule as `unknown` above).
+    let history_refused = run_cli(&[
+        "space",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+        "--since-revision",
+        base_revision,
+    ]);
+    assert!(!history_refused.status.success());
+    assert!(stderr(&history_refused).contains("unsupported native argument \"--since-revision\""));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 #[test]
 fn native_case_topology_emits_domain_report() {
     let directory = unique_temp_dir();
@@ -3588,6 +3758,132 @@ fn assurance_reaches_accepted_only_after_a_requirement_placeholder_is_covered_by
         json!(true),
         "close:native-review-gaps-closed must not fail over the same gap `assurance: accepted` \
          already excluded"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// #24's motivating defect: after attach + review accept, `space reason
+/// --format text` showed `Assurance: accepted` alongside "evidence:required
+/// is inference and is not accepted evidence." with no visible relationship
+/// between the two, reading as a contradiction. The fix renders the review
+/// gap's own `requirement_satisfied` next to the finding instead of hiding
+/// either fact.
+#[test]
+fn space_reason_text_shows_a_satisfied_placeholder_gap_without_reading_as_contradictory() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture_path = directory.join("assurance-placeholder-text-fixture.case.space.json");
+    write_json_value(&fixture_path, &assurance_placeholder_fixture());
+    import_native_case_space_from_input(
+        &directory,
+        &fixture_path,
+        "revision:assurance-placeholder-base",
+    );
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:assurance-placeholder-fixture";
+    let gate_flags = [
+        "--actor-id",
+        "actor:test-mutation-cli",
+        "--capability-id",
+        "capability:test-mutation",
+        "--operation-scope-id",
+        case_space_id,
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:assurance-placeholder-fixture",
+    ];
+
+    let claim_path = directory.join("placeholder-claim-text.evidence.json");
+    write_json_value(
+        &claim_path,
+        &json!({
+            "id": "evidence:placeholder-claim", "cell_type": "evidence", "lifecycle": "active",
+            "space_id": "space:assurance-placeholder-fixture", "title": "Attached claim",
+            "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+            "provenance": {"confidence": 0.6, "review_status": "unreviewed",
+                           "source": {"kind": "document", "title": "doc"}}
+        }),
+    );
+    let mut attach_args = vec![
+        "evidence",
+        "attach",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--base-revision-id",
+        "revision:assurance-placeholder-base",
+        "--input",
+        claim_path.to_str().expect("claim path"),
+        "--satisfies",
+        "evidence:placeholder-slot",
+        "--format",
+        "json",
+    ];
+    attach_args.extend(gate_flags);
+    let attached = run_cli(&attach_args);
+    assert!(attached.status.success(), "stderr: {}", stderr(&attached));
+    let attached_revision = stdout_json(&attached)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+
+    let mut review_args = vec![
+        "review",
+        "accept",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--target-id",
+        "evidence:placeholder-claim",
+        "--reviewer-id",
+        "reviewer:human",
+        "--reason",
+        "reviewed the attached claim",
+        "--base-revision-id",
+        attached_revision.as_str(),
+        "--evidence-id",
+        "evidence:placeholder-claim",
+        "--format",
+        "json",
+    ];
+    review_args.extend(gate_flags);
+    let reviewed = run_cli(&review_args);
+    assert!(reviewed.status.success(), "stderr: {}", stderr(&reviewed));
+
+    let text_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+    ]);
+    assert!(
+        text_report.status.success(),
+        "stderr: {}",
+        stderr(&text_report)
+    );
+    let text = stdout(&text_report);
+    assert!(text.contains("Assurance: accepted"));
+    assert!(text.contains(
+        "evidence:placeholder-slot is inference and is not accepted evidence. \
+         [review_status=unreviewed] [requirement_satisfied=true]"
+    ));
+    assert!(
+        text.contains("\nReview gaps:"),
+        "the new section must be present: {text}"
+    );
+    assert!(text.contains("[gap_type=unreviewed_inference]"));
+    assert!(text.contains("[target=evidence:placeholder-slot]"));
+    assert!(
+        text.contains("\nWaiting:"),
+        "the new section must be present: {text}"
     );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
@@ -6720,6 +7016,392 @@ fn native_run_frontier_supersedes_a_killed_dispatcher_trace() {
         json!([started_trace_id])
     );
     assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// `space history --format text` folds a superseded dispatch's log entries
+/// per the three rules in `native_cli_text.rs::render_case_history`'s doc
+/// comment. Reuses the kill-and-supersede setup above (ADR 0014's own
+/// scenario) because that is the only real path that ever records
+/// `metadata.superseded_trace_ids` — a plain `--retry-step` after a failure
+/// does not.
+#[cfg(unix)]
+#[test]
+fn space_history_text_folds_only_the_supersession_the_new_trace_actually_names() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let worker_started = directory.join("history-fold-worker-started");
+    let worker_finished = directory.join("history-fold-worker-finished");
+    let script = format!(
+        "printf 'started\\n' > '{}'\nsleep 1\nprintf 'finished\\n' > '{}'\nprintf 'worker-output\\n'",
+        worker_started.display(),
+        worker_finished.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "history-fold",
+        &[("work:frontier-history-fold", script.as_str())],
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_frontier_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            1,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[],
+            true,
+        ))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn casegraphen run --frontier");
+    wait_for_file(
+        &worker_started,
+        "frontier worker did not start before timeout",
+    );
+    child.kill().expect("kill frontier round");
+    let killed = child.wait_with_output().expect("wait for killed round");
+    assert!(!killed.status.success());
+    wait_for_file(
+        &worker_finished,
+        "killed dispatcher's worker did not finish before supersession",
+    );
+    let started_trace_path = only_run_file(&directory, "execution.trace.json");
+    let started_trace = json_file(started_trace_path);
+    let started_trace_id = started_trace["trace_id"]
+        .as_str()
+        .expect("started trace id")
+        .to_owned();
+
+    let intervening = run_cli_with_mutation_gate(
+        &[
+            "cell",
+            "transition",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--base-revision-id",
+            &fixture.accepted_revision_id,
+            "--cell-id",
+            "goal:native-case-contract",
+            "--to",
+            "resolved",
+            "--format",
+            "json",
+        ],
+        "actor:native-transition-cli",
+    );
+    assert!(
+        intervening.status.success(),
+        "stderr: {}",
+        stderr(&intervening)
+    );
+    let intervening_revision = stdout_json(&intervening)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("intervening revision")
+        .to_owned();
+
+    let recovered = run_native_frontier_with_superseded_traces(
+        &directory,
+        &fixture,
+        &intervening_revision,
+        &[started_trace_id.as_str()],
+    );
+    assert!(recovered.status.success(), "stderr: {}", stderr(&recovered));
+    let recovered_json = stdout_json(&recovered);
+    let recovered_trace_id = recovered_json["result"]["traces"][0]["trace_id"]
+        .as_str()
+        .expect("recovered trace id")
+        .to_owned();
+    assert_native_store_valid_and_rebuilds(&directory);
+
+    let log_path = find_morphism_log_path(&directory);
+    let log_bytes_before = fs::read(&log_path).expect("read morphism log before rendering");
+
+    // The started (killed) trace never reached `write_and_anchor_trace`, so
+    // it has no morphism log entry at all — only the surviving trace does.
+    // `space history --format json` answers for the log alone (ADR 0011)
+    // and so names only the one id the log actually has.
+    let history_json = run_native_case_store_command(&directory, "history");
+    let json_trace_ids = stdout_json(&history_json)["result"]["entries"]
+        .as_array()
+        .expect("history entries")
+        .iter()
+        .filter_map(|entry| entry["morphism"]["metadata"]["trace_id"].as_str())
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        json_trace_ids,
+        std::collections::BTreeSet::from([recovered_trace_id.clone()])
+    );
+
+    let history_text = run_cli(&[
+        "space",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "text",
+    ]);
+    assert!(
+        history_text.status.success(),
+        "stderr: {}",
+        stderr(&history_text)
+    );
+    let text = stdout(&history_text);
+    assert!(text.contains(&started_trace_id));
+    assert!(text.contains(&recovered_trace_id));
+    assert!(
+        text.contains(&format!(
+            "(2 attempts: {started_trace_id}, {recovered_trace_id})"
+        )),
+        "expected exactly the two named trace ids folded into one line: {text}"
+    );
+    // The fold is a projection, not a loss: every trace id the unfolded log
+    // names is still visible in the text (here, trivially, since the log
+    // names only one). The annotation additionally surfaces the superseded
+    // id from the surviving trace's own file — information ADR 0014 already
+    // records but the bare log never carried.
+    let text_trace_ids = json_trace_ids
+        .iter()
+        .filter(|trace_id| text.contains(trace_id.as_str()))
+        .count();
+    assert_eq!(text_trace_ids, json_trace_ids.len());
+
+    // Rendering is read-only: the log on disk is byte-identical, and the
+    // store still validates.
+    let log_bytes_after = fs::read(&log_path).expect("read morphism log after rendering");
+    assert_eq!(log_bytes_before, log_bytes_after);
+    assert_native_store_valid_and_rebuilds(&directory);
+
+    // A stray file under `runs/` that no anchor in the log names — nothing
+    // recorded is in doubt, so this degrades the fold rather than refusing
+    // (rule 2), and the recovered entry's own line is unaffected.
+    let stray_run_directory = directory.join("runs").join("stray-unanchored-trace");
+    fs::create_dir_all(&stray_run_directory).expect("create stray run directory");
+    fs::write(
+        stray_run_directory.join("execution.trace.json"),
+        "{not valid json",
+    )
+    .expect("write stray malformed trace file");
+    let history_text_degraded = run_cli(&[
+        "space",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "text",
+    ]);
+    assert!(
+        history_text_degraded.status.success(),
+        "a stray unanchored file must degrade the fold, not fail the command: stderr: {}",
+        stderr(&history_text_degraded)
+    );
+    let degraded_text = stdout(&history_text_degraded);
+    assert!(degraded_text.contains("Execution traces unreadable, rendering entries unfolded:"));
+    assert!(!degraded_text.contains("attempts:"));
+    fs::remove_dir_all(&stray_run_directory).expect("remove stray run directory");
+
+    // Corrupting the *anchored* surviving trace's own file is a different
+    // failure entirely: the log's own anchor recorded this file's content
+    // hash, so a mismatch here is the log disagreeing with the file it
+    // points at — CLAUDE.md's "integrity mismatches are tool failures". This
+    // must refuse exactly like `run --frontier`/`operate` would, never
+    // degrade into a rendering note (that would turn a tamper signal into a
+    // quiet, exit-0 omission). Run directory names are
+    // `path_helpers::path_segment`-escaped, not the raw trace id, so find
+    // the file by content rather than assuming a path.
+    let recovered_trace_path = run_files(&directory, "execution.trace.json")
+        .into_iter()
+        .find(|path| json_file(path.clone())["trace_id"] == json!(recovered_trace_id))
+        .expect("recovered trace file");
+    fs::write(&recovered_trace_path, "{not valid json")
+        .expect("corrupt the anchored surviving trace file");
+    let history_text_tampered = run_cli(&[
+        "space",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "text",
+    ]);
+    assert!(
+        !history_text_tampered.status.success(),
+        "an anchored trace's content-hash mismatch must refuse, not render a degraded view"
+    );
+    // `--format text` renders a refusal as prose in the command's own
+    // resolved format (`cli.rs::refusal_text`), not the JSON envelope.
+    assert!(stderr(&history_text_tampered).contains("may have been rewritten"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// Two independent steps in the same round each anchor their own trace and
+/// neither trace names the other in `metadata.superseded_trace_ids` — the
+/// fold must not collapse them just because their log entries sit next to
+/// each other (rule 1: adjacency is not supersession).
+#[cfg(unix)]
+#[test]
+fn space_history_text_does_not_fold_adjacent_but_unrelated_traces() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let completion_order = directory.join("history-adjacent-completion-order");
+    let first_script = format!(
+        "sleep 1\nprintf 'first\\n' >> '{}'\nprintf 'first-output\\n'",
+        completion_order.display()
+    );
+    let second_script = format!(
+        "printf 'second\\n' >> '{}'\nprintf 'second-output\\n'",
+        completion_order.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "history-adjacent",
+        &[
+            (
+                "work:frontier-history-adjacent-first",
+                first_script.as_str(),
+            ),
+            (
+                "work:frontier-history-adjacent-second",
+                second_script.as_str(),
+            ),
+        ],
+    );
+    let output = run_native_frontier(&directory, &fixture, 2);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let traces = stdout_json(&output)["result"]["traces"]
+        .as_array()
+        .expect("frontier traces")
+        .clone();
+    assert_eq!(traces.len(), 2);
+    let first_trace_id = traces[0]["trace_id"].as_str().expect("first trace id");
+    let second_trace_id = traces[1]["trace_id"].as_str().expect("second trace id");
+
+    let history_text = run_cli(&[
+        "space",
+        "history",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "text",
+    ]);
+    assert!(
+        history_text.status.success(),
+        "stderr: {}",
+        stderr(&history_text)
+    );
+    let text = stdout(&history_text);
+    assert!(text.contains(first_trace_id));
+    assert!(text.contains(second_trace_id));
+    assert!(
+        !text.contains("attempts:"),
+        "two unrelated anchors must render as two lines, not one fold: {text}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// #24 C3: `sections::review_gaps` mints one `UnreviewedMorphism` gap per
+/// unreviewed log entry, and every worker transition morphism is minted
+/// unreviewed — so a store with a few successful dispatches already has
+/// enough of them to prove the compact view groups rather than reprints the
+/// identical explanation once per entry.
+#[cfg(unix)]
+#[test]
+fn space_reason_text_groups_unreviewed_morphism_gaps_by_count_not_by_line() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "review-gap-grouping",
+        &[
+            (
+                "work:frontier-review-gap-grouping-first",
+                "printf 'first-output\\n'",
+            ),
+            (
+                "work:frontier-review-gap-grouping-second",
+                "printf 'second-output\\n'",
+            ),
+        ],
+    );
+    let output = run_native_frontier(&directory, &fixture, 2);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+
+    let json_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        json_report.status.success(),
+        "stderr: {}",
+        stderr(&json_report)
+    );
+    let review_gaps = stdout_json(&json_report)["result"]["evaluation"]["review_gaps"]
+        .as_array()
+        .expect("review gaps")
+        .clone();
+    let morphism_gaps = review_gaps
+        .iter()
+        .filter(|gap| gap["gap_type"] == json!("unreviewed_morphism"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        morphism_gaps.len() >= 2,
+        "fixture must produce at least two unreviewed morphism gaps to test grouping: {morphism_gaps:?}"
+    );
+
+    let text_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "text",
+    ]);
+    assert!(
+        text_report.status.success(),
+        "stderr: {}",
+        stderr(&text_report)
+    );
+    let text = stdout(&text_report);
+    // Grouped, not reprinted: the exact count appears once, next to the
+    // type name, and every target id is still present in that group's
+    // `targets` line — nothing hidden, nothing filtered.
+    assert!(text.contains(&format!(
+        "unreviewed_morphism: {} gap(s)",
+        morphism_gaps.len()
+    )));
+    for gap in &morphism_gaps {
+        let target_id = gap["target_id"].as_str().expect("target id");
+        assert!(text.contains(target_id));
+    }
+    assert_eq!(
+        text.matches("Generated morphisms do not count as accepted evolution until reviewed.")
+            .count(),
+        1,
+        "the constant explanation must appear once per group, not once per gap: {text}"
+    );
+
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
@@ -13452,6 +14134,26 @@ fn assert_native_store_valid_and_rebuilds(directory: &Path) {
 fn only_run_file(directory: &Path, file_name: &str) -> PathBuf {
     let mut matches = run_files(directory, file_name);
     assert_eq!(matches.len(), 1, "expected one {file_name}");
+    matches.remove(0)
+}
+
+/// Locates the one case space's `morphism_log.jsonl` under a temp store
+/// directory without reimplementing `path_helpers::path_segment`'s escaping
+/// — every fixture in this file drives exactly one case space per store.
+fn find_morphism_log_path(directory: &Path) -> PathBuf {
+    let root = directory.join("native_case_spaces");
+    let mut matches = fs::read_dir(&root)
+        .expect("read native_case_spaces directory")
+        .map(|entry| entry.expect("case space directory entry").path())
+        .map(|case_space_dir| case_space_dir.join("morphism_log.jsonl"))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one case space's morphism_log.jsonl under {}",
+        root.display()
+    );
     matches.remove(0)
 }
 

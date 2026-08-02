@@ -1,7 +1,7 @@
 use super::{
     ops::{NativeCloseGateOptions, NativeRunGateOptions},
-    options::{required_segment, NativeOptions, OperationGateRequirement},
-    NativeCliCommand, NativeCliError, NativeReasonSection,
+    options::{require_id, required_segment, NativeOptions, OperationGateRequirement},
+    NativeCliCommand, NativeCliError, NativeOutputFormat, NativeReasonSection,
 };
 use crate::native_model::ReviewAction;
 use higher_graphen_core::Id;
@@ -124,8 +124,31 @@ impl NativeCliCommand {
         if topology_diff {
             args.remove(0);
         }
+        // `--since-revision` belongs only to `space reason --format text`'s
+        // "Changed since" section, and is pulled out of argv here rather
+        // than accepted through the shared, `text_allowed`-gated argument
+        // loop `space history` also goes through: `text_allowed` answers
+        // "is `--format text` legal here", a question several operations
+        // share an answer to, and `--since-revision`'s validity is a
+        // different question that only one of them has an answer to. Gating
+        // it on `text_allowed` was the two-literal trap `parse_reason`
+        // below used to guard against by hand; scanning for the flag only
+        // when `operation == "reason"` makes this the single place its
+        // validity is decided. If `run`/`operate` later switch from
+        // `parse_with_strict` to `parse_reason` to gain `--format text` (the
+        // approved follow-up), they inherit `text_allowed` but never reach
+        // this branch, so `--since-revision` stays exactly as unrecognized
+        // for them as any other unsupported argument — never parsed, so
+        // never silently dropped.
+        let since_revision_id = if operation == "reason" {
+            Self::extract_since_revision(&mut args)?
+        } else {
+            None
+        };
         let options = if operation == "reason" {
             NativeOptions::parse_reason("space", args)?
+        } else if operation == "history" {
+            NativeOptions::parse_text_only("space", args)?
         } else {
             NativeOptions::parse("space", args)?
         };
@@ -150,6 +173,7 @@ impl NativeCliCommand {
             "history" => Ok(Self::CaseHistory {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
+                format: options.format,
                 output: options.output,
             }),
             "replay" => Ok(Self::CaseReplay {
@@ -168,10 +192,10 @@ impl NativeCliCommand {
                 case_space_id: options.require_id("--case-space-id")?,
                 output: options.output,
             }),
-            "reason" => Self::parse_reason(options, NativeReasonSection::Reason),
-            "frontier" => Self::parse_reason(options, NativeReasonSection::Frontier),
-            "evidence" => Self::parse_reason(options, NativeReasonSection::Evidence),
-            "project" => Self::parse_reason(options, NativeReasonSection::Project),
+            "reason" => Self::parse_reason(options, NativeReasonSection::Reason, since_revision_id),
+            "frontier" => Self::parse_reason(options, NativeReasonSection::Frontier, None),
+            "evidence" => Self::parse_reason(options, NativeReasonSection::Evidence, None),
+            "project" => Self::parse_reason(options, NativeReasonSection::Project, None),
             "topology" if topology_diff => Ok(Self::CaseTopologyDiff {
                 left_store: options.require_path("--left-store")?,
                 left_case_space_id: options.require_id("--left-case-space-id")?,
@@ -224,6 +248,7 @@ impl NativeCliCommand {
             Some("list") => Self::parse_reason(
                 NativeOptions::parse_with_strict("obstruction", args)?,
                 NativeReasonSection::Obstructions,
+                None,
             ),
             Some(_) | None => Err(NativeCliError::usage("unsupported obstruction command")),
         }
@@ -237,6 +262,7 @@ impl NativeCliCommand {
             Some("candidates") => Self::parse_reason(
                 NativeOptions::parse("completion", args)?,
                 NativeReasonSection::Completions,
+                None,
             ),
             Some(_) | None => Err(NativeCliError::usage("unsupported completion command")),
         }
@@ -317,18 +343,55 @@ impl NativeCliCommand {
         })
     }
 
+    /// `since_revision_id` is `Some` only when the caller is `parse_space`'s
+    /// `"reason"` arm (the only place `extract_since_revision` runs) — every
+    /// other call site below passes `None` because its operation never
+    /// scanned argv for the flag in the first place. So the one thing left
+    /// to check here is `--format text`: the same case space's own
+    /// argv could still name `--format json` alongside a `--since-revision`
+    /// `extract_since_revision` already accepted syntactically, and that
+    /// combination is refused rather than rendering a report with the
+    /// section silently missing.
     fn parse_reason(
         options: NativeOptions,
         section: NativeReasonSection,
+        since_revision_id: Option<Id>,
     ) -> Result<Self, NativeCliError> {
+        if since_revision_id.is_some() && options.format != NativeOutputFormat::Text {
+            return Err(NativeCliError::usage(
+                "--since-revision is only valid on space reason --format text",
+            ));
+        }
         Ok(Self::CaseReason {
             store: options.require_store()?,
             case_space_id: options.require_id("--case-space-id")?,
             section,
             strict: options.strict,
             format: options.format,
+            since_revision_id,
             output: options.output,
         })
+    }
+
+    /// The one place `--since-revision <id>` is recognized as a token at
+    /// all — see the call site in `parse_space` for why that is
+    /// deliberate. Removes the flag and its value from `args` before the
+    /// rest is handed to `NativeOptions::parse_reason`, the same
+    /// pre-scan-then-strip style `parse_space` already uses for
+    /// `topology diff`'s positional token.
+    fn extract_since_revision(args: &mut Vec<OsString>) -> Result<Option<Id>, NativeCliError> {
+        let Some(index) = args
+            .iter()
+            .position(|arg| arg.to_str() == Some("--since-revision"))
+        else {
+            return Ok(None);
+        };
+        args.remove(index);
+        if index >= args.len() {
+            return Err(NativeCliError::usage("--since-revision <id> is required"));
+        }
+        let value = args.remove(index);
+        require_id(&mut std::iter::once(value), "--since-revision").map(Some)
     }
 
     fn parse_morphism(

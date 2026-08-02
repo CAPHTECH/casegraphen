@@ -128,6 +128,41 @@ whether what it produced is trusted. `Progress: complete` with
 `Assurance: review_required` is the normal shape of finished-but-unreviewed
 work — it means run reviews, not stop.
 
+The text view's other sections are read-only projections of the same
+evaluation the JSON payload carries — nothing here is a separate decision:
+
+- **Waiting** — `readiness.waiting_cell_ids`, the cells a hard dependency is
+  currently blocking.
+- **Unaccepted evidence findings** — an unaccepted finding that names evidence
+  whose review gap the evaluator has already marked satisfied (the
+  requirement-placeholder pattern in `authoring.md`) prints
+  `[requirement_satisfied=true]` next to it. Read both facts together: the
+  evidence itself is still unaccepted, *and* the hard requirement it would
+  satisfy is already covered another way. Neither line contradicts the other.
+- **Review gaps** — every open review obligation
+  (`review_gaps`), each with its own `requirement_satisfied`. A gap can be
+  open (not yet reviewed) and simultaneously not blocking Assurance
+  (`requirement_satisfied=true`) — that combination is expected, not a bug.
+- **Changed since** — only present with `--since-revision <revision-id>`,
+  covered next.
+
+This view never shows *why work is stopped* (no halt/reason section): a halt
+is a property of a plan plus its traces (`run`/`operate`'s own reports), and
+`space reason` takes no `--plan-id` — approximating one from obstructions here
+would be exactly the re-derivation this view is built to avoid. Read
+`run`/`packet apply`/`operate`'s own `result.halt` for that.
+
+`--since-revision <revision-id>` adds a "Changed since" section listing the
+log entries recorded after that revision — an assertion, not a lookup: the
+revision must already be in this case space's history (the same discipline as
+`--base-revision-id`), and an unknown one is refused rather than resolved to
+"nearest". It only means something for the text render, so it is refused
+combined with `--format json`.
+
+```sh
+casegraphen space reason --store "$STORE" --case-space-id "$CS" --format text --since-revision "$REV"
+```
+
 **2. Every durable mutation needs a valid operation gate.** Five resolved values
 are checked against the case space. Put reusable values in a strict named JSON
 profile and let the reference files below pass its argv selection as `$GATE`:
@@ -239,6 +274,18 @@ casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format jso
 
 Report what the obstructions say, not what you intended. A case space whose
 blockers you have not read is a case space you have not advanced.
+
+`space history --format text` reads more easily than the JSON when a step was
+superseded and retried: a dispatch believed dead (`--supersede-trace`, ADR
+0014) never gets its own log entry, so the *surviving* entry's line grows a
+`(N attempts: <superseded-trace-id>, ..., <this-trace-id>)` annotation instead
+of leaving the superseded id undiscoverable. That annotation appears only when
+the surviving trace's own file names the superseded ids — a merely adjacent
+entry for the same step with nothing naming it stays two separate lines, and
+if a trace file cannot be read at all, every entry renders unfolded (with a
+note saying so) rather than guessing. It is a read: the log itself is
+unchanged either way, and `space history --format json` remains the source of
+truth for the entries themselves.
 
 `space validate` proves the log reproduces the snapshot; it cannot prove the
 tail was not rolled back, because the head lives in the store. When a decision

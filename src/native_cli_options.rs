@@ -184,6 +184,17 @@ impl NativeOptions {
         Self::parse_internal(segment, args, true, true)
     }
 
+    /// `--format text` without `--strict`: `space history` accepts a
+    /// rendered view of the log (native_cli_text.rs's fold) but has no
+    /// `strict` field to carry that flag to, so accepting it here would
+    /// parse successfully and then silently drop it.
+    pub(super) fn parse_text_only(
+        segment: &'static str,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        Self::parse_internal(segment, args, false, true)
+    }
+
     fn parse_internal(
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
