@@ -1,0 +1,18 @@
+{
+  "mode": "proposal",
+  "target": "generic_jsonl_v0",
+  "required_artifacts": [
+    "budget.policies.json",
+    "case.mapping.genesis.proposal.json",
+    "compiler.report.json",
+    "execution.plan.proposal.json",
+    "execution.topology.json",
+    "expansion.policies.json",
+    "graph.analysis.report.json",
+    "resource.manifest.json",
+    "runtime.deployment.json",
+    "topology.content-hash",
+    "verification.policies.json"
+  ],
+  "generated_plan_review_status": "unreviewed"
+}

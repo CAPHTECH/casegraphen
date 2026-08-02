@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.runtime.stream_event.v0",
+  "type": "object",
+  "required": ["schema", "event_id", "runtime_graph_id", "runtime_graph_content_hash", "node_id", "attempt_id", "sequence", "logical_order", "observed_at", "kind"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.runtime.stream_event.v0"},
+    "event_id": {"$ref": "#/$defs/id"}, "runtime_graph_id": {"$ref": "#/$defs/id"},
+    "runtime_graph_content_hash": {"$ref": "#/$defs/hash"}, "node_id": {"$ref": "#/$defs/id"},
+    "attempt_id": {"$ref": "#/$defs/id"}, "sequence": {"type": "integer", "minimum": 0},
+    "logical_order": {"type": "integer", "minimum": 0}, "observed_at": {"$ref": "#/$defs/id"},
+    "kind": {"enum": ["artifact_chunk", "node_terminal"]},
+    "edge_id": {"$ref": "#/$defs/id"}, "artifact_id": {"$ref": "#/$defs/id"},
+    "schema_id": {"$ref": "#/$defs/id"}, "chunk_index": {"type": "integer", "minimum": 0},
+    "chunk_sha256": {"$ref": "#/$defs/hash"}, "final_chunk": {"type": "boolean"},
+    "status": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "artifact_chunk"}}}, "then": {"required": ["edge_id", "artifact_id", "schema_id", "chunk_index", "chunk_sha256", "final_chunk"]}},
+    {"if": {"properties": {"kind": {"const": "node_terminal"}}}, "then": {"required": ["status"]}}
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {"id": {"type": "string", "minLength": 1}, "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

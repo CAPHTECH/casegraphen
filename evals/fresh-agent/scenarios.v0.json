@@ -1,0 +1,96 @@
+{
+  "schema": "casegraphen.eval.fresh_agent_manifest.v0",
+  "version": 0,
+  "scenarios": [
+    {
+      "id": "independent-20-file-fanout",
+      "skill": "casegraphen-design",
+      "task": "Design an execution topology for the supplied task. Use the local Skill and produce execution.topology.json. Do not modify any case ledger.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/independent-20-file-fanout.json", "target": "task.json"}, {"source": "schemas/experimental/execution.topology.v0.schema.json", "target": "contracts/execution.topology.v0.schema.json"}],
+      "expected_outputs": ["execution.topology.json"],
+      "deterministic_evaluators": [{"kind": "graph_lint", "output": "execution.topology.json", "assertions": [{"pointer": "/metrics/theoretical_parallel_width", "op": "eq", "value": 20}]}],
+      "manual_judgments": ["Each source-file review has a meaningful node contract and no fabricated dependency."]
+    },
+    {
+      "id": "same-file-resource-edge",
+      "skill": "casegraphen-design",
+      "task": "Design an execution topology for the supplied change task. Use the local Skill and produce execution.topology.json.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/same-file-resource-edge.json", "target": "task.json"}, {"source": "schemas/experimental/execution.topology.v0.schema.json", "target": "contracts/execution.topology.v0.schema.json"}],
+      "expected_outputs": ["execution.topology.json"],
+      "deterministic_evaluators": [{"kind": "graph_lint", "output": "execution.topology.json", "forbidden_finding_codes": ["unsafe_parallel_resource_conflict"]}],
+      "manual_judgments": ["The shared-file serialization is represented as a real resource constraint rather than an invented data dependency."]
+    },
+    {
+      "id": "correlated-verifier-context",
+      "skill": "casegraphen-audit",
+      "task": "Audit the supplied producer/verifier topology with the local Skill. Preserve deterministic and heuristic classifications and write graph.audit.report.md.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/correlated-verifier-context.json", "target": "task.json"}, {"source": "tests/fixtures/casegraphen-design/verifier-correlation/execution.topology.json", "target": "execution.topology.json"}],
+      "expected_outputs": ["graph.audit.report.md"],
+      "deterministic_evaluators": [{"kind": "graph_lint", "output": "execution.topology.json", "required_finding_codes": ["verification_independence_uninspectable"]}],
+      "manual_judgments": ["The report does not claim that runtime context freshness was verified by CaseGraphen."]
+    },
+    {
+      "id": "hierarchical-1000-fanin",
+      "skill": "casegraphen-design",
+      "task": "Design a bounded topology for the supplied 1,000-item analysis. Use the local Skill and produce execution.topology.json.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/hierarchical-1000-fanin.json", "target": "task.json"}, {"source": "schemas/experimental/execution.topology.v0.schema.json", "target": "contracts/execution.topology.v0.schema.json"}],
+      "expected_outputs": ["execution.topology.json"],
+      "deterministic_evaluators": [{"kind": "graph_lint", "output": "execution.topology.json", "assertions": [{"pointer": "/metrics/maximum_fan_in", "op": "le", "value": 20}]}],
+      "manual_judgments": ["Reduction is hierarchical and preserves traceability from source items to synthesis."]
+    },
+    {
+      "id": "missing-one-of-200-reports",
+      "skill": "casegraphen-audit",
+      "task": "Audit run completeness from the supplied runtime observation. Use the local Skill, preserve the received canonical completeness object in canonical.completeness.json, and write graph.audit.report.md. Do not infer acceptance from completion.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/missing-one-of-200-reports.json", "target": "runtime-observation.json"}],
+      "expected_outputs": ["canonical.completeness.json", "graph.audit.report.md"],
+      "deterministic_evaluators": [{"kind": "completeness_oracle", "output": "canonical.completeness.json", "oracle": "evals/fresh-agent/oracles/missing-one-of-200.expected.json", "fields": ["expected_node_count", "actual_report_count", "missing_report_count", "complete"]}],
+      "manual_judgments": ["The report clearly distinguishes missing runtime observation from rejected evidence."]
+    },
+    {
+      "id": "dynamic-loop-dedupe-all-seen",
+      "skill": "casegraphen-design",
+      "task": "Design a bounded expansion policy for the supplied discovery loop and write expansion.policy.json. Do not mutate accepted topology.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/dynamic-loop-dedupe-all-seen.json", "target": "task.json"}, {"source": "schemas/experimental/expansion.policy.v0.schema.json", "target": "contracts/expansion.policy.v0.schema.json"}],
+      "expected_outputs": ["expansion.policy.json"],
+      "deterministic_evaluators": [{"kind": "json_schema", "output": "expansion.policy.json", "schema": "schemas/experimental/expansion.policy.v0.schema.json"}, {"kind": "json_assert", "output": "expansion.policy.json", "assertions": [{"pointer": "/dedupe_scope", "op": "eq", "value": "all_seen"}]}],
+      "manual_judgments": ["Termination and spawn/cost bounds are appropriate for the supplied discovery task."]
+    },
+    {
+      "id": "evidence-requires-review",
+      "skill": "casegraphen-operate",
+      "task": "Determine the safe next operation for the supplied evidence state using the local Skill. Write operation.decision.json and do not execute mutations.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/evidence-requires-review.json", "target": "case-observation.json"}],
+      "expected_outputs": ["operation.decision.json"],
+      "deterministic_evaluators": [{"kind": "json_assert", "output": "operation.decision.json", "assertions": [{"pointer": "/evidence_status", "op": "eq", "value": "unreviewed"}, {"pointer": "/accepted", "op": "eq", "value": false}]}],
+      "manual_judgments": ["The proposed next operation preserves a separate review seam."]
+    },
+    {
+      "id": "stale-revision-no-auto-rebase",
+      "skill": "casegraphen-operate",
+      "task": "Determine the safe response to the supplied revision mismatch using the local Skill. Write operation.decision.json and do not execute mutations.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/stale-revision-no-auto-rebase.json", "target": "case-observation.json"}],
+      "expected_outputs": ["operation.decision.json"],
+      "deterministic_evaluators": [{"kind": "json_assert", "output": "operation.decision.json", "assertions": [{"pointer": "/supplied_base_revision_id", "op": "eq", "value": "revision:observed"}, {"pointer": "/auto_rebased", "op": "eq", "value": false}]}],
+      "manual_judgments": ["The response asks for an explicit re-read/redecision instead of silently using current revision."]
+    },
+    {
+      "id": "tool-failure-versus-domain-halt",
+      "skill": "casegraphen-operate",
+      "task": "Classify the two supplied outcomes using the local Skill and write outcome.classification.json.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/tool-failure-versus-domain-halt.json", "target": "outcomes.json"}],
+      "expected_outputs": ["outcome.classification.json"],
+      "deterministic_evaluators": [{"kind": "json_assert", "output": "outcome.classification.json", "assertions": [{"pointer": "/outcomes/0/class", "op": "eq", "value": "tool_failure"}, {"pointer": "/outcomes/1/class", "op": "eq", "value": "domain_halt"}]}],
+      "manual_judgments": ["Recovery guidance does not retry or reinterpret the domain halt automatically."]
+    },
+    {
+      "id": "proposal-not-direct-mutation",
+      "skill": "casegraphen-design",
+      "task": "Represent the supplied discovered work as a reviewable topology change. Use the local Skill and write topology.redesign.proposal.json; do not modify the supplied accepted topology.",
+      "artifacts": [{"source": "evals/fresh-agent/tasks/proposal-not-direct-mutation.json", "target": "task.json"}, {"source": "schemas/experimental/topology.redesign_proposal.v0.schema.json", "target": "contracts/topology.redesign_proposal.v0.schema.json"}],
+      "expected_outputs": ["topology.redesign.proposal.json"],
+      "deterministic_evaluators": [{"kind": "json_schema", "output": "topology.redesign.proposal.json", "schema": "schemas/experimental/topology.redesign_proposal.v0.schema.json"}],
+      "manual_judgments": ["The output is explicitly unreviewed and leaves the accepted topology bytes unchanged."]
+    }
+  ]
+}

@@ -19,9 +19,12 @@ Two consequences you must design around:
   `env_allowlist`, which is residual risk 3 of the worker execution policy. Keep
   `run --step` for deterministic gate nodes (a checker, a linter, a test
   command) and let the runtime call models.
-- **There is no fan-out.** One invocation advances at most one item, under a
-  per-case lock. The frontier tells you which nodes are parallelizable; the
-  runtime is what runs them in parallel.
+- **CaseGraphen's fan-out is deliberately narrow.** `run --frontier` can run
+  independent `shell` worker steps concurrently and then appends their results
+  deterministically in plan-step order; `operate` can repeat those bounded
+  rounds. The external runtime still owns model-node scheduling, streaming,
+  retries, and liveness. Use the frontier to decide which runtime nodes may run
+  in parallel, and bring their reports back as evidence.
 
 ## Granularity: which runtime nodes become cells
 
@@ -41,10 +44,11 @@ trace.
 This is a semantic rule, not a load budget. A cell asserts "someone must be able
 to check this", so a cell per model call dilutes the ledger into noise even
 though the tool can now carry it: derivation is linear — about 0.02 s at 1,000
-cells, 0.20 s at 10,000, 1.92 s at 100,000. The cost that does grow is storage,
-because every revision writes a full snapshot (about 287 MB for a 100,000-cell
-space). If you find yourself minting a cell per model call, the granularity is
-wrong even though it would run.
+cells, 0.20 s at 10,000, 1.92 s at 100,000. Large materializations and replay
+checks still have real cost, but snapshots are periodic (genesis and every 32nd
+log sequence); intervening revisions replay from the nearest snapshot and are
+checked against the anchored log tail (ADR 0005). If you find yourself minting
+a cell per model call, the granularity is wrong even though it would run.
 
 ## Mapping the org graph onto authority
 
@@ -109,7 +113,9 @@ against which content hash, backed by which evidence at which trust boundary,
 and whether the whole history folds from empty to the current state
 (`space validate`). "The graph did it" is not a possible answer.
 
-Not provided: parallel dispatch, typed handoff of one node's output into
-another's input, model-identity pinning (a binding pins a script's hash, not a
-model, version, or prompt), cost enforcement, and any memory of past
-misjudgments. Do not simulate these with case cells; they belong to the runtime.
+Not provided: model-runtime scheduling or streaming, typed handoff of one
+node's output into another's input, model-identity pinning (a binding pins a
+script's hash, not a model, version, or prompt), cost enforcement, and any
+memory of past misjudgments. `run --frontier` is bounded deterministic shell
+fan-out, not a replacement for those runtime responsibilities. Do not simulate
+them with case cells.

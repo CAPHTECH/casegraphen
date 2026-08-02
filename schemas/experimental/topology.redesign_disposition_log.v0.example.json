@@ -1,0 +1,7 @@
+{
+  "schema":"casegraphen.experimental.topology.redesign_disposition_log.v0","schema_version":0,
+  "entries":[
+    {"sequence":0,"proposal_id":"redesign:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","previous_entry_hash":null,"entry_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","disposition":{"kind":"proposed"}},
+    {"sequence":1,"proposal_id":"redesign:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","previous_entry_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","entry_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","disposition":{"kind":"accepted_binding","review_id":"review:42","revision_id":"revision:42","reviewer_authority_id":"authority:topology-review"}}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "scenario": "hierarchical_reduction",
+  "source_item_count": 1000,
+  "batch_count": 20,
+  "items_per_batch": 50,
+  "reducer_count": 4,
+  "max_direct_fanin": 5,
+  "synthesis_fanin": 4,
+  "proposal_only": true
+}

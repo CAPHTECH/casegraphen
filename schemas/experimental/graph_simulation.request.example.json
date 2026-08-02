@@ -1,0 +1,37 @@
+{
+  "schema": "casegraphen.experimental.graph_simulation.request.v0",
+  "schema_version": 0,
+  "topology_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "seed": 55,
+  "iterations": 100,
+  "max_parallelism": 16,
+  "resource_capacities": {"rate_limit_group:review-api": 4},
+  "fan_in_penalty_ms_per_input": 2,
+  "streaming_overlap_basis_points": 2500,
+  "retry_policy": {"maximum_attempts": 3},
+  "expansion_bounds": {},
+  "budgets": {
+    "maximum_latency_ms": 10000,
+    "maximum_cost_microunits": 10000,
+    "maximum_total_tokens": 100000
+  },
+  "calibrations": [
+    {
+      "node_id": null,
+      "executor_class": "llm-reviewer",
+      "latency_ms": {"minimum": 100, "maximum": 200},
+      "cost_microunits": {"minimum": 10, "maximum": 20},
+      "failure_basis_points": 100,
+      "input_tokens": {"minimum": 100, "maximum": 200},
+      "output_tokens": {"minimum": 20, "maximum": 40}
+    }
+  ],
+  "routing_candidates": [
+    {
+      "route_id": "route:small",
+      "executor_class": "llm-reviewer",
+      "latency_ms": {"minimum": 80, "maximum": 160},
+      "cost_microunits": {"minimum": 8, "maximum": 12}
+    }
+  ]
+}

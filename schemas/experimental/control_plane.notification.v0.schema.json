@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.control_plane.notification.v0",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "notification_id", "sequence", "kind", "subject_uri", "observed_revision_id", "payload", "authorizes_action"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.control_plane.notification.v0"},
+    "notification_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 0},
+    "kind": {"enum": ["revision_changed", "review_required", "external_wait_cleared", "dispatch_stalled", "budget_exhausted", "integrity_refusal", "resource_conflict"]},
+    "subject_uri": {"type": "string", "pattern": "^casegraphen://"},
+    "observed_revision_id": {"type": ["string", "null"], "minLength": 1},
+    "payload": {},
+    "authorizes_action": {"const": false}
+  }
+}

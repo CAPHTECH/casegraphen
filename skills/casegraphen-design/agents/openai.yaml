@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Design"
+  short_description: "Design and lint execution topology proposals"
+  default_prompt: "Use $casegraphen-design to turn this problem into an unreviewed, linted execution-topology proposal."

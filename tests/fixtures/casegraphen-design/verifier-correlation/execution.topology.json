@@ -1,0 +1,93 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:verifier-correlation",
+  "case_space_id": "case_space:verifier-correlation",
+  "nodes": [
+    {
+      "node_id": "node:produce",
+      "work_cell_id": "work:produce",
+      "purpose": "Produce a security claim",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "claim",
+          "schema_id": "schema:security-claim"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "model:shared-context",
+      "verification_policy_id": "verification:security",
+      "budget_policy_id": null,
+      "idempotency_key": "produce:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:verify",
+      "work_cell_id": "work:verify",
+      "purpose": "Verify the security claim",
+      "inputs": [
+        {
+          "name": "candidate",
+          "schema_id": "schema:security-claim",
+          "artifact_selector": "node:produce#claim"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "verdict",
+          "schema_id": "schema:verdict"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "model:shared-context",
+      "verification_policy_id": "verification:security",
+      "budget_policy_id": null,
+      "idempotency_key": "verify:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "edge:produce-verify",
+      "from": "node:produce",
+      "to": "node:verify",
+      "kind": "data",
+      "output": "claim",
+      "input": "candidate",
+      "schema_id": "schema:security-claim",
+      "blocking_predicate": "verify cannot proceed until produce completes",
+      "dependency_witness": "verifier receives the producer claim",
+      "removal_counterexample": "without this edge the verifier cannot inspect the candidate claim",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "verification_policy_ids": [
+    "verification:security"
+  ],
+  "budget_policy_ids": [],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {
+    "source": "behavior-fixture:fresh-context",
+    "created_by": "actor:designer"
+  }
+}

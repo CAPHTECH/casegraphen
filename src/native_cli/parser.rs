@@ -73,6 +73,7 @@ impl NativeCliCommand {
         match namespace {
             "space" => Self::parse_space(required_segment(&mut args, "space operation")?, args),
             "lift" => Self::parse_lift(required_segment(&mut args, "lift adapter")?, args),
+            "graph" => Self::parse_graph(required_segment(&mut args, "graph operation")?, args),
             "obstruction" => {
                 Self::parse_obstruction(required_segment(&mut args, "obstruction operation")?, args)
             }
@@ -104,6 +105,21 @@ impl NativeCliCommand {
             "cell" => Self::parse_cell(required_segment(&mut args, "cell operation")?, args),
             "packet" => Self::parse_packet(required_segment(&mut args, "packet operation")?, args),
             _ => Err(NativeCliError::usage("unsupported native namespace")),
+        }
+    }
+
+    fn parse_graph(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let options = NativeOptions::parse_text_only("graph", args)?;
+        match operation.to_str() {
+            Some("lint") => Ok(Self::GraphLint {
+                input: options.require_path("--input")?,
+                format: options.format,
+                output: options.output,
+            }),
+            Some(_) | None => Err(NativeCliError::usage("unsupported graph command")),
         }
     }
 

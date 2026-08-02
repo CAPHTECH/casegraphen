@@ -1,0 +1,117 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:same-file-collision",
+  "case_space_id": "case_space:same-file-collision",
+  "nodes": [
+    {
+      "node_id": "node:edit-a",
+      "work_cell_id": "work:edit-a",
+      "purpose": "Edit shared source for feature A",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/shared.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "patch",
+          "schema_id": "schema:patch"
+        }
+      ],
+      "side_effects": "workspace",
+      "resource_claims": [
+        {
+          "resource": "file:src/shared.rs",
+          "mode": "write",
+          "rate_limit_group": null,
+          "workspace_strategy": "isolated_worktree",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "code-agent",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "edit-a:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:edit-b",
+      "work_cell_id": "work:edit-b",
+      "purpose": "Edit shared source for feature B",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/shared.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "patch",
+          "schema_id": "schema:patch"
+        }
+      ],
+      "side_effects": "workspace",
+      "resource_claims": [
+        {
+          "resource": "file:src/shared.rs",
+          "mode": "write",
+          "rate_limit_group": null,
+          "workspace_strategy": "isolated_worktree",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "code-agent",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "edit-b:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "edge:shared-file-exclusion",
+      "from": "node:edit-a",
+      "to": "node:edit-b",
+      "kind": "resource_exclusion",
+      "output": null,
+      "input": null,
+      "schema_id": null,
+      "blocking_predicate": "another writer holds file:src/shared.rs",
+      "dependency_witness": "both nodes declare write access to file:src/shared.rs",
+      "removal_counterexample": "without exclusion the patches may be individually valid but mutually unmergeable",
+      "resource_scope": [
+        "file:src/shared.rs"
+      ],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "verification_policy_ids": [],
+  "budget_policy_ids": [],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {
+    "source": "behavior-fixture:fresh-context",
+    "created_by": "actor:designer"
+  }
+}

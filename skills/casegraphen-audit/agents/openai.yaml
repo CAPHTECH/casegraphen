@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Audit"
+  short_description: "Audit planned and observed graph behavior"
+  default_prompt: "Use $casegraphen-audit to audit this execution topology and its runtime reports without promoting runtime claims."

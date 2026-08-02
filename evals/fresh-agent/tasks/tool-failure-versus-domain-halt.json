@@ -1,0 +1,1 @@
+{"outcomes":[{"id":"outcome:1","process_exit_code":127,"stderr":"casegraphen: command not found","halt":null},{"id":"outcome:2","process_exit_code":0,"operation_status":"halted","halt":"review_required","error_code":null}]}

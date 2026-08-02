@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_simulation.report.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "report_version", "topology_id", "topology_content_hash", "request_content_hash", "seed", "iterations", "latency_ms", "cost_microunits", "total_tokens", "successful_iterations", "failed_iterations", "maximum_observed_parallelism", "resource_wait_events", "unknowns", "budget_violations", "routing_proposal"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_simulation.report.v0"},
+    "report_version": {"const": 0},
+    "topology_id": {"type": "string", "minLength": 1},
+    "topology_content_hash": {"$ref": "#/$defs/hash"},
+    "request_content_hash": {"$ref": "#/$defs/hash"},
+    "seed": {"type": "integer", "minimum": 0},
+    "iterations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "latency_ms": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
+    "cost_microunits": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
+    "total_tokens": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
+    "successful_iterations": {"type": ["integer", "null"], "minimum": 0},
+    "failed_iterations": {"type": ["integer", "null"], "minimum": 0},
+    "maximum_observed_parallelism": {"type": "integer", "minimum": 0},
+    "resource_wait_events": {"type": "integer", "minimum": 0},
+    "unknowns": {"type": "array", "items": {"$ref": "#/$defs/unknown"}},
+    "budget_violations": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["budget", "violating_iterations"],
+        "properties": {
+          "budget": {"type": "string", "minLength": 1},
+          "violating_iterations": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "routing_proposal": {"$ref": "#/$defs/routing"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "p50", "maximum"],
+      "properties": {
+        "minimum": {"type": "integer", "minimum": 0},
+        "p50": {"type": "integer", "minimum": 0},
+        "maximum": {"type": "integer", "minimum": 0}
+      }
+    },
+    "unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "metric", "reason"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "metric": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "current_executor_class", "proposed_route_id", "reason"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "current_executor_class": {"type": "string", "minLength": 1},
+        "proposed_route_id": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_status", "topology_content_hash", "decisions"],
+      "properties": {
+        "review_status": {"const": "unreviewed"},
+        "topology_content_hash": {"$ref": "#/$defs/hash"},
+        "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "casegraphen.experimental.runtime.resource_allocation.v0",
+  "schema_version": 0,
+  "allocation_id": "allocation:refactor-a:1",
+  "reservation_id": "reservation:refactor-a:attempt-1",
+  "attempt_id": "attempt:refactor-a:1",
+  "resource_id": "git-branch:main",
+  "mode": "exclusive",
+  "rate_limit_group": "rate-limit:git-host",
+  "rate_limit_units": 1,
+  "workspace_strategy": "isolated_worktree",
+  "network_scope": ["network:git-host"],
+  "secret_scope": ["secret:git-write"],
+  "worktree_id": "refactor-a",
+  "trust_boundary": "runtime_reported_untrusted_until_independently_reconciled"
+}

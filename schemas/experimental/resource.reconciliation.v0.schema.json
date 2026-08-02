@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.resource.reconciliation.v0",
+  "title": "CaseGraphen Experimental Resource Reconciliation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "declaration_id", "reservation_id", "attempt_id", "declared_claim_count", "granted_resource_count", "actual_allocation_count", "complete", "findings"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.resource.reconciliation.v0"},
+    "schema_version": {"const": 0},
+    "declaration_id": {"$ref": "#/$defs/id"},
+    "reservation_id": {"$ref": "#/$defs/id"},
+    "attempt_id": {"$ref": "#/$defs/id"},
+    "declared_claim_count": {"type": "integer", "minimum": 0},
+    "granted_resource_count": {"type": "integer", "minimum": 0},
+    "actual_allocation_count": {"type": "integer", "minimum": 0},
+    "complete": {"type": "boolean"},
+    "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "nullable_id": {"type": ["string", "null"], "minLength": 1},
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "resource_id", "reservation_id", "allocation_id", "detail"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "resource_id": {"$ref": "#/$defs/nullable_id"},
+        "reservation_id": {"$ref": "#/$defs/nullable_id"},
+        "allocation_id": {"$ref": "#/$defs/nullable_id"},
+        "detail": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

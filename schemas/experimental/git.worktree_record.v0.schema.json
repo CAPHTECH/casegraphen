@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.git.worktree_record.v0",
+  "title": "CaseGraphen Experimental Git Worktree Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "worktree_id", "reservation_id", "attempt_id", "path_identity", "base_commit_sha", "branch", "resulting_commit_sha", "working_tree_clean", "unexpected_write_paths", "state", "cleanup"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.git.worktree_record.v0"},
+    "schema_version": {"const": 0},
+    "worktree_id": {"$ref": "#/$defs/id"},
+    "reservation_id": {"$ref": "#/$defs/id"},
+    "attempt_id": {"$ref": "#/$defs/id"},
+    "path_identity": {"$ref": "#/$defs/id"},
+    "base_commit_sha": {"$ref": "#/$defs/sha"},
+    "branch": {"$ref": "#/$defs/id"},
+    "resulting_commit_sha": {"oneOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]},
+    "working_tree_clean": {"type": "boolean"},
+    "unexpected_write_paths": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "state": {"enum": ["active", "committed", "cleanup_approved", "superseded"]},
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "recoverable", "requires_explicit_assertion"],
+      "properties": {
+        "method": {"$ref": "#/$defs/id"},
+        "recoverable": {"const": true},
+        "requires_explicit_assertion": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

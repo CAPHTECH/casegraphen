@@ -1,0 +1,1 @@
+{"goal":"Analyze 1000 independent records and synthesize findings","source_item_count":1000,"context_constraint":"No reducer may directly consume more than 20 reports","traceability_required":true}

@@ -1,0 +1,6 @@
+{
+  "schema": "casegraphen.experimental.resource.rate_limit_capacity.v0",
+  "schema_version": 0,
+  "group_id": "rate-limit:git-host",
+  "capacity": 4
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "casegraphen.experimental.git.worktree_record.v0",
+  "schema_version": 0,
+  "worktree_id": "refactor-a",
+  "reservation_id": "reservation:refactor-a:attempt-1",
+  "attempt_id": "attempt:refactor-a:1",
+  "path_identity": "workspace:worktrees/refactor-a",
+  "base_commit_sha": "1111111111111111111111111111111111111111",
+  "branch": "casegraphen/refactor-a",
+  "resulting_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "working_tree_clean": true,
+  "unexpected_write_paths": [],
+  "state": "committed",
+  "cleanup": {
+    "method": "move_to_trash_after_branch_integrated",
+    "recoverable": true,
+    "requires_explicit_assertion": true
+  }
+}

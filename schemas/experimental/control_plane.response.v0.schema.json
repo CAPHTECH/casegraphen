@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.control_plane.response.v0",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "sequence", "request_id", "idempotency_key", "replayed", "result", "refusal"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.control_plane.response.v0"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "request_id": {"type": "string"},
+    "idempotency_key": {"type": "string"},
+    "replayed": {"type": "boolean"},
+    "result": {},
+    "refusal": {"type": ["object", "null"]}
+  }
+}

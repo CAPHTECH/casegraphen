@@ -1,0 +1,1 @@
+{"goal":"Apply two independently discovered fixes","changes":[{"id":"fix-a","writes":["src/router.ts"]},{"id":"fix-b","writes":["src/router.ts"]}],"workspace":"one shared git worktree"}

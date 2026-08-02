@@ -1,0 +1,16 @@
+{
+  "schema": "casegraphen.experimental.resource.declaration.v0",
+  "schema_version": 0,
+  "declaration_id": "declaration:refactor-a",
+  "runtime_graph_id": "runtime_graph:refactor",
+  "runtime_graph_content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "node_id": "node:refactor-a",
+  "claims": [{
+    "resource": "git-branch:main",
+    "mode": "exclusive",
+    "rate_limit_group": "rate-limit:git-host",
+    "workspace_strategy": "isolated_worktree",
+    "network_scope": ["network:git-host"],
+    "secret_scope": ["secret:git-write"]
+  }]
+}

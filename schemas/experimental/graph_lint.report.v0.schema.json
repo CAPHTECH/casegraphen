@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_lint.report.v0",
+  "title": "Experimental CaseGraphen graph lint report v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "report_version", "topology_id", "topology_content_hash", "metrics", "findings"],
+  "properties": {
+    "schema": { "const": "casegraphen.experimental.graph_lint.report.v0" },
+    "report_version": { "const": 0 },
+    "topology_id": { "type": "string", "minLength": 1 },
+    "topology_content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+  },
+  "$defs": {
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_count", "edge_count", "source_count", "sink_count", "theoretical_parallel_width", "longest_path_nodes", "critical_path_ms", "maximum_fan_in", "maximum_fan_out"],
+      "properties": {
+        "node_count": { "type": "integer", "minimum": 0 },
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "source_count": { "type": "integer", "minimum": 0 },
+        "sink_count": { "type": "integer", "minimum": 0 },
+        "theoretical_parallel_width": { "type": "integer", "minimum": 0 },
+        "longest_path_nodes": { "type": ["integer", "null"], "minimum": 0 },
+        "critical_path_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "maximum_fan_in": { "type": "integer", "minimum": 0 },
+        "maximum_fan_out": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "target_id", "parameters"],
+      "properties": {
+        "operation": { "type": "string", "minLength": 1 },
+        "target_id": { "type": ["string", "null"] },
+        "parameters": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "classification", "severity", "location", "detail", "suggested_next_operation"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["deterministic", "heuristic"] },
+        "severity": { "enum": ["error", "warning", "info"] },
+        "location": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 },
+        "suggested_next_operation": { "$ref": "#/$defs/operation" }
+      }
+    }
+  }
+}

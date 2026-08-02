@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.runtime.integration.jsonl_record.v0",
+  "title": "Generic runtime integration JSONL record v0",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "report"],
+      "properties": {
+        "kind": { "const": "node_report" },
+        "report": { "type": "object" }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "artifact_id", "media_type", "content"],
+      "properties": {
+        "kind": { "const": "artifact" },
+        "artifact_id": { "type": "string", "pattern": "^artifact:sha256-[0-9a-f]{64}$" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "content": { "type": "string" }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "allocation"],
+      "properties": {
+        "kind": { "const": "resource_allocation" },
+        "allocation": { "type": "object" }
+      }
+    }
+  ]
+}

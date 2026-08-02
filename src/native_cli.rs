@@ -1,3 +1,5 @@
+use crate::execution_topology::ExecutionTopology;
+use crate::graph_lint::{lint_execution_topology, render_graph_lint_text, GraphLintReport};
 use crate::native_eval::evaluate_native_case;
 use crate::native_model::{ProjectionAudience, ReviewAction};
 use crate::native_store::{NativeCaseStore, NativeStoreError};
@@ -85,6 +87,11 @@ fn evaluation_carries_domain_finding(
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum NativeCliCommand {
+    GraphLint {
+        input: PathBuf,
+        format: NativeOutputFormat,
+        output: Option<PathBuf>,
+    },
     CaseNew {
         store: PathBuf,
         case_space_id: Id,
@@ -357,7 +364,8 @@ pub enum NativeReasonSection {
 impl NativeCliCommand {
     pub fn output(&self) -> Option<&PathBuf> {
         match self {
-            Self::CaseNew { output, .. }
+            Self::GraphLint { output, .. }
+            | Self::CaseNew { output, .. }
             | Self::CaseImport { output, .. }
             | Self::LiftStructuredSource { output, .. }
             | Self::CaseList { output, .. }
@@ -404,6 +412,18 @@ impl NativeCliCommand {
 
     pub fn run_rendered(&self) -> Result<NativeCommandResult<String>, NativeCliError> {
         match self {
+            Self::GraphLint {
+                input,
+                format: NativeOutputFormat::Text,
+                ..
+            } => {
+                let report = graph_lint_report(input)?;
+                let domain_finding = !report.findings.is_empty();
+                Ok(NativeCommandResult::with_domain_finding(
+                    render_graph_lint_text(&report),
+                    domain_finding,
+                ))
+            }
             Self::CaseReason {
                 store,
                 case_space_id,
@@ -529,7 +549,8 @@ impl NativeCliCommand {
 
     pub fn format(&self) -> NativeOutputFormat {
         match self {
-            Self::CaseReason { format, .. }
+            Self::GraphLint { format, .. }
+            | Self::CaseReason { format, .. }
             | Self::CaseHistory { format, .. }
             | Self::RunStep { format, .. }
             | Self::RunFrontier { format, .. }
@@ -554,6 +575,14 @@ impl NativeCliCommand {
 
     fn run_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
         match self {
+            Self::GraphLint { input, .. } => {
+                let report = graph_lint_report(input)?;
+                let domain_finding = !report.findings.is_empty();
+                Ok(NativeCommandResult::with_domain_finding(
+                    serde_json::to_value(report)?,
+                    domain_finding,
+                ))
+            }
             Self::CaseNew { .. }
             | Self::CaseImport { .. }
             | Self::LiftStructuredSource { .. }
@@ -993,6 +1022,15 @@ impl NativeCliCommand {
         };
         Ok(NativeCommandResult::success(value))
     }
+}
+
+fn graph_lint_report(input: &Path) -> Result<GraphLintReport, NativeCliError> {
+    let text = std::fs::read_to_string(input).map_err(|source| NativeCliError::Io {
+        path: input.to_path_buf(),
+        source,
+    })?;
+    let topology: ExecutionTopology = serde_json::from_str(&text)?;
+    Ok(lint_execution_topology(&topology))
 }
 
 // The one table both the parser and the refusal's accepted-values list

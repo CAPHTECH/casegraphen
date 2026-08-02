@@ -1,0 +1,817 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:independent-fanout",
+  "case_space_id": "case_space:independent-fanout",
+  "nodes": [
+    {
+      "node_id": "node:review-01",
+      "work_cell_id": "work:review-01",
+      "purpose": "Review independent source file 01",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-01.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-01.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-01:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-02",
+      "work_cell_id": "work:review-02",
+      "purpose": "Review independent source file 02",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-02.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-02.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-02:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-03",
+      "work_cell_id": "work:review-03",
+      "purpose": "Review independent source file 03",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-03.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-03.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-03:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-04",
+      "work_cell_id": "work:review-04",
+      "purpose": "Review independent source file 04",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-04.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-04.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-04:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-05",
+      "work_cell_id": "work:review-05",
+      "purpose": "Review independent source file 05",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-05.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-05.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-05:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-06",
+      "work_cell_id": "work:review-06",
+      "purpose": "Review independent source file 06",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-06.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-06.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-06:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-07",
+      "work_cell_id": "work:review-07",
+      "purpose": "Review independent source file 07",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-07.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-07.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-07:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-08",
+      "work_cell_id": "work:review-08",
+      "purpose": "Review independent source file 08",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-08.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-08.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-08:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-09",
+      "work_cell_id": "work:review-09",
+      "purpose": "Review independent source file 09",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-09.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-09.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-09:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-10",
+      "work_cell_id": "work:review-10",
+      "purpose": "Review independent source file 10",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-10.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-10.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-10:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-11",
+      "work_cell_id": "work:review-11",
+      "purpose": "Review independent source file 11",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-11.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-11.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-11:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-12",
+      "work_cell_id": "work:review-12",
+      "purpose": "Review independent source file 12",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-12.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-12.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-12:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-13",
+      "work_cell_id": "work:review-13",
+      "purpose": "Review independent source file 13",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-13.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-13.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-13:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-14",
+      "work_cell_id": "work:review-14",
+      "purpose": "Review independent source file 14",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-14.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-14.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-14:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-15",
+      "work_cell_id": "work:review-15",
+      "purpose": "Review independent source file 15",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-15.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-15.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-15:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-16",
+      "work_cell_id": "work:review-16",
+      "purpose": "Review independent source file 16",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-16.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-16.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-16:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-17",
+      "work_cell_id": "work:review-17",
+      "purpose": "Review independent source file 17",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-17.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-17.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-17:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-18",
+      "work_cell_id": "work:review-18",
+      "purpose": "Review independent source file 18",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-18.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-18.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-18:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-19",
+      "work_cell_id": "work:review-19",
+      "purpose": "Review independent source file 19",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-19.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-19.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-19:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:review-20",
+      "work_cell_id": "work:review-20",
+      "purpose": "Review independent source file 20",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/file-20.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/file-20.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "review-20:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "edges": [],
+  "verification_policy_ids": [],
+  "budget_policy_ids": [],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {
+    "source": "behavior-fixture:fresh-context",
+    "created_by": "actor:designer"
+  }
+}

@@ -1,0 +1,1 @@
+{"schema":"casegraphen.experimental.control_plane.notification.v0","notification_id":"notification:review-1","sequence":2,"kind":"review_required","subject_uri":"casegraphen://spaces/case-1/reviews","observed_revision_id":"revision:2","payload":{"target_id":"claim:1"},"authorizes_action":false}

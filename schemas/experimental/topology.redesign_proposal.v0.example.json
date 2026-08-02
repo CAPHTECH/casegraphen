@@ -1,0 +1,13 @@
+{
+  "schema":"casegraphen.experimental.topology.redesign_proposal.v0","schema_version":0,
+  "proposal_id":"redesign:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "review_status":"unreviewed",
+  "base_topology_content_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "proposed_topology_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "evidence":{"audit_artifact_ids":["artifact:sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],"integration_proposal_ids":["proposal:sha256-runtime"],"expansion_proposal_ids":[]},
+  "changes":{"old_topology_content_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","proposed_topology_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","added_node_ids":[],"removed_node_ids":[],"changed_nodes":[{"id":"node:review","old_content_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","new_content_hash":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}],"added_edge_ids":[],"removed_edge_ids":[],"changed_edges":[],"policy_changes":{"verification":{"added":[],"removed":[]},"budget":{"added":[],"removed":[]},"expansion":{"added":[],"removed":[]}}},
+  "expected_impact":[{"metric":"latency_ms","expected_direction":"decrease","estimated_delta":-10.0,"rationale":"simulation"}],
+  "uncertainty":["runtime calibration may drift"],"information_loss":["none observed"],
+  "reviewer_authority":{"authority_policy_id":"authority:topology-review","required_capability_ids":["capability:review"]},
+  "simulation":{"input_artifact_id":"artifact:sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","old_report_artifact_id":"artifact:sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","proposed_report_artifact_id":"artifact:sha256-1111111111111111111111111111111111111111111111111111111111111111"}
+}

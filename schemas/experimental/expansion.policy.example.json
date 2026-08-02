@@ -1,0 +1,16 @@
+{
+  "schema":"casegraphen.experimental.expansion.policy.v0",
+  "schema_version":0,
+  "expansion_policy_id":"expansion:bug-discovery",
+  "candidate_schema_id":"schema:bug-candidate",
+  "dedupe_key":["file","symbol","failure_signature"],
+  "dedupe_scope":"all_seen",
+  "dry_rounds_required":2,
+  "max_iterations":8,
+  "max_spawned_nodes":200,
+  "max_cost":50.0,
+  "cost_currency":"USD",
+  "max_latency_ms":300000,
+  "candidate_disposition":"unreviewed_morphism_proposal",
+  "provenance":{"source":"issue:54","created_by":"actor:designer"}
+}

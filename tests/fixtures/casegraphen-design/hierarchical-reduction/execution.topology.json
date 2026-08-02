@@ -1,0 +1,1201 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:hierarchical-reduction",
+  "case_space_id": "case_space:hierarchical-reduction",
+  "nodes": [
+    {
+      "node_id": "node:batch-01",
+      "work_cell_id": "work:batch-01",
+      "purpose": "Review batch 01 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-01"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-01:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-02",
+      "work_cell_id": "work:batch-02",
+      "purpose": "Review batch 02 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-02"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-02:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-03",
+      "work_cell_id": "work:batch-03",
+      "purpose": "Review batch 03 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-03"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-03:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-04",
+      "work_cell_id": "work:batch-04",
+      "purpose": "Review batch 04 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-04"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-04:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-05",
+      "work_cell_id": "work:batch-05",
+      "purpose": "Review batch 05 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-05"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-05:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-06",
+      "work_cell_id": "work:batch-06",
+      "purpose": "Review batch 06 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-06"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-06:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-07",
+      "work_cell_id": "work:batch-07",
+      "purpose": "Review batch 07 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-07"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-07:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-08",
+      "work_cell_id": "work:batch-08",
+      "purpose": "Review batch 08 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-08"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-08:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-09",
+      "work_cell_id": "work:batch-09",
+      "purpose": "Review batch 09 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-09"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-09:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-10",
+      "work_cell_id": "work:batch-10",
+      "purpose": "Review batch 10 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-10"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-10:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-11",
+      "work_cell_id": "work:batch-11",
+      "purpose": "Review batch 11 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-11"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-11:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-12",
+      "work_cell_id": "work:batch-12",
+      "purpose": "Review batch 12 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-12"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-12:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-13",
+      "work_cell_id": "work:batch-13",
+      "purpose": "Review batch 13 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-13"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-13:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-14",
+      "work_cell_id": "work:batch-14",
+      "purpose": "Review batch 14 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-14:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-15",
+      "work_cell_id": "work:batch-15",
+      "purpose": "Review batch 15 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-15"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-15:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-16",
+      "work_cell_id": "work:batch-16",
+      "purpose": "Review batch 16 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-16"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-16:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-17",
+      "work_cell_id": "work:batch-17",
+      "purpose": "Review batch 17 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-17"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-17:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-18",
+      "work_cell_id": "work:batch-18",
+      "purpose": "Review batch 18 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-18"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-18:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-19",
+      "work_cell_id": "work:batch-19",
+      "purpose": "Review batch 19 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-19"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-19:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:batch-20",
+      "work_cell_id": "work:batch-20",
+      "purpose": "Review batch 20 containing 50 of 1,000 source items",
+      "inputs": [
+        {
+          "name": "sources",
+          "schema_id": "schema:source-batch",
+          "artifact_selector": "manifest:batch-20"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "batch-20:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:reduce-1",
+      "work_cell_id": "work:reduce-1",
+      "purpose": "Reduce five batches (1)",
+      "inputs": [
+        {
+          "name": "candidate_findings",
+          "schema_id": "schema:findings",
+          "artifact_selector": "node:batch-*#group-1"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reduced_findings",
+          "schema_id": "schema:reduced-findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "deterministic-reducer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "reduce-1:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:reduce-2",
+      "work_cell_id": "work:reduce-2",
+      "purpose": "Reduce five batches (2)",
+      "inputs": [
+        {
+          "name": "candidate_findings",
+          "schema_id": "schema:findings",
+          "artifact_selector": "node:batch-*#group-2"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reduced_findings",
+          "schema_id": "schema:reduced-findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "deterministic-reducer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "reduce-2:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:reduce-3",
+      "work_cell_id": "work:reduce-3",
+      "purpose": "Reduce five batches (3)",
+      "inputs": [
+        {
+          "name": "candidate_findings",
+          "schema_id": "schema:findings",
+          "artifact_selector": "node:batch-*#group-3"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reduced_findings",
+          "schema_id": "schema:reduced-findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "deterministic-reducer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "reduce-3:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:reduce-4",
+      "work_cell_id": "work:reduce-4",
+      "purpose": "Reduce five batches (4)",
+      "inputs": [
+        {
+          "name": "candidate_findings",
+          "schema_id": "schema:findings",
+          "artifact_selector": "node:batch-*#group-4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "reduced_findings",
+          "schema_id": "schema:reduced-findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "deterministic-reducer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "reduce-4:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "node_id": "node:synthesize",
+      "work_cell_id": "work:synthesize",
+      "purpose": "Synthesize four bounded reductions",
+      "inputs": [
+        {
+          "name": "reduced_findings",
+          "schema_id": "schema:reduced-findings",
+          "artifact_selector": "node:reduce-*#reduced_findings"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "summary",
+          "schema_id": "schema:summary"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "synthesizer",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "synthesize:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "edge:batch-01-reduce-1",
+      "from": "node:batch-01",
+      "to": "node:reduce-1",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-1 cannot proceed until batch-01 completes",
+      "dependency_witness": "reducer 1 consumes batch 01 findings",
+      "removal_counterexample": "without this edge findings for batch 01 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-02-reduce-1",
+      "from": "node:batch-02",
+      "to": "node:reduce-1",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-1 cannot proceed until batch-02 completes",
+      "dependency_witness": "reducer 1 consumes batch 02 findings",
+      "removal_counterexample": "without this edge findings for batch 02 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-03-reduce-1",
+      "from": "node:batch-03",
+      "to": "node:reduce-1",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-1 cannot proceed until batch-03 completes",
+      "dependency_witness": "reducer 1 consumes batch 03 findings",
+      "removal_counterexample": "without this edge findings for batch 03 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-04-reduce-1",
+      "from": "node:batch-04",
+      "to": "node:reduce-1",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-1 cannot proceed until batch-04 completes",
+      "dependency_witness": "reducer 1 consumes batch 04 findings",
+      "removal_counterexample": "without this edge findings for batch 04 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-05-reduce-1",
+      "from": "node:batch-05",
+      "to": "node:reduce-1",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-1 cannot proceed until batch-05 completes",
+      "dependency_witness": "reducer 1 consumes batch 05 findings",
+      "removal_counterexample": "without this edge findings for batch 05 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-06-reduce-2",
+      "from": "node:batch-06",
+      "to": "node:reduce-2",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-2 cannot proceed until batch-06 completes",
+      "dependency_witness": "reducer 2 consumes batch 06 findings",
+      "removal_counterexample": "without this edge findings for batch 06 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-07-reduce-2",
+      "from": "node:batch-07",
+      "to": "node:reduce-2",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-2 cannot proceed until batch-07 completes",
+      "dependency_witness": "reducer 2 consumes batch 07 findings",
+      "removal_counterexample": "without this edge findings for batch 07 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-08-reduce-2",
+      "from": "node:batch-08",
+      "to": "node:reduce-2",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-2 cannot proceed until batch-08 completes",
+      "dependency_witness": "reducer 2 consumes batch 08 findings",
+      "removal_counterexample": "without this edge findings for batch 08 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-09-reduce-2",
+      "from": "node:batch-09",
+      "to": "node:reduce-2",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-2 cannot proceed until batch-09 completes",
+      "dependency_witness": "reducer 2 consumes batch 09 findings",
+      "removal_counterexample": "without this edge findings for batch 09 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-10-reduce-2",
+      "from": "node:batch-10",
+      "to": "node:reduce-2",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-2 cannot proceed until batch-10 completes",
+      "dependency_witness": "reducer 2 consumes batch 10 findings",
+      "removal_counterexample": "without this edge findings for batch 10 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-11-reduce-3",
+      "from": "node:batch-11",
+      "to": "node:reduce-3",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-3 cannot proceed until batch-11 completes",
+      "dependency_witness": "reducer 3 consumes batch 11 findings",
+      "removal_counterexample": "without this edge findings for batch 11 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-12-reduce-3",
+      "from": "node:batch-12",
+      "to": "node:reduce-3",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-3 cannot proceed until batch-12 completes",
+      "dependency_witness": "reducer 3 consumes batch 12 findings",
+      "removal_counterexample": "without this edge findings for batch 12 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-13-reduce-3",
+      "from": "node:batch-13",
+      "to": "node:reduce-3",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-3 cannot proceed until batch-13 completes",
+      "dependency_witness": "reducer 3 consumes batch 13 findings",
+      "removal_counterexample": "without this edge findings for batch 13 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-14-reduce-3",
+      "from": "node:batch-14",
+      "to": "node:reduce-3",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-3 cannot proceed until batch-14 completes",
+      "dependency_witness": "reducer 3 consumes batch 14 findings",
+      "removal_counterexample": "without this edge findings for batch 14 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-15-reduce-3",
+      "from": "node:batch-15",
+      "to": "node:reduce-3",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-3 cannot proceed until batch-15 completes",
+      "dependency_witness": "reducer 3 consumes batch 15 findings",
+      "removal_counterexample": "without this edge findings for batch 15 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-16-reduce-4",
+      "from": "node:batch-16",
+      "to": "node:reduce-4",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-4 cannot proceed until batch-16 completes",
+      "dependency_witness": "reducer 4 consumes batch 16 findings",
+      "removal_counterexample": "without this edge findings for batch 16 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-17-reduce-4",
+      "from": "node:batch-17",
+      "to": "node:reduce-4",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-4 cannot proceed until batch-17 completes",
+      "dependency_witness": "reducer 4 consumes batch 17 findings",
+      "removal_counterexample": "without this edge findings for batch 17 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-18-reduce-4",
+      "from": "node:batch-18",
+      "to": "node:reduce-4",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-4 cannot proceed until batch-18 completes",
+      "dependency_witness": "reducer 4 consumes batch 18 findings",
+      "removal_counterexample": "without this edge findings for batch 18 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-19-reduce-4",
+      "from": "node:batch-19",
+      "to": "node:reduce-4",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-4 cannot proceed until batch-19 completes",
+      "dependency_witness": "reducer 4 consumes batch 19 findings",
+      "removal_counterexample": "without this edge findings for batch 19 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:batch-20-reduce-4",
+      "from": "node:batch-20",
+      "to": "node:reduce-4",
+      "kind": "data",
+      "output": "findings",
+      "input": "candidate_findings",
+      "schema_id": "schema:findings",
+      "blocking_predicate": "reduce-4 cannot proceed until batch-20 completes",
+      "dependency_witness": "reducer 4 consumes batch 20 findings",
+      "removal_counterexample": "without this edge findings for batch 20 are absent from reduction",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:reduce-1-synthesize",
+      "from": "node:reduce-1",
+      "to": "node:synthesize",
+      "kind": "data",
+      "output": "reduced_findings",
+      "input": "reduced_findings",
+      "schema_id": "schema:reduced-findings",
+      "blocking_predicate": "synthesize cannot proceed until reduce-1 completes",
+      "dependency_witness": "synthesis consumes reduction group 1",
+      "removal_counterexample": "without this edge group 1 is omitted from synthesis",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:reduce-2-synthesize",
+      "from": "node:reduce-2",
+      "to": "node:synthesize",
+      "kind": "data",
+      "output": "reduced_findings",
+      "input": "reduced_findings",
+      "schema_id": "schema:reduced-findings",
+      "blocking_predicate": "synthesize cannot proceed until reduce-2 completes",
+      "dependency_witness": "synthesis consumes reduction group 2",
+      "removal_counterexample": "without this edge group 2 is omitted from synthesis",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:reduce-3-synthesize",
+      "from": "node:reduce-3",
+      "to": "node:synthesize",
+      "kind": "data",
+      "output": "reduced_findings",
+      "input": "reduced_findings",
+      "schema_id": "schema:reduced-findings",
+      "blocking_predicate": "synthesize cannot proceed until reduce-3 completes",
+      "dependency_witness": "synthesis consumes reduction group 3",
+      "removal_counterexample": "without this edge group 3 is omitted from synthesis",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    },
+    {
+      "edge_id": "edge:reduce-4-synthesize",
+      "from": "node:reduce-4",
+      "to": "node:synthesize",
+      "kind": "data",
+      "output": "reduced_findings",
+      "input": "reduced_findings",
+      "schema_id": "schema:reduced-findings",
+      "blocking_predicate": "synthesize cannot proceed until reduce-4 completes",
+      "dependency_witness": "synthesis consumes reduction group 4",
+      "removal_counterexample": "without this edge group 4 is omitted from synthesis",
+      "resource_scope": [],
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "verification_policy_ids": [],
+  "budget_policy_ids": [],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {
+    "source": "behavior-fixture:fresh-context",
+    "created_by": "actor:designer"
+  }
+}

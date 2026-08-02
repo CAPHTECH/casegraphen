@@ -1,0 +1,1 @@
+{"goal":"Discover bug candidates until dry","candidate_key":["file","symbol","failure_signature"],"dry_rounds_required":2,"max_iterations":8,"max_spawned_nodes":200,"max_cost":50,"note":"Rejected and unreviewed candidates may be rediscovered"}

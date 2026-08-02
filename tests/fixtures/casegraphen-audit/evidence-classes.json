@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "statement": "canonical reconciliation emitted missing_report for node:0199",
+      "class": "deterministic_violation"
+    },
+    {
+      "statement": "199 runtime reports were received",
+      "class": "observation"
+    },
+    {
+      "statement": "runtime-declared model/context/identity values are untrusted",
+      "class": "runtime_declared"
+    },
+    {
+      "statement": "the verifier may be correlated with the producer",
+      "class": "inference"
+    }
+  ]
+}

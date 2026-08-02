@@ -14,8 +14,9 @@ through `env_allowlist`, which is residual risk 3 of that policy. When a runtime
 executes the work, read `references/governing.md` instead and record its reports
 as evidence.
 
-Order: register the binding → propose the plan → check it → accept it → run one
-step. Each step freezes something the next one verifies.
+Order: register the binding → propose the plan → check it → accept it → choose
+one step, one frontier round, or a bounded sequence of rounds. Each stage
+freezes something the next one verifies.
 
 ## 1. Binding
 
@@ -117,9 +118,10 @@ persistent setting. Omitting it does not merely refuse: the run directory is
 already reserved and a trace anchored, so the revision moves, the attempt is
 spent, and the next call needs `--retry-step`. Decide before invoking.
 
-One invocation advances at most one step. Loop by re-reading the revision and
-calling again; there is no daemon, scheduler, or retry engine, and adding one is
-out of scope.
+`run --step` advances at most one step. For independent deterministic workers,
+`run --frontier` advances one round concurrently and appends results in stable
+plan-step order (ADR 0004). Neither form is a daemon, scheduler, or retry
+engine: retry remains an explicit operator decision.
 
 `casegraphen operate` (ADR 0016) does the round-selection part of that loop for
 you: it repeats `run --frontier`'s own selection, round after round, until a

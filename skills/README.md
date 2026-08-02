@@ -7,6 +7,9 @@ crate. (The repository's own development skills stay in `.claude/skills/`.)
 | Skill | Use when |
 |---|---|
 | [`casegraphen-operate`](casegraphen-operate/SKILL.md) | Driving work through a case space: lifting one, reading readiness, applying morphisms, attaching and promoting evidence, dispatching workers with `run --step`, and governing an agent runtime's graph by recording what it produced as reviewable evidence |
+| [`casegraphen-design`](casegraphen-design/SKILL.md) | Turning a problem statement into an unreviewed, typed, linted execution-topology proposal before selecting or running a runtime |
+| [`casegraphen-audit`](casegraphen-audit/SKILL.md) | Auditing static topology and canonical planned-versus-reported completeness without promoting runtime declarations |
+| [`casegraphen-integrate`](casegraphen-integrate/SKILL.md) | Ingesting generic external-runtime JSONL, reconciling canonical completeness, and stopping at unreviewed evidence/morphism proposals |
 
 ## Install
 
@@ -39,6 +42,12 @@ Copying by hand is fine too — the skill is plain Markdown:
 ```sh
 cp -R /path/to/casegraphen/skills/casegraphen-operate ~/.claude/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-operate ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-design ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-design ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-audit ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-audit ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-integrate ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-integrate ~/.codex/skills/
 ```
 
 Claude Code discovers skills in `.claude/skills/` (project) and

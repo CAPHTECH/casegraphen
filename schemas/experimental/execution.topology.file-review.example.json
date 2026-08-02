@@ -1,0 +1,49 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:file-review",
+  "case_space_id": "case_space:file-review",
+  "nodes": [
+    {
+      "node_id": "node:review-a", "work_cell_id": "work:review-a", "purpose": "Review source file A",
+      "inputs": [{"name":"source","schema_id":"schema:source-file","artifact_selector":"src/a.rs"}],
+      "outputs": [{"name":"findings","schema_id":"schema:findings"}], "side_effects":"none",
+      "resource_claims": [{"resource":"file:src/a.rs","mode":"read","rate_limit_group":null,"workspace_strategy":"shared","network_scope":[],"secret_scope":[]}],
+      "executor_class":"llm-reviewer","verification_policy_id":"verification:independent","budget_policy_id":"budget:small","idempotency_key":"review-a:<source-hash>","delivery":"streaming","expansion_policy_id":null,"estimated_duration_ms":1000,
+      "provenance":{"source":"design:fixture","created_by":"actor:designer"}
+    },
+    {
+      "node_id": "node:review-b", "work_cell_id": "work:review-b", "purpose": "Review source file B",
+      "inputs": [{"name":"source","schema_id":"schema:source-file","artifact_selector":"src/b.rs"}],
+      "outputs": [{"name":"findings","schema_id":"schema:findings"}], "side_effects":"none",
+      "resource_claims": [{"resource":"file:src/b.rs","mode":"read","rate_limit_group":null,"workspace_strategy":"shared","network_scope":[],"secret_scope":[]}],
+      "executor_class":"llm-reviewer","verification_policy_id":"verification:independent","budget_policy_id":"budget:small","idempotency_key":"review-b:<source-hash>","delivery":"streaming","expansion_policy_id":null,"estimated_duration_ms":1000,
+      "provenance":{"source":"design:fixture","created_by":"actor:designer"}
+    },
+    {
+      "node_id": "node:reduce", "work_cell_id": "work:reduce", "purpose": "Reduce file findings",
+      "inputs": [{"name":"candidate_findings","schema_id":"schema:findings","artifact_selector":"node:review-*#findings"}],
+      "outputs": [{"name":"summary","schema_id":"schema:finding-summary"}], "side_effects":"none", "resource_claims":[],
+      "executor_class":"deterministic-reducer","verification_policy_id":null,"budget_policy_id":"budget:small","idempotency_key":"reduce:<input-set-hash>","delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":100,
+      "provenance":{"source":"design:fixture","created_by":"actor:designer"}
+    },
+    {
+      "node_id": "node:verify", "work_cell_id": "work:verify", "purpose": "Independently verify the reduced summary",
+      "inputs": [{"name":"summary","schema_id":"schema:finding-summary","artifact_selector":"node:reduce#summary"}],
+      "outputs": [{"name":"verified_summary","schema_id":"schema:verified-summary"}], "side_effects":"none", "resource_claims":[],
+      "executor_class":"independent-verifier","verification_policy_id":"verification:independent","budget_policy_id":"budget:small","idempotency_key":"verify:<summary-hash>","delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":500,
+      "provenance":{"source":"design:fixture","created_by":"actor:designer"}
+    }
+  ],
+  "edges": [
+    {"edge_id":"edge:a-reduce","from":"node:review-a","to":"node:reduce","kind":"data","output":"findings","input":"candidate_findings","schema_id":"schema:findings","blocking_predicate":"review A findings are absent","dependency_witness":"reducer input selects review A findings","removal_counterexample":"without this edge the reduction may omit file A","resource_scope":[],"provenance":{"source":"design:fixture","created_by":"actor:designer"}},
+    {"edge_id":"edge:b-reduce","from":"node:review-b","to":"node:reduce","kind":"data","output":"findings","input":"candidate_findings","schema_id":"schema:findings","blocking_predicate":"review B findings are absent","dependency_witness":"reducer input selects review B findings","removal_counterexample":"without this edge the reduction may omit file B","resource_scope":[],"provenance":{"source":"design:fixture","created_by":"actor:designer"}},
+    {"edge_id":"edge:reduce-verify-data","from":"node:reduce","to":"node:verify","kind":"data","output":"summary","input":"summary","schema_id":"schema:finding-summary","blocking_predicate":"reduced summary artifact is absent","dependency_witness":"verifier input selects the reducer summary output","removal_counterexample":"without this edge the verifier has no typed summary input","resource_scope":[],"provenance":{"source":"design:fixture","created_by":"actor:designer"}},
+    {"edge_id":"edge:reduce-verify-authority","from":"node:reduce","to":"node:verify","kind":"review_or_authority","output":null,"input":null,"schema_id":null,"blocking_predicate":"summary has not reached the independent verification seam","dependency_witness":"verification policy requires a separately governed verification node","removal_counterexample":"without this edge the summary could bypass independent review","resource_scope":[],"provenance":{"source":"design:fixture","created_by":"actor:designer"}}
+  ],
+  "verification_policy_ids": ["verification:independent"],
+  "budget_policy_ids": ["budget:small"],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {"source":"design:fixture","created_by":"actor:designer"}
+}

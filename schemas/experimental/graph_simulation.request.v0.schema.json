@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_simulation.request.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "topology_content_hash", "seed", "iterations", "max_parallelism", "resource_capacities", "fan_in_penalty_ms_per_input", "streaming_overlap_basis_points", "retry_policy", "expansion_bounds", "budgets", "calibrations", "routing_candidates"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_simulation.request.v0"},
+    "schema_version": {"const": 0},
+    "topology_content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "seed": {"type": "integer", "minimum": 0},
+    "iterations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "max_parallelism": {"type": "integer", "minimum": 1},
+    "resource_capacities": {
+      "type": "object",
+      "propertyNames": {"minLength": 1},
+      "additionalProperties": {"type": "integer", "minimum": 1}
+    },
+    "fan_in_penalty_ms_per_input": {"type": "integer", "minimum": 0},
+    "streaming_overlap_basis_points": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+    "retry_policy": {
+      "type": "object", "additionalProperties": false, "required": ["maximum_attempts"],
+      "properties": {"maximum_attempts": {"type": "integer", "minimum": 1, "maximum": 100}}
+    },
+    "expansion_bounds": {"type": "object", "additionalProperties": {"$ref": "#/$defs/range"}},
+    "budgets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["maximum_latency_ms", "maximum_cost_microunits", "maximum_total_tokens"],
+      "properties": {
+        "maximum_latency_ms": {"type": ["integer", "null"], "minimum": 0},
+        "maximum_cost_microunits": {"type": ["integer", "null"], "minimum": 0},
+        "maximum_total_tokens": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "calibrations": {"type": "array", "items": {"$ref": "#/$defs/calibration"}},
+    "routing_candidates": {"type": "array", "items": {"$ref": "#/$defs/route"}}
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": {"type": "integer", "minimum": 0},
+        "maximum": {"type": "integer", "minimum": 0}
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "executor_class", "latency_ms", "cost_microunits", "failure_basis_points", "input_tokens", "output_tokens"],
+      "properties": {
+        "node_id": {"type": ["string", "null"], "minLength": 1},
+        "executor_class": {"type": ["string", "null"], "minLength": 1},
+        "latency_ms": {"oneOf": [{"$ref": "#/$defs/range"}, {"type": "null"}]},
+        "cost_microunits": {"oneOf": [{"$ref": "#/$defs/range"}, {"type": "null"}]}
+        ,"failure_basis_points": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000}
+        ,"input_tokens": {"oneOf": [{"$ref": "#/$defs/range"}, {"type": "null"}]}
+        ,"output_tokens": {"oneOf": [{"$ref": "#/$defs/range"}, {"type": "null"}]}
+      },
+      "oneOf": [
+        {"properties": {"node_id": {"type": "string"}, "executor_class": {"type": "null"}}},
+        {"properties": {"node_id": {"type": "null"}, "executor_class": {"type": "string"}}}
+      ]
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_id", "executor_class", "latency_ms", "cost_microunits"],
+      "properties": {
+        "route_id": {"type": "string", "minLength": 1},
+        "executor_class": {"type": "string", "minLength": 1},
+        "latency_ms": {"$ref": "#/$defs/range"},
+        "cost_microunits": {"$ref": "#/$defs/range"}
+      }
+    }
+  }
+}

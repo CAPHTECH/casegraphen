@@ -12,6 +12,9 @@ errors to work around.
 
 For a worked example of every command below with its real output, read the
 [release-decision walkthrough](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/release-decision-walkthrough.md).
+The checked-in command, flag, status, halt, and refusal vocabulary is generated
+from the shipped CLI surface and schemas in
+[`capabilities.generated.md`](capabilities.generated.md); CI refuses drift.
 
 ## Route
 

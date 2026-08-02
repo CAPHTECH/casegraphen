@@ -1,0 +1,18 @@
+{
+  "schema": "casegraphen.experimental.runtime.stream_event.v0",
+  "event_id": "event:review-a:0",
+  "runtime_graph_id": "topology:file-review",
+  "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "node_id": "node:review-a",
+  "attempt_id": "attempt:review-a:1",
+  "sequence": 0,
+  "logical_order": 10,
+  "observed_at": "2026-08-03T00:00:00Z",
+  "kind": "artifact_chunk",
+  "edge_id": "edge:a-reduce",
+  "artifact_id": "artifact:findings:a",
+  "schema_id": "schema:findings",
+  "chunk_index": 0,
+  "chunk_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "final_chunk": true
+}

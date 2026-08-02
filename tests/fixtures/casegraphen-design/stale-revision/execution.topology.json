@@ -1,0 +1,42 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:stale-revision",
+  "case_space_id": "case_space:stale-revision",
+  "nodes": [
+    {
+      "node_id": "node:analyze",
+      "work_cell_id": "work:analyze",
+      "purpose": "Analyze the observed case basis",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "proposal",
+          "schema_id": "schema:proposal"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "deterministic-worker",
+      "verification_policy_id": null,
+      "budget_policy_id": null,
+      "idempotency_key": "analyze:<input-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 100,
+      "provenance": {
+        "source": "behavior-fixture:fresh-context",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "edges": [],
+  "verification_policy_ids": [],
+  "budget_policy_ids": [],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {
+    "source": "behavior-fixture:fresh-context",
+    "created_by": "actor:designer"
+  }
+}

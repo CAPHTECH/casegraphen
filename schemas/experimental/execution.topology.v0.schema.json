@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.execution.topology.v0",
+  "title": "Experimental CaseGraphen Execution Topology v0",
+  "description": "An unreviewed deployable graph-shape proposal. Validation never makes it accepted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "topology_id", "case_space_id", "nodes", "edges", "verification_policy_ids", "budget_policy_ids", "expansion_policy_ids", "completeness_policy", "provenance"],
+  "properties": {
+    "schema": { "const": "casegraphen.experimental.execution.topology.v0" },
+    "schema_version": { "const": 0 },
+    "topology_id": { "$ref": "#/$defs/non_empty" },
+    "case_space_id": { "$ref": "#/$defs/non_empty" },
+    "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } },
+    "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+    "verification_policy_ids": { "$ref": "#/$defs/id_list" },
+    "budget_policy_ids": { "$ref": "#/$defs/id_list" },
+    "expansion_policy_ids": { "$ref": "#/$defs/id_list" },
+    "completeness_policy": { "const": "all_expected_nodes_reported" },
+    "provenance": { "$ref": "#/$defs/provenance" }
+  },
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "nullable_non_empty": { "type": ["string", "null"], "minLength": 1 },
+    "id_list": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/non_empty" } },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "created_by"],
+      "properties": {
+        "source": { "$ref": "#/$defs/non_empty" },
+        "created_by": { "$ref": "#/$defs/non_empty" }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "schema_id", "artifact_selector"],
+      "properties": {
+        "name": { "$ref": "#/$defs/non_empty" },
+        "schema_id": { "$ref": "#/$defs/non_empty" },
+        "artifact_selector": { "$ref": "#/$defs/non_empty" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "schema_id"],
+      "properties": {
+        "name": { "$ref": "#/$defs/non_empty" },
+        "schema_id": { "$ref": "#/$defs/non_empty" }
+      }
+    },
+    "resource_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource", "mode", "rate_limit_group", "workspace_strategy", "network_scope", "secret_scope"],
+      "properties": {
+        "resource": { "$ref": "#/$defs/non_empty" },
+        "mode": { "enum": ["read", "write", "exclusive"] },
+        "rate_limit_group": { "$ref": "#/$defs/nullable_non_empty" },
+        "workspace_strategy": { "type": ["string", "null"], "enum": ["shared", "isolated_worktree", "ephemeral", null] },
+        "network_scope": { "$ref": "#/$defs/id_list" },
+        "secret_scope": { "$ref": "#/$defs/id_list" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "work_cell_id", "purpose", "inputs", "outputs", "side_effects", "resource_claims", "executor_class", "verification_policy_id", "budget_policy_id", "idempotency_key", "delivery", "expansion_policy_id", "estimated_duration_ms", "provenance"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/non_empty" },
+        "work_cell_id": { "$ref": "#/$defs/non_empty" },
+        "purpose": { "$ref": "#/$defs/non_empty" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/input" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/output" } },
+        "side_effects": { "enum": ["none", "workspace", "external", "workspace_and_external"] },
+        "resource_claims": { "type": "array", "items": { "$ref": "#/$defs/resource_claim" } },
+        "executor_class": { "$ref": "#/$defs/non_empty" },
+        "verification_policy_id": { "$ref": "#/$defs/nullable_non_empty" },
+        "budget_policy_id": { "$ref": "#/$defs/nullable_non_empty" },
+        "idempotency_key": { "$ref": "#/$defs/non_empty" },
+        "delivery": { "enum": ["barrier", "streaming"] },
+        "expansion_policy_id": { "$ref": "#/$defs/nullable_non_empty" },
+        "estimated_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_id", "from", "to", "kind", "output", "input", "schema_id", "blocking_predicate", "dependency_witness", "removal_counterexample", "resource_scope", "provenance"],
+      "properties": {
+        "edge_id": { "$ref": "#/$defs/non_empty" },
+        "from": { "$ref": "#/$defs/non_empty" },
+        "to": { "$ref": "#/$defs/non_empty" },
+        "kind": { "enum": ["data", "control", "evidence", "review_or_authority", "resource_exclusion", "temporal"] },
+        "output": { "$ref": "#/$defs/nullable_non_empty" },
+        "input": { "$ref": "#/$defs/nullable_non_empty" },
+        "schema_id": { "$ref": "#/$defs/nullable_non_empty" },
+        "blocking_predicate": { "$ref": "#/$defs/non_empty" },
+        "dependency_witness": { "$ref": "#/$defs/non_empty" },
+        "removal_counterexample": { "$ref": "#/$defs/non_empty" },
+        "resource_scope": { "$ref": "#/$defs/id_list" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

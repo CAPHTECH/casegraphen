@@ -1,0 +1,34 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.topology.redesign_proposal.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","proposal_id","review_status","base_topology_content_hash","proposed_topology_content_hash","evidence","changes","expected_impact","uncertainty","information_loss","reviewer_authority","simulation"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.topology.redesign_proposal.v0"},
+    "schema_version":{"const":0},
+    "proposal_id":{"type":"string","pattern":"^redesign:sha256-[0-9a-f]{64}$"},
+    "review_status":{"const":"unreviewed"},
+    "base_topology_content_hash":{"$ref":"#/$defs/hash"},
+    "proposed_topology_content_hash":{"$ref":"#/$defs/hash"},
+    "evidence":{"type":"object","additionalProperties":false,"required":["audit_artifact_ids","integration_proposal_ids","expansion_proposal_ids"],"properties":{"audit_artifact_ids":{"$ref":"#/$defs/nonempty_artifacts"},"integration_proposal_ids":{"$ref":"#/$defs/ids"},"expansion_proposal_ids":{"$ref":"#/$defs/ids"}}},
+    "changes":{"$ref":"#/$defs/changes"},
+    "expected_impact":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/impact"}},
+    "uncertainty":{"$ref":"#/$defs/nonempty_strings"},
+    "information_loss":{"$ref":"#/$defs/nonempty_strings"},
+    "reviewer_authority":{"type":"object","additionalProperties":false,"required":["authority_policy_id","required_capability_ids"],"properties":{"authority_policy_id":{"$ref":"#/$defs/id"},"required_capability_ids":{"$ref":"#/$defs/nonempty_strings"}}},
+    "simulation":{"type":"object","additionalProperties":false,"required":["input_artifact_id","old_report_artifact_id","proposed_report_artifact_id"],"properties":{"input_artifact_id":{"$ref":"#/$defs/artifact"},"old_report_artifact_id":{"$ref":"#/$defs/artifact"},"proposed_report_artifact_id":{"$ref":"#/$defs/artifact"}}}
+  },
+  "$defs":{
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "id":{"type":"string","minLength":1},
+    "ids":{"type":"array","items":{"$ref":"#/$defs/id"}},
+    "artifact":{"type":"string","pattern":"^artifact:sha256-[0-9a-f]{64}$"},
+    "nonempty_artifacts":{"type":"array","minItems":1,"items":{"$ref":"#/$defs/artifact"}},
+    "nonempty_strings":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}},
+    "entity_change":{"type":"object","additionalProperties":false,"required":["id","old_content_hash","new_content_hash"],"properties":{"id":{"$ref":"#/$defs/id"},"old_content_hash":{"$ref":"#/$defs/hash"},"new_content_hash":{"$ref":"#/$defs/hash"}}},
+    "set_change":{"type":"object","additionalProperties":false,"required":["added","removed"],"properties":{"added":{"$ref":"#/$defs/ids"},"removed":{"$ref":"#/$defs/ids"}}},
+    "policy_changes":{"type":"object","additionalProperties":false,"required":["verification","budget","expansion"],"properties":{"verification":{"$ref":"#/$defs/set_change"},"budget":{"$ref":"#/$defs/set_change"},"expansion":{"$ref":"#/$defs/set_change"}}},
+    "changes":{"type":"object","additionalProperties":false,"required":["old_topology_content_hash","proposed_topology_content_hash","added_node_ids","removed_node_ids","changed_nodes","added_edge_ids","removed_edge_ids","changed_edges","policy_changes"],"properties":{"old_topology_content_hash":{"$ref":"#/$defs/hash"},"proposed_topology_content_hash":{"$ref":"#/$defs/hash"},"added_node_ids":{"$ref":"#/$defs/ids"},"removed_node_ids":{"$ref":"#/$defs/ids"},"changed_nodes":{"type":"array","items":{"$ref":"#/$defs/entity_change"}},"added_edge_ids":{"$ref":"#/$defs/ids"},"removed_edge_ids":{"$ref":"#/$defs/ids"},"changed_edges":{"type":"array","items":{"$ref":"#/$defs/entity_change"}},"policy_changes":{"$ref":"#/$defs/policy_changes"}}},
+    "impact":{"type":"object","additionalProperties":false,"required":["metric","expected_direction","estimated_delta","rationale"],"properties":{"metric":{"$ref":"#/$defs/id"},"expected_direction":{"$ref":"#/$defs/id"},"estimated_delta":{"type":["number","null"]},"rationale":{"$ref":"#/$defs/id"}}}
+  }
+}

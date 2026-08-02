@@ -43,6 +43,16 @@ install_skills_into() {
     fi
 
     cp -R "$(dirname "$skill")" "$target/$name"
+    if [ "$name" = casegraphen-design ]; then
+      cp "$source_dir/schemas/experimental/execution.topology.v0.schema.json" \
+        "$target/$name/references/execution.topology.v0.schema.json"
+      cp "$source_dir/docs/design/execution-topology-contract.md" \
+        "$target/$name/references/execution-topology-contract.md"
+    fi
+    if [ "$name" = casegraphen-audit ]; then
+      cp "$source_dir/schemas/experimental/runtime.node_report.schema.json" \
+        "$target/$name/references/runtime.node_report.schema.json"
+    fi
     printf 'installed %s\n' "$name"
     installed=$((installed + 1))
   done

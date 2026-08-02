@@ -1,0 +1,7 @@
+{
+  "scenario": "stale_revision_preservation",
+  "observed_revision_id": "revision:observed-41",
+  "current_revision_id": "revision:current-99",
+  "must_not_rebase": true,
+  "proposal_only": true
+}

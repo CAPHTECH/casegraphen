@@ -1,0 +1,11 @@
+{
+  "schema": "casegraphen.experimental.resource.reservation_disposition.v0",
+  "schema_version": 0,
+  "assertion_id": "assertion:release-refactor-a",
+  "reservation_id": "reservation:refactor-a:attempt-1",
+  "attempt_id": "attempt:refactor-a:1",
+  "kind": "release",
+  "asserted_by": "operator:release-manager",
+  "reason": "holder termination and branch integration independently established",
+  "superseding_reservation_id": null
+}

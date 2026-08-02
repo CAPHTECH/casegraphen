@@ -1,0 +1,7 @@
+{
+  "scenario": "independent_file_fanout",
+  "node_count": 20,
+  "edge_count": 0,
+  "minimum_parallel_width": 20,
+  "proposal_only": true
+}

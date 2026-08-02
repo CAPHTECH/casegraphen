@@ -92,6 +92,39 @@ fn accepted_commands_are_documented() {
 }
 
 #[test]
+fn documented_flags_reach_the_command_parser() {
+    let mut failures = Vec::new();
+
+    for (path, flags) in usage_command_surfaces() {
+        if matches!(path.as_slice(), [version] if version == "version" || version == "--version") {
+            continue;
+        }
+        for flag in flags {
+            let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+                .args(&path)
+                .arg(&flag)
+                .output()
+                .unwrap_or_else(|error| {
+                    panic!("run `casegraphen {} {flag}`: {error}", path.join(" "))
+                });
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("unsupported argument") {
+                failures.push(format!(
+                    "src/cli_usage.txt declares {flag} for `casegraphen {}`, but its parser refused it:\n{stderr}",
+                    path.join(" ")
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "documented flags that do not reach their command parser:\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
 fn readme_command_surface_is_documented_in_usage() {
     let readme = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"));
     let documented = usage_paths();
@@ -162,6 +195,36 @@ fn usage_paths() -> BTreeSet<Vec<String>> {
         })
         .flat_map(expand_command_clause)
         .collect()
+}
+
+fn usage_command_surfaces() -> Vec<(Vec<String>, BTreeSet<String>)> {
+    let mut surfaces = Vec::new();
+    for line in USAGE.lines().map(str::trim) {
+        if !line.starts_with("casegraphen ") {
+            continue;
+        }
+        let signature = line.split("  (").next().unwrap_or(line);
+        let flags = signature
+            .split(|character: char| character.is_whitespace() || matches!(character, '[' | ']'))
+            .filter_map(|token| {
+                token
+                    .strip_prefix("--")
+                    .map(|flag| flag.trim_end_matches("...").to_owned())
+                    .filter(|flag| !flag.is_empty())
+                    .map(|flag| format!("--{flag}"))
+            })
+            .collect::<BTreeSet<_>>();
+        for path in expand_command_clause(signature) {
+            if path.len() > 1
+                && path.last().is_some_and(|token| token.starts_with("--"))
+                && !matches!(path.as_slice(), [run, mode] if run == "run" && (mode == "--step" || mode == "--frontier"))
+            {
+                continue;
+            }
+            surfaces.push((path, flags.clone()));
+        }
+    }
+    surfaces
 }
 
 fn readme_command_paths(readme: &str) -> BTreeSet<Vec<String>> {

@@ -18,6 +18,10 @@ exclude = [".claude", ".github"]
 name = "casegraphen"
 path = "src/main.rs"
 
+[[bin]]
+name = "casegraphen-mcp"
+path = "src/bin/casegraphen-mcp.rs"
+
 [dependencies]
 higher-graphen-core = "0.7.1"
 higher-graphen-structure = "0.7.1"

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.verification_policy.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "verification_policy_id", "producer_constraints", "verifier_constraints", "actor_must_differ", "lenses", "quorum", "required_anchors", "allowed_runtime_attestations", "provenance"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.verification_policy.v0"},
+    "verification_policy_id": {"$ref": "#/$defs/id"},
+    "producer_constraints": {"$ref": "#/$defs/capabilities"},
+    "verifier_constraints": {"$ref": "#/$defs/capabilities"},
+    "actor_must_differ": {"type": "boolean"},
+    "lenses": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "quorum": {"type": "object", "additionalProperties": false, "required": ["minimum_accepts", "total_verifiers"], "properties": {"minimum_accepts": {"type": "integer", "minimum": 1}, "total_verifiers": {"type": "integer", "minimum": 1}}},
+    "required_anchors": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "allowed_runtime_attestations": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "provenance": {"type": "object", "additionalProperties": false, "required": ["source", "created_by"], "properties": {"source": {"$ref": "#/$defs/id"}, "created_by": {"$ref": "#/$defs/id"}}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "capabilities": {"type": "object", "additionalProperties": false, "required": ["capability_ids"], "properties": {"capability_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true}}}
+  }
+}

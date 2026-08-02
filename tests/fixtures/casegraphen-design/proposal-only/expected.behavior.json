@@ -1,0 +1,17 @@
+{
+  "scenario": "proposal_not_mutation",
+  "only_allowed_cli": [
+    "graph lint"
+  ],
+  "forbidden_cli": [
+    "morphism apply",
+    "plan accept",
+    "review accept",
+    "cell transition",
+    "evidence attach",
+    "packet apply",
+    "run",
+    "operate"
+  ],
+  "proposal_only": true
+}

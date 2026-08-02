@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.expansion.policy.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","expansion_policy_id","candidate_schema_id","dedupe_key","dedupe_scope","dry_rounds_required","max_iterations","max_spawned_nodes","max_cost","cost_currency","max_latency_ms","candidate_disposition","provenance"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.expansion.policy.v0"},
+    "schema_version":{"const":0},
+    "expansion_policy_id":{"type":"string","minLength":1},
+    "candidate_schema_id":{"type":"string","minLength":1},
+    "dedupe_key":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "dedupe_scope":{"const":"all_seen"},
+    "dry_rounds_required":{"type":"integer","minimum":1},
+    "max_iterations":{"type":"integer","minimum":1},
+    "max_spawned_nodes":{"type":"integer","minimum":1},
+    "max_cost":{"type":"number","exclusiveMinimum":0},
+    "cost_currency":{"type":"string","minLength":1},
+    "max_latency_ms":{"type":"integer","minimum":1},
+    "candidate_disposition":{"const":"unreviewed_morphism_proposal"},
+    "provenance":{"type":"object","additionalProperties":false,"required":["source","created_by"],"properties":{"source":{"type":"string","minLength":1},"created_by":{"type":"string","minLength":1}}}
+  }
+}

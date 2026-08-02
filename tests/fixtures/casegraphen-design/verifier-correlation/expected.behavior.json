@@ -1,0 +1,7 @@
+{
+  "scenario": "verifier_correlation",
+  "shared_executor_class": "model:shared-context",
+  "verification_policy_id": "verification:security",
+  "must_preserve_lint_warning": true,
+  "proposal_only": true
+}

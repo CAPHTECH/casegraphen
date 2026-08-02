@@ -1,6 +1,7 @@
 usage:
   casegraphen version
   casegraphen --version
+  casegraphen graph lint --input <execution.topology.json> --format json|text [--output <path>]
   casegraphen lift native --store <dir> --input <native.case.space.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift workflow --store <dir> --input <workflow.graph.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift case-graph --store <dir> --input <case.graph.json> --revision-id <id> --format json [--output <path>]
@@ -8,7 +9,7 @@ usage:
   casegraphen space new --store <dir> --case-space-id <id> --space-id <id> --title <text> --revision-id <id> --format json [--output <path>]
   casegraphen space list --store <dir> --format json [--output <path>]
   casegraphen space inspect|history|replay|validate|frontier|evidence|project --store <dir> --case-space-id <id> --format json [--output <path>]
-  casegraphen space reason --store <dir> --case-space-id <id> [--strict] --format json|text [--output <path>]
+  casegraphen space reason --store <dir> --case-space-id <id> [--since-revision <revision-id>] [--strict] --format json|text [--output <path>]
   casegraphen space rebuild --store <dir> --case-space-id <id> [--adopt-existing-log] --format json [--output <path>]
   casegraphen space topology --store <dir> --case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>]] [--output <path>]
   casegraphen space topology diff --left-store <dir> --left-case-space-id <id> --right-store <dir> --right-case-space-id <id> --format json [--higher-order [--max-dimension <n>] [--min-persistence <n>]] [--output <path>]

@@ -1,0 +1,12 @@
+{
+  "schema": "casegraphen.experimental.resource.reconciliation.v0",
+  "schema_version": 0,
+  "declaration_id": "declaration:refactor-a",
+  "reservation_id": "reservation:refactor-a:attempt-1",
+  "attempt_id": "attempt:refactor-a:1",
+  "declared_claim_count": 1,
+  "granted_resource_count": 1,
+  "actual_allocation_count": 1,
+  "complete": true,
+  "findings": []
+}

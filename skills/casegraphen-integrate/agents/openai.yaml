@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Integrate"
+  short_description: "Reconcile untrusted runtime JSONL"
+  default_prompt: "Use $casegraphen-integrate to ingest runtime JSONL, reconcile completeness, and stop at unreviewed proposals."

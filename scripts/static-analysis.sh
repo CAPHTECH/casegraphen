@@ -31,6 +31,9 @@ cargo fmt --all --check
 say 'installer smoke test'
 sh scripts/install-smoke-test.sh
 
+say 'casegraphen-operate conformance'
+python3 scripts/skill-conformance.py --check
+
 say 'lints (warnings are failures)'
 cargo clippy --all-targets --locked -- -D warnings
 

@@ -1,0 +1,48 @@
+{
+  "schema": "casegraphen.experimental.runtime.node_report.v0",
+  "schema_version": 0,
+  "report_id": "runtime_report:review-file-a:attempt-1",
+  "runtime_graph_id": "runtime_graph:security-review",
+  "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "node_id": "node:review-file-a",
+  "attempt_id": "attempt:review-file-a:1",
+  "retry_of_attempt_id": null,
+  "round_id": "round:1",
+  "parent_node_ids": [],
+  "input_artifact_ids": ["artifact:source-file-a"],
+  "output_artifact_ids": ["artifact:findings-a"],
+  "expected_output_schema_id": "schema:security-findings",
+  "actual_output_schema_id": "schema:security-findings",
+  "started_at": "2026-08-03T00:00:00Z",
+  "finished_at": "2026-08-03T00:00:12Z",
+  "status": "succeeded",
+  "failure_kind": null,
+  "runtime_identity": {
+    "runtime_name": "example-runtime",
+    "runtime_version": "1.0.0",
+    "adapter_name": "generic-jsonl",
+    "adapter_version": "0.1.0"
+  },
+  "reported_model": "runtime-claimed-model",
+  "reported_context_id": "runtime-claimed-context",
+  "token_usage": {
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500
+  },
+  "cost": {
+    "amount": 0.031,
+    "currency": "USD"
+  },
+  "resource_allocations": [
+    {
+      "resource_id": "file:src/routes/a.ts",
+      "mode": "read",
+      "allocation_id": "allocation:example-1"
+    }
+  ],
+  "worktree_id": null,
+  "commit_sha": null,
+  "verifier_report_ids": [],
+  "trust_boundary": "runtime_reported_untrusted_until_independently_validated_and_reviewed"
+}

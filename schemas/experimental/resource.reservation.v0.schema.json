@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.resource.reservation.v0",
+  "title": "CaseGraphen Experimental Resource Reservation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "reservation_id", "declaration_id", "attempt_id", "granted_at", "grants"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.resource.reservation.v0"},
+    "schema_version": {"const": 0},
+    "reservation_id": {"$ref": "#/$defs/id"},
+    "declaration_id": {"$ref": "#/$defs/id"},
+    "attempt_id": {"$ref": "#/$defs/id"},
+    "granted_at": {"$ref": "#/$defs/id"},
+    "grants": {"type": "array", "items": {"$ref": "#/$defs/grant"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "grant": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_id", "mode", "rate_limit_group", "rate_limit_units", "workspace_strategy", "network_scope", "secret_scope"],
+      "properties": {
+        "resource_id": {"$ref": "#/$defs/id"},
+        "mode": {"enum": ["read", "write", "exclusive"]},
+        "rate_limit_group": {"type": ["string", "null"], "minLength": 1},
+        "rate_limit_units": {"type": "integer", "minimum": 0},
+        "workspace_strategy": {"enum": ["shared", "isolated_worktree", "ephemeral", null]},
+        "network_scope": {"$ref": "#/$defs/ids"},
+        "secret_scope": {"$ref": "#/$defs/ids"}
+      }
+    }
+  }
+}

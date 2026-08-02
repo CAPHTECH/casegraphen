@@ -1,0 +1,1 @@
+{"goal":"Audit verification independence","producer":{"executor_class":"llm-reviewer","reported_context_id":"context:shared"},"verifier":{"executor_class":"llm-reviewer","reported_context_id":"context:shared"},"note":"Runtime identity and context are runtime-declared metadata"}

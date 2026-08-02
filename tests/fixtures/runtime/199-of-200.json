@@ -1,0 +1,5 @@
+{
+  "description": "Counterexample: one of 200 expected nodes has no runtime report",
+  "expected_node_count": 200,
+  "reported_node_count": 199
+}

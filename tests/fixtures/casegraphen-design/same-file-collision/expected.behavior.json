@@ -1,0 +1,7 @@
+{
+  "scenario": "same_file_write_collision",
+  "node_count": 2,
+  "required_edge_kind": "resource_exclusion",
+  "required_resource_scope": "file:src/shared.rs",
+  "proposal_only": true
+}
