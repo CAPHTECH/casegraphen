@@ -1165,6 +1165,19 @@ impl NativeCliError {
 /// around the identical failure, which is the two-classifications-for-one-
 /// question shape this crate forbids.
 ///
+/// This is why the rule exists, not just what it is: `check_operation_gate`
+/// has exactly two live-authorization call sites, and an earlier pass typed
+/// only the mutation surface. The one it missed was `plan-review` — the
+/// single action `docs/security/worker-execution-policy.md` §3 marks
+/// "Always" (reviewer id, reason, and gate all required), the human
+/// checkpoint that pre-authorizes worker dispatch. Until both routed
+/// through this conversion, that one always-human gate was the only gated
+/// command whose authorization failure was machine-indistinguishable from
+/// a malformed argument — and the `casegraphen-operate` skill told an
+/// agent that `"invalid"` means rewrite the call, not escalate to a human
+/// reviewer, inverting the checkpoint's intent for exactly the command it
+/// exists to protect.
+///
 /// This is **not** the only place a `check_operation_gate` failure can
 /// surface as a refusal, and the other places must not route through this
 /// conversion: `native_store.rs`'s replay-time gate re-validation folds its
