@@ -31,7 +31,7 @@ Primary risks:
 
 ### 2.1 Execution is disabled by default
 
-`run --step` and `run --frontier` refuse shell bindings unless
+`run --step`, `run --frontier`, and `operate` refuse shell bindings unless
 `--enable-worker shell` is passed explicitly on every invocation. There is no
 configuration file that enables workers persistently; enabling is a
 per-invocation, auditable decision.
@@ -46,7 +46,7 @@ strings are:
 | Command | Operation |
 |---|---|
 | `plan accept` / `plan reject` | `plan-review` |
-| `run --step` / `run --frontier` | `dispatch` |
+| `run --step` / `run --frontier` / `operate` | `dispatch` |
 | `morphism apply` | `morphism-apply` |
 | `morphism reject` | `morphism-reject` |
 | `evidence attach` | `evidence-attach` |
@@ -156,10 +156,15 @@ made, and reading it is the wrong default.
 
 For `morphism apply`, `morphism reject`, `evidence attach`, `cell transition`,
 and all four `review` actions, the validated gate is stored as
-`morphism.metadata.operation_gate`. Both run modes use the same actor for their
-dispatch gate and appended log entries. `run --frontier` validates one dispatch
-gate for the invocation; its capability ids must cover every binding selected
-for the round.
+`morphism.metadata.operation_gate`. `run --step`, `run --frontier`, and
+`operate` all use the same actor for their dispatch gate and appended log
+entries. `run --frontier` validates one dispatch gate for the invocation; its
+capability ids must cover every binding selected for the round. `operate`
+(ADR 0016) validates that same one dispatch gate for the whole
+`--max-rounds`-bounded invocation, not once per round — the store
+re-validates the recorded gate again on every append regardless, so
+`--max-rounds` is what keeps "one gate authorizes the invocation" from
+meaning unbounded work.
 
 Capability ↔ OS permission mapping (operator duty, not enforced by the tool):
 
@@ -176,9 +181,9 @@ workers under a dedicated OS user or container is the operator's control.
 
 - A plan is executable only after an explicit accept with reviewer id and
   reason, recorded as a morphism in the hash-chained log.
-- The acceptance records `plan_content_hash`; both `run --step` and
-  `run --frontier` re-verify the stored plan (review_status normalized) against
-  that hash. Editing a plan after acceptance is detected and refused.
+- The acceptance records `plan_content_hash`; `run --step`, `run --frontier`,
+  and `operate` all re-verify the stored plan (review_status normalized)
+  against that hash. Editing a plan after acceptance is detected and refused.
 - Binding content hashes are recorded into the plan at propose time
   (`plan.metadata.worker_binding_hashes`); editing a binding after acceptance
   yields a `binding_hash_mismatch` obstruction and no dispatch.

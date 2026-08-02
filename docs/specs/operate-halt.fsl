@@ -1,32 +1,52 @@
 // Design-layer spec for CaseGraphen ADR 0016 — "a halt is a recorded reason".
 //
-// Source of truth for this formalization: the ADR 0016 draft (issue #23). Every
+// Source of truth for this formalization: ADR 0016 (issue #23). Every
 // declaration below traces to a numbered decision in it. Nothing here invents a
 // rule the ADR does not state; where the formalization forced a choice the ADR
 // left open, the choice is tagged MODEL- or ASSUME- rather than REQ-.
 //
-// Modelling bound (representation only, no behavioural content): three steps,
-// one of each initial shape, and a round budget of three.
+// REVISION HISTORY, because two of these corrections came from the code and
+// they are the reason this file is worth keeping:
+//
+//   1. The first version listed six halt reasons. `fslc` reported a reachable
+//      deadlock — budget spent, work still dispatchable, no reason named — so
+//      `RoundBudgetExhausted` became a member of the vocabulary rather than an
+//      implementation detail of the loop.
+//   2. The first version modelled `retry_decision` as a single external act and
+//      did not model `--retry-step` as a standing flag re-applied every round,
+//      which is what the CLI implemented. The proof of REQ-OPERATE-005
+//      therefore did not cover the real semantics. See ASSUME-OPERATE-001.
+//   3. The first version had one review seam with one clearing act. The real
+//      system has two producers of `NeedsReview` with *different* exits, so
+//      REQ-OPERATE-009 was proved of a machine simpler than the one built —
+//      and the implementation shipped a `needs_review` naming an operation that
+//      could not clear it. Now split: PendingClaimReview and PendingGateReview.
+//
+// Modelling bound (representation only, no behavioural content): four steps,
+// one per initial shape, and a round budget of three.
 
 spec CaseGraphenOperate {
   const MAX_ROUNDS = 3
 
-  // A unit of work the frontier can select. `type` rather than `entity` because
-  // init distinguishes the three instances by index to give each halt reason a
-  // reachable origin.
-  type Step = 0..2
+  // A unit of work the frontier can select. `type` rather than `entity`
+  // because init distinguishes the instances by index to give each halt reason
+  // a reachable origin.
+  type Step = 0..3
 
   symmetric enum Actor { A1, A2 }
 
   // A step's position, as the evaluator derives it. Never stored: this is the
-  // model's stand-in for readiness/frontier/blockers, which CaseGraphen derives.
+  // model's stand-in for readiness/frontier/blockers, which CaseGraphen
+  // derives.
   enum StepState {
     AwaitingExternal,
     MissingEvidence,
     OutsidePlan,
     FailedDispatch,
     Dispatchable,
-    PendingReview,
+    InFlight,
+    PendingClaimReview,
+    PendingGateReview,
     Done
   }
 
@@ -39,6 +59,7 @@ spec CaseGraphenOperate {
     NeedsPlanReview,
     NeedsEvidence,
     NeedsExternal,
+    DispatchInProgress,
     NothingEligible
   }
 
@@ -55,6 +76,7 @@ spec CaseGraphenOperate {
     st[0] = Dispatchable
     st[1] = MissingEvidence
     st[2] = AwaitingExternal
+    st[3] = PendingGateReview
     forall s: Step {
       dispatched_by[s] = none
       reviewed_by[s] = none
@@ -68,27 +90,33 @@ spec CaseGraphenOperate {
   // ADR 0016 decision 1: ONE derivation of the halt reason. It is a function of
   // state, never an assignment — which is what "derived, not recorded" means.
   // Every command that can stop reports this value; none of them re-decides it.
+  //
+  // `DispatchInProgress` sits immediately before `NothingEligible` on purpose:
+  // it is carved out of what `NothingEligible` used to absorb. A stop because
+  // another process holds a started dispatch has a reason, and reporting
+  // "nothing eligible" for it satisfies the ADR's invariant only vacuously —
+  // that word asserts there is no reason.
   def halt() =
     if rounds_used == MAX_ROUNDS and has(Dispatchable) then RoundBudgetExhausted
     else if has(Dispatchable) then Progress
-    else if has(PendingReview) then NeedsReview
+    else if has(PendingClaimReview) or has(PendingGateReview) then NeedsReview
     else if has(FailedDispatch) then NeedsRetryDecision
     else if has(OutsidePlan) then NeedsPlanReview
     else if has(MissingEvidence) then NeedsEvidence
     else if has(AwaitingExternal) then NeedsExternal
+    else if has(InFlight) then DispatchInProgress
     else NothingEligible
 
   // ---------------------------------------------------------------- the loop
 
   // ADR 0016 decision 3. The loop may only repeat the selection `run --frontier`
   // already performs: its guard is `st[s] == Dispatchable` and nothing wider.
-  // The three outcomes are the dispatch results that already exist.
 
   @requirement("REQ-OPERATE-001", "a round advances one dispatchable step and produces a claim")
   fair action round_produces(s: Step) {
     requires st[s] == Dispatchable
     requires rounds_used < MAX_ROUNDS
-    st[s] = PendingReview
+    st[s] = PendingClaimReview
     dispatched_by[s] = some(operator)
     rounds_used = rounds_used + 1
   }
@@ -113,12 +141,26 @@ spec CaseGraphenOperate {
   // None of these is the loop. Each is a separate invocation carrying its own
   // gate, which is the only actor boundary the tool can observe.
 
-  @requirement("REQ-OPERATE-004", "an accepted review by a different actor clears NeedsReview")
+  // The evidence seam: a claim the loop produced, promoted by a review
+  // morphism. Cleared by `review accept`, because an evidence cell's review
+  // status is log-derived.
+  @requirement("REQ-OPERATE-004", "an accepted review by a different actor clears a produced claim")
   fair action review_accept(s: Step, a: Actor) {
-    requires st[s] == PendingReview
+    requires st[s] == PendingClaimReview
     requires dispatched_by[s] != some(a)
     st[s] = Done
     reviewed_by[s] = some(a)
+  }
+
+  // The gate seam: a hard `accepts` edge to a review cell that is not yet
+  // accepted. This is a DIFFERENT clearing act — a review morphism changes no
+  // cell state, so `review accept` cannot satisfy it; the witness cell's own
+  // lifecycle must reach accepted. Modelling both as one action is what let the
+  // implementation ship a halt naming an operation that did nothing.
+  @requirement("REQ-OPERATE-011", "a blocking review cell is cleared by its own lifecycle, not by a review morphism")
+  fair action accept_gate_cell(s: Step) {
+    requires st[s] == PendingGateReview
+    st[s] = Done
   }
 
   @requirement("REQ-OPERATE-005", "retry is an explicit act, never something the loop decides")
@@ -145,12 +187,58 @@ spec CaseGraphenOperate {
     st[s] = Dispatchable
   }
 
+  // ------------------------------------------------- another process's work
+  // A started dispatch held by someone else. The loop cannot touch these; they
+  // are why `DispatchInProgress` exists.
+
+  @requirement("MODEL-OPERATE-008", "another process may hold a started dispatch")
+  fair action other_process_starts(s: Step) {
+    requires st[s] == Dispatchable
+    st[s] = InFlight
+  }
+
+  @requirement("MODEL-OPERATE-009", "that dispatch may finish on its own")
+  fair action other_process_finishes(s: Step) {
+    requires st[s] == InFlight
+    st[s] = PendingClaimReview
+  }
+
+  // ADR 0014: superseding a started dispatch is an assertion the operator
+  // makes after externally establishing that dispatch is dead. Never inferred,
+  // and never performed by the loop.
+  @requirement("REQ-OPERATE-012", "a started dispatch is released only by an explicit assertion")
+  fair action supersede_trace(s: Step) {
+    requires st[s] == InFlight
+    st[s] = FailedDispatch
+  }
+
   // ------------------------------------------------------------- properties
 
   // ADR 0016 decision 3/4 and ADR 0002's exclusions, stated as one two-state
   // rule: whenever the loop consumed a round, the only step it touched was a
-  // dispatchable one. So the loop never retries a failure, never waits out an
-  // external event, never authorizes a transition, and never accepts a review.
+  // dispatchable one. So the loop never retries a failure, waits out an
+  // external event, authorizes a transition, accepts a review, or releases
+  // another process's dispatch.
+  //
+  // ASSUME-OPERATE-001: `retry_decision` is an act *between* invocations, never
+  // one the loop performs. The CLI enforces this by refusing `--retry-step` on
+  // `operate` outright, which keeps `operate`'s eligibility identical to
+  // `run --frontier`'s with no exception — an operator retries with
+  // `run --frontier --retry-step S` and then runs `operate`.
+  //
+  // A one-shot consent spent inside the loop would also satisfy this invariant,
+  // and was built and tested first. It was rejected because ADR 0016 decision 3
+  // says the loop "does not retry" and "does not widen eligibility" without
+  // qualification, and a consent the loop spends makes both claims need a
+  // footnote. An invariant that can be stated flat is worth more than the
+  // convenience of one fewer command.
+  //
+  // Modelling `--retry-step` as a *standing* flag the loop re-applies every
+  // round makes this invariant fail outright, and that is not hypothetical: the
+  // CLI built it that way first, and because this file did not model the flag
+  // at all, the proof of REQ-OPERATE-005 said nothing about the semantics that
+  // shipped. One flag turned a single operator consent into a
+  // round-budget-bounded retry engine — the alternative ADR 0002 excludes.
   @requirement("INV-OPERATE-001", "the loop advances dispatchable work and resolves no halt")
   trans LoopResolvesNoHalt {
     forall s: Step {
@@ -164,13 +252,28 @@ spec CaseGraphenOperate {
   @requirement("INV-OPERATE-002", "no actor accepts the claim it dispatched")
   invariant NoSelfReview {
     forall s: Step {
-      st[s] == Done => (reviewed_by[s] != none and reviewed_by[s] != dispatched_by[s])
+      (st[s] == Done and dispatched_by[s] != none)
+        => (reviewed_by[s] != none and reviewed_by[s] != dispatched_by[s])
+    }
+  }
+
+  // Auxiliary, for the induction proof of NoSelfReview: k-induction cannot rule
+  // out a start state where a dispatched step is Done with no reviewer, because
+  // nothing in NoSelfReview alone says where a dispatched step can be. Only
+  // `round_produces` writes `dispatched_by` (into PendingClaimReview), and only
+  // `review_accept` moves a step out of PendingClaimReview (writing
+  // `reviewed_by`), so those are the only two shapes.
+  @requirement("MODEL-OPERATE-011", "auxiliary: a dispatched step is pending its own review until reviewed")
+  invariant DispatchedStepShape {
+    forall s: Step {
+      dispatched_by[s] != none
+        => (st[s] == PendingClaimReview
+            or (st[s] == Done and reviewed_by[s] != none))
     }
   }
 
   // The invariant the whole ADR exists to establish, in the direction that has
-  // content: whenever the loop cannot move, some named halt says why. There is
-  // no state in which work is stopped and the reason is absent.
+  // content: whenever the loop cannot move, some named halt says why.
   @requirement("INV-OPERATE-003", "the ledger stops only for a reason it recorded")
   invariant EveryStopIsTyped {
     (not exists s: Step { st[s] == Dispatchable and rounds_used < MAX_ROUNDS })
@@ -207,13 +310,47 @@ spec CaseGraphenOperate {
   @requirement("MODEL-OPERATE-007", "the case can finish with everything reviewed")
   reachable ReachNothingEligible { halt() == NothingEligible }
 
-  // Every halt names something that actually clears it. A halt with no exit is
-  // a deadlock wearing a vocabulary word.
-  @requirement("REQ-OPERATE-009", "the review seam has an exit")
-  leadsTo ReviewSeamClears { halt() == NeedsReview ~> within 4 halt() != NeedsReview }
+  @requirement("MODEL-OPERATE-010", "another process's dispatch is a named stop, not nothing_eligible")
+  reachable ReachDispatchInProgress { halt() == DispatchInProgress }
+
+  // Every halt must name something that actually clears it. A halt with no exit
+  // is a deadlock wearing a vocabulary word — and that is not hypothetical: the
+  // implementation shipped a `needs_review` naming `review accept`, which
+  // records a decision without rewriting the cell the obstruction tests, so no
+  // exit existed at all.
+  //
+  // These are stated as reachability of the exit rather than as bounded
+  // liveness on purpose, and the distinction is worth being honest about. What
+  // the defect violated is that an exit exists; that is what these prove.
+  // Bounded `leadsTo` over this model would additionally claim the exit is
+  // taken within K steps, which fairness makes true but which BMC only
+  // establishes for a K large enough to outlast every competing interleaving —
+  // a number that says more about the model's size than about the design.
+  //
+  // Step 3 begins in `PendingGateReview` and `accept_gate_cell` is the only
+  // action whose guard matches that state, so `st[3] == Done` is reachable only
+  // by taking the gate seam's own exit.
+  @requirement("REQ-OPERATE-009", "the gate-review seam has an exit, and it is not a review morphism")
+  reachable GateReviewHasAnExit { st[3] == Done }
+
+  // `review_accept` is the only action that writes `reviewed_by`, so a `Done`
+  // step with a reviewer is reachable only by taking the claim seam's exit.
+  @requirement("REQ-OPERATE-013", "the claim-review seam has an exit")
+  reachable ClaimReviewHasAnExit {
+    exists s: Step { st[s] == Done and reviewed_by[s] != none }
+  }
 
   @requirement("REQ-OPERATE-010", "a failed step can be retried out of its halt")
-  leadsTo RetryClears { halt() == NeedsRetryDecision ~> within 4 halt() != NeedsRetryDecision }
+  leadsTo RetryClears { halt() == NeedsRetryDecision ~> within 6 halt() != NeedsRetryDecision }
+
+  // ADR 0014: the exit from an in-flight dispatch is an assertion the operator
+  // makes, never an inference the tool draws, so this is reachability of the
+  // asserted exit and deliberately not liveness — nothing obliges anyone to
+  // supersede a trace.
+  @requirement("REQ-OPERATE-014", "a started dispatch has an asserted exit")
+  reachable InFlightHasAnExit {
+    exists s: Step { st[s] == FailedDispatch and dispatched_by[s] == none }
+  }
 
   // A recorded reason is a legitimate stop, and nothing else is. Written this
   // way the built-in deadlock check becomes the mechanical statement of the

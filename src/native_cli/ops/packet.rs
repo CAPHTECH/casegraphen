@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     native_eval::latest_evidence_review_status,
+    native_halt::{Halt, HaltReport, NextOperation},
     native_model::{CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphismType},
     native_store::NativeCaseStore,
 };
@@ -21,6 +22,7 @@ use higher_graphen_core::{Id, ReviewStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -181,45 +183,71 @@ pub(in crate::native_cli) fn packet_apply(
         operation_gate,
         "casegraphen packet apply",
     )?;
-    let completed_through = result["result"]["record"]["current_revision_id"]
+    let completed_through_raw = result["result"]["record"]["current_revision_id"]
         .as_str()
         .expect("append result carries record.current_revision_id")
         .to_owned();
+    let completed_through = Id::new(completed_through_raw.clone())?;
+    // Structured, not assembled shell text: a packet author controls
+    // `claim.id`, and interpolating it into a command string an operator
+    // is told to paste would let one `claim.id` value inject extra flags
+    // — including `--actor-id`/`--capability-id` on the very `review
+    // accept` this pause exists to keep independent. Each field here is a
+    // named value, not a shell token; a caller assembles argv itself. This
+    // is the same `NextOperation` shape ADR 0016 generalises for the shared
+    // halt object — `packet apply`'s pause is one producer of it, not a
+    // second ad hoc shape beside it.
+    let mut review_arguments = BTreeMap::new();
+    review_arguments.insert("store".to_owned(), store.display().to_string());
+    review_arguments.insert("case_space_id".to_owned(), case_space_id.to_string());
+    review_arguments.insert("target_id".to_owned(), claim_cell_id.to_string());
+    review_arguments.insert("evidence_id".to_owned(), claim_cell_id.to_string());
+    review_arguments.insert("base_revision_id".to_owned(), completed_through_raw.clone());
+    let review_accept = NextOperation {
+        command: "review accept".to_owned(),
+        arguments: review_arguments,
+        note: Some(
+            "must run under a different actor's gate holding the review operation, not this \
+             apply's actor or capability"
+                .to_owned(),
+        ),
+    };
+    let mut resume_arguments = BTreeMap::new();
+    resume_arguments.insert("store".to_owned(), store.display().to_string());
+    resume_arguments.insert("case_space_id".to_owned(), case_space_id.to_string());
+    resume_arguments.insert("packet".to_owned(), packet_path.display().to_string());
+    resume_arguments.insert(
+        "completed_through".to_owned(),
+        completed_through_raw.clone(),
+    );
+    let packet_resume_op = NextOperation {
+        command: "packet resume".to_owned(),
+        arguments: resume_arguments,
+        note: Some(
+            "base_revision_id is whatever review accept's response reports as \
+             current_revision_id; run after that review is accepted"
+                .to_owned(),
+        ),
+    };
+    let halt_report = HaltReport {
+        halt: Halt::NeedsReview,
+        completed_through,
+        target_ids: vec![claim_cell_id.clone()],
+        next_operations: vec![review_accept, packet_resume_op],
+    };
     if let Some(object) = result["result"].as_object_mut() {
         object.insert("status".to_owned(), json!("paused_for_review"));
         object.insert("claim_cell_id".to_owned(), json!(claim_cell_id));
         object.insert("artifact_cell_ids".to_owned(), json!(artifact_cell_ids));
-        object.insert("completed_through".to_owned(), json!(completed_through));
-        // Structured, not assembled shell text: a packet author controls
-        // `claim.id`, and interpolating it into a command string an operator
-        // is told to paste would let one `claim.id` value inject extra flags
-        // — including `--actor-id`/`--capability-id` on the very `review
-        // accept` this pause exists to keep independent. Each field here is a
-        // named value, not a shell token; a caller assembles argv itself.
-        object.insert(
-            "next_operations".to_owned(),
-            json!([
-                {
-                    "command": "review accept",
-                    "store": store.display().to_string(),
-                    "case_space_id": case_space_id,
-                    "target_id": claim_cell_id,
-                    "evidence_id": claim_cell_id,
-                    "base_revision_id": completed_through,
-                    "note": "must run under a different actor's gate holding the review \
-                             operation, not this apply's actor or capability",
-                },
-                {
-                    "command": "packet resume",
-                    "store": store.display().to_string(),
-                    "case_space_id": case_space_id,
-                    "packet": packet_path.display().to_string(),
-                    "completed_through": completed_through,
-                    "note": "base_revision_id is whatever review accept's response reports as \
-                             current_revision_id; run after that review is accepted",
-                },
-            ]),
-        );
+        // `completed_through` and `next_operations` live only inside `halt`
+        // now (ADR 0016 decision 2): `packet apply`'s pause is one producer
+        // of the shared shape, not a second copy of the same two facts
+        // beside it. `halts` is the same singleton the other stoppable
+        // commands report — `packet apply`'s pause is always exactly one
+        // `needs_review`, never a ranked list of several.
+        let halt_value = serde_json::to_value(&halt_report)?;
+        object.insert("halts".to_owned(), json!([halt_value.clone()]));
+        object.insert("halt".to_owned(), halt_value);
     }
     Ok(result)
 }

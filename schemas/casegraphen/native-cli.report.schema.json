@@ -62,7 +62,7 @@
     },
     "result": {
       "type": "object",
-      "description": "Operation-specific native CLI result payload. The shared native operation envelope intentionally leaves most result fields broad; case history topology validates result.topology.higher_order when present.",
+      "description": "Operation-specific native CLI result payload. The shared native operation envelope intentionally leaves most result fields broad; case history topology validates result.topology.higher_order when present, and every command that can stop (run --step, run --frontier, operate, packet apply) validates result.halt / result.halts when present.",
       "properties": {
         "topology": {
           "type": "object",
@@ -70,6 +70,24 @@
             "higher_order": {
               "$ref": "#/$defs/higher_order_topology"
             }
+          }
+        },
+        "halt": {
+          "description": "ADR 0016: the single highest-priority halt reason this invocation stopped for, or null while progress remained possible. The head of result.halts.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/halt_report"
+            }
+          ]
+        },
+        "halts": {
+          "type": "array",
+          "description": "ADR 0016: every independently-true halt reason this invocation found, in the same priority order as result.halt. A case can have more than one true reason at once (one step needing a retry decision while another needs plan review); this is the full list, never re-derivable from result.halt alone.",
+          "items": {
+            "$ref": "#/$defs/halt_report"
           }
         }
       }
@@ -79,6 +97,80 @@
     }
   },
   "$defs": {
+    "halt_report": {
+      "type": "object",
+      "description": "ADR 0016 (docs/adr/0016-a-halt-is-a-recorded-reason.md): a resumable object naming why the ledger stopped, derived once in src/native_halt.rs and reported by every command that can stop, never assembled by any of them independently.",
+      "additionalProperties": false,
+      "required": [
+        "halt",
+        "completed_through",
+        "target_ids",
+        "next_operations"
+      ],
+      "properties": {
+        "halt": {
+          "type": "string",
+          "enum": [
+            "round_budget_exhausted",
+            "needs_review",
+            "needs_retry_decision",
+            "needs_plan_review",
+            "needs_evidence",
+            "needs_external",
+            "dispatch_in_progress",
+            "nothing_eligible"
+          ]
+        },
+        "completed_through": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The revision id the ledger completed through before stopping."
+        },
+        "target_ids": {
+          "type": "array",
+          "description": "The witness id(s) the halt is about -- the thing an operator must act on (e.g. the unsatisfied requirement id for needs_evidence, the blocking review cell for needs_review), not merely the cell the obstruction affects. Empty for round_budget_exhausted and nothing_eligible, which name nothing.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "next_operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/next_operation"
+          }
+        }
+      }
+    },
+    "next_operation": {
+      "type": "object",
+      "description": "A structured suggestion for the operation that would clear a halt -- named argument values a caller passes verbatim, never a command string assembled by concatenation. That distinction exists because a packet- or case-controlled id (e.g. claim.id) interpolated into an assembled string could inject flags into the very command a halt's next_operations exists to name safely (issue #19).",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "arguments",
+        "note"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arguments": {
+          "type": "object",
+          "description": "Named argument values for `command`, e.g. {\"target_id\": \"...\", \"base_revision_id\": \"...\"}.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "projection_bundle": {
       "type": "object",
       "additionalProperties": false,

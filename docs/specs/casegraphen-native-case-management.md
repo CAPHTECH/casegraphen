@@ -886,12 +886,16 @@ casegraphen packet resume --store <dir> --case-space-id <id> --base-revision-id 
 
 `packet apply` reads the packet's claim and artifacts and calls the same
 internal function `evidence attach` calls to append one `EvidenceAttach`
-morphism, then reports `result.status: "paused_for_review"` and a structured
-`result.next_operations` array — named fields such as `target_id`,
-`base_revision_id`, and `completed_through`, not assembled shell command
-strings, because a packet's `claim.id` is caller-controlled and a command
-string built from it could inject flags into the very `review accept` the
-pause exists to keep independent. `packet resume` refuses unless
+morphism, then reports `result.status: "paused_for_review"` and (ADR 0016)
+`result.halt`/`result.halts`, the pause reported as the shared typed
+`needs_review` halt object every stoppable command produces —
+`result.halt.next_operations` is a structured array whose entries' `arguments`
+objects name fields such as `target_id`, `base_revision_id`, and
+`completed_through`, not assembled shell command strings, because a packet's
+`claim.id` is caller-controlled and a command string built from it could
+inject flags into the very `review accept` the pause exists to keep
+independent. `completed_through` and `next_operations` live only inside
+`halt`, not duplicated at the top level. `packet resume` refuses unless
 `--completed-through` names a revision present in the replayed history, the
 log entry at that exact revision is the `EvidenceAttach` morphism that added
 the claim (so a different attach's already-accepted claim cannot be reused to

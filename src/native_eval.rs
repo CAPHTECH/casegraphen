@@ -29,6 +29,18 @@ use sections::{
 };
 use util::*;
 
+/// The `source_constraint_id` `add_review_obstructions` stamps on a
+/// `ReviewRequired` obstruction sourced from an unaccepted `Accepts`/
+/// `Rejects` relation — clearable by an independent actor's `review accept`.
+/// `lifecycle_obstruction`'s `ReviewRequired` obstruction (a rejected,
+/// retired, or superseded cell) is not clearable that way and stamps
+/// `"constraint:native-cell-lifecycle"` instead.
+/// `src/native_halt.rs::is_clearable_by_review` reads this exact constant
+/// (not its own copy of the string) to key `needs_review` on which producer
+/// fired — a renamed literal here that native_halt still matched by string
+/// would silently stop `needs_review` from ever firing again.
+pub(crate) const REVIEW_ACCEPTED_CONSTRAINT_ID: &str = "constraint:native-review-accepted";
+
 pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCaseEvaluation> {
     validate_native_case_space(case_space)?;
 
@@ -477,7 +489,7 @@ impl<'a> NativeEvaluationContext<'a> {
                     NativeObstructionType::ReviewRequired,
                     &cell.id,
                     &relation.to_id,
-                    "constraint:native-review-accepted",
+                    REVIEW_ACCEPTED_CONSTRAINT_ID,
                     format!(
                         "{} requires accepted review {}, but it is not accepted.",
                         cell.id, relation.to_id

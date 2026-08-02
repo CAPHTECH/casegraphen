@@ -25,9 +25,9 @@ pub use ops::EVIDENCE_PACKET_SCHEMA;
 use ops::{
     binding_register, case_close_check, case_import, case_new, case_reason, case_topology,
     case_topology_diff, cell_transition, evidence_attach, lift_structured_source, morphism_apply,
-    morphism_check, morphism_propose, morphism_reject, packet_apply, packet_resume, plan_check,
-    plan_propose, plan_review, projection_apply, review_apply, run_frontier, run_step,
-    NativeCloseGateOptions, NativeMutationGateOptions, NativePlanGateOptions,
+    morphism_check, morphism_propose, morphism_reject, operate, packet_apply, packet_resume,
+    plan_check, plan_propose, plan_review, projection_apply, review_apply, run_frontier, run_step,
+    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
     NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
     NativeRunGateOptions, NativeRunStepOptions,
 };
@@ -274,6 +274,20 @@ pub(crate) enum NativeCliCommand {
         strict: bool,
         output: Option<PathBuf>,
     },
+    Operate {
+        store: PathBuf,
+        case_space_id: Id,
+        plan_id: Id,
+        base_revision_id: Id,
+        actor_id: Id,
+        enabled_worker_kinds: Vec<String>,
+        supersede_trace_ids: Vec<Id>,
+        max_parallel: usize,
+        max_rounds: usize,
+        gate_options: NativeRunGateOptions,
+        strict: bool,
+        output: Option<PathBuf>,
+    },
     Review {
         action: ReviewAction,
         store: PathBuf,
@@ -362,6 +376,7 @@ impl NativeCliCommand {
             | Self::BindingRegister { output, .. }
             | Self::RunStep { output, .. }
             | Self::RunFrontier { output, .. }
+            | Self::Operate { output, .. }
             | Self::Review { output, .. }
             | Self::EvidenceAttach { output, .. }
             | Self::CellTransition { output, .. }
@@ -407,7 +422,8 @@ impl NativeCliCommand {
             | Self::CaseReason { strict, .. }
             | Self::CaseCloseCheck { strict, .. }
             | Self::RunStep { strict, .. }
-            | Self::RunFrontier { strict, .. } => *strict,
+            | Self::RunFrontier { strict, .. }
+            | Self::Operate { strict, .. } => *strict,
             _ => false,
         }
     }
@@ -440,6 +456,7 @@ impl NativeCliCommand {
             | Self::BindingRegister { .. }
             | Self::RunStep { .. }
             | Self::RunFrontier { .. }
+            | Self::Operate { .. }
             | Self::Review { .. }
             | Self::EvidenceAttach { .. }
             | Self::CellTransition { .. }
@@ -736,6 +753,34 @@ impl NativeCliCommand {
                         retry_step_ids,
                         supersede_trace_ids,
                         max_parallel: *max_parallel,
+                        gate_options,
+                    },
+                )
+            }
+            Self::Operate {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                supersede_trace_ids,
+                max_parallel,
+                max_rounds,
+                gate_options,
+                ..
+            } => {
+                return operate(
+                    store,
+                    NativeOperateOptions {
+                        case_space_id,
+                        plan_id,
+                        base_revision_id,
+                        actor_id,
+                        enabled_worker_kinds,
+                        supersede_trace_ids,
+                        max_parallel: *max_parallel,
+                        max_rounds: *max_rounds,
                         gate_options,
                     },
                 )

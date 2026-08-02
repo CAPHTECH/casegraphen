@@ -135,6 +135,7 @@ pub(super) struct NativeOptions {
     pub(super) run_step: bool,
     pub(super) run_frontier: bool,
     pub(super) max_parallel: Option<usize>,
+    pub(super) max_rounds: Option<usize>,
     pub(super) higher_order: bool,
     pub(super) max_dimension: Option<Dimension>,
     pub(super) min_persistence_stages: usize,
@@ -324,6 +325,7 @@ impl NativeOptions {
             Some("--max-parallel") => {
                 self.max_parallel = Some(require_usize(args, "--max-parallel")?)
             }
+            Some("--max-rounds") => self.max_rounds = Some(require_usize(args, "--max-rounds")?),
             Some("--higher-order") => self.higher_order = true,
             Some("--max-dimension") => {
                 self.max_dimension = Some(require_dimension(args, "--max-dimension")?)

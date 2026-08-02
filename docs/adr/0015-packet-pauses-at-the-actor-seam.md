@@ -41,14 +41,18 @@ already landed in the log.**
   the same `--satisfies` coverage rule, the same batching of claim and
   artifacts into one morphism. Its gate operation is `evidence-attach`, the
   attach's own operation string; a packet introduces no new operation
-  vocabulary to authorize. It reports `paused_for_review` and a structured
-  `next_operations` array naming the fields of the concrete `review accept`
-  and `packet resume` calls to make next — target id, base revision,
-  completed-through revision — so the pause is not silent. These are
-  structured values, not assembled command strings: a packet's `claim.id` is
-  attacker-controlled text, and interpolating it into a shell string an
-  operator is told to paste would let one `claim.id` value inject extra
-  flags into the very `review accept` this pause exists to keep independent.
+  vocabulary to authorize. It reports `paused_for_review` and (ADR 0016) a
+  typed `needs_review` halt object, whose `next_operations` names the
+  argument fields of the concrete `review accept` and `packet resume` calls
+  to make next — target id, base revision, completed-through revision — so
+  the pause is not silent. `packet apply` is one producer of that shared
+  shape, not a second ad hoc copy beside it: `completed_through` and
+  `next_operations` live once, inside `halt`, not duplicated at the top
+  level. These are structured values, not assembled command strings: a
+  packet's `claim.id` is attacker-controlled text, and interpolating it into
+  a shell string an operator is told to paste would let one `claim.id` value
+  inject extra flags into the very `review accept` this pause exists to keep
+  independent.
 - `packet resume` calls the exact same internal function `cell transition`
   calls, after three checks none of which it re-derives:
   - the claim cell must be `cell_type: evidence` — nothing else has a review

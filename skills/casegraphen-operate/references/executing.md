@@ -121,6 +121,18 @@ One invocation advances at most one step. Loop by re-reading the revision and
 calling again; there is no daemon, scheduler, or retry engine, and adding one is
 out of scope.
 
+`casegraphen operate` (ADR 0016) does the round-selection part of that loop for
+you: it repeats `run --frontier`'s own selection, round after round, until a
+halt other than progress — never widening eligibility, never retrying, never
+authorizing or reviewing anything itself. `--max-rounds <n>` is required and
+bounds *rounds*, not work: a round can dispatch up to `--max-parallel` steps
+concurrently, so the real spawn bound for one invocation is
+`max-rounds * max-parallel`, reported back as `result.steps_dispatched`
+alongside `result.rounds_used`. `--retry-step` is refused on `operate` — retry
+is an explicit act between invocations, so run `run --frontier --retry-step
+<id>` first, then `operate` again. Read `result.halt` (or the full ranked
+`result.halts`) the same way you read `step_reasons` above.
+
 A `started` trace always blocks its step; a later revision does not say whether
 its worker is alive. If external observation establishes that the dispatcher is
 dead, read the exact `trace_id` from its `execution.trace.json` and assert only

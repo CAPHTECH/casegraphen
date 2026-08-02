@@ -48,6 +48,7 @@ waiting is preserved (a recorded reason always stops).
    | halt | What it needs | Who supplies it |
    |---|---|---|
    | `nothing_eligible` | nothing right now | — |
+   | `dispatch_in_progress` | another process's started dispatch to finish, or an explicit `--supersede-trace` assertion that it is dead (ADR 0014) | outside this invocation |
    | `round_budget_exhausted` | another invocation | the operator |
    | `needs_review` | an accepted review of a named target | **a different actor**, holding `review` |
    | `needs_evidence` | evidence satisfying a named requirement | any actor holding `evidence-attach` |
@@ -86,13 +87,27 @@ waiting is preserved (a recorded reason always stops).
 6. **One gate authorizes the loop.** A single `dispatch` gate covers the
    invocation, as it covers a round today (ADR 0004 decision 6); the store
    re-validates the recorded gate on every append regardless. `--max-rounds` is
-   what keeps "one authorization" from meaning "unbounded work".
+   what keeps "one authorization" from meaning "unbounded work" — but it bounds
+   **rounds, not steps**. A round dispatches up to `--max-parallel` steps, so the
+   spawn bound an operator is actually authorizing is `max_rounds × max_parallel`.
+   The formal model advances one step per round, so the two coincide there and the
+   proof does not transfer; the report carries `steps_dispatched` alongside
+   `rounds_used` so the quantity being bounded is visible rather than inferred.
 
 ## What the formal specification changed
 
 The design was written as an FSL design-layer spec before it was implemented
 (`docs/specs/operate-halt.fsl`, verified with `fslc`). Two things came out of it
 that the issue's draft did not have.
+
+**`dispatch_in_progress` was in scope and did not arrive in the first
+implementation.** The Context above lists it as one of the four scattered
+vocabularies this ADR exists to consolidate, yet the first `derive_halt` let a
+step held by another process's started dispatch fall through to
+`nothing_eligible` with no target and no next operation. That satisfies "the
+ledger stops only for a reason it recorded" **vacuously**: `nothing_eligible` is
+a word asserting there is no reason, used where there is one. It is now the
+eighth member, and its clearing act is an assertion (ADR 0014), never a retry.
 
 **`round_budget_exhausted` is a required member of the vocabulary, not an
 implementation detail.** The draft bounded the invocation with `--max-rounds` and
@@ -127,6 +142,24 @@ The spec also proves, unbounded under `fslc verify --engine induction`:
 **Let the loop retry failed steps.** That is the retry engine ADR 0002 excluded
 and ADR 0004 kept excluding. Retry stays an explicit act (`--retry-step`) and
 appears as the `needs_retry_decision` halt.
+
+**Let `operate` take a one-shot `--retry-step` consent.** Built and tested
+first, and defensible: spent on the first attempt, it maps onto a single
+operator retry decision followed by an ordinary round, which the formal model
+already permits. Rejected because decision 3 says the loop "does not retry" and
+"does not widen eligibility" without qualification, and a consent the loop
+spends makes both claims need a footnote. `operate` now refuses `--retry-step`
+outright, so its eligibility is identical to `run --frontier`'s with no
+exception — an operator retries with `run --frontier --retry-step S`, then runs
+`operate`. An invariant that can be stated flat is worth more than saving a
+command.
+
+The version before that was worse and is the reason this paragraph exists: the
+flag was parsed once and re-applied every round, so a single consent became a
+round-budget-bounded auto-retry — precisely the alternative above. The formal
+spec did not catch it because it modelled retry as a single external act and
+never modelled the flag at all; the proof was of a simpler machine than the one
+built. See ASSUME-OPERATE-001 in `docs/specs/operate-halt.fsl`.
 
 **Let the loop auto-accept reviews when the same actor holds the capability.**
 This is ADR 0015's rejected alternative restated at loop granularity: a

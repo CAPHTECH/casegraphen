@@ -208,8 +208,11 @@ casegraphen packet apply --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$REV" --packet packet.json $GATE \
   --format json --output "$APPLY_REPORT"
 # result.status: paused_for_review
-# result.completed_through: the revision the attach produced — carry it
-# result.next_operations: structured fields for the two calls to make next
+# result.halt.halt: needs_review — this pause is a producer of the shared
+#   ADR 0016 halt object; completed_through and next_operations live inside
+#   it, not duplicated at the top level
+# result.halt.completed_through: the revision the attach produced — carry it
+# result.halt.next_operations: structured fields for the two calls to make next
 ```
 
 Then a **different actor**, holding a capability that lists the `review`

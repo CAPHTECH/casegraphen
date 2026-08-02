@@ -1460,9 +1460,15 @@ fn packet_apply_pauses_for_review_then_resume_transitions_after_acceptance() {
             .len(),
         1
     );
-    let completed_through = apply_json["result"]["completed_through"]
+    // `packet apply`'s pause is a producer of the shared ADR 0016 halt
+    // object, and only of it now: `completed_through`/`next_operations`
+    // used to be duplicated at the top level and inside `halt` — two
+    // sources for one fact, free to drift. `needs_review` is exactly what
+    // the pause means.
+    assert_eq!(apply_json["result"]["halt"]["halt"], json!("needs_review"));
+    let completed_through = apply_json["result"]["halt"]["completed_through"]
         .as_str()
-        .expect("completed_through")
+        .expect("halt.completed_through")
         .to_owned();
     assert_eq!(
         apply_json["result"]["record"]["current_revision_id"],
@@ -1473,25 +1479,35 @@ fn packet_apply_pauses_for_review_then_resume_transitions_after_acceptance() {
         json!(2),
         "packet apply must append exactly one revision on top of genesis"
     );
+    assert_eq!(
+        apply_json["result"]["halt"]["target_ids"],
+        json!(["evidence:packet-happy"])
+    );
     // Structured, not shell text: a packet-controlled `claim.id` must not be
     // able to inject flags into a string an operator is told to paste.
-    let next_operations = apply_json["result"]["next_operations"]
+    let next_operations = apply_json["result"]["halt"]["next_operations"]
         .as_array()
-        .expect("next operations");
+        .expect("halt.next_operations");
     assert_eq!(next_operations.len(), 2);
     assert_eq!(next_operations[0]["command"], json!("review accept"));
     assert_eq!(
-        next_operations[0]["target_id"],
+        next_operations[0]["arguments"]["target_id"],
         json!("evidence:packet-happy")
     );
     assert_eq!(
-        next_operations[0]["base_revision_id"],
+        next_operations[0]["arguments"]["base_revision_id"],
         json!(completed_through)
     );
     assert_eq!(next_operations[1]["command"], json!("packet resume"));
     assert_eq!(
-        next_operations[1]["completed_through"],
+        next_operations[1]["arguments"]["completed_through"],
         json!(completed_through)
+    );
+    // `halts` is the same ranked list every other stoppable command reports;
+    // `packet apply`'s pause is always exactly this one `needs_review`.
+    assert_eq!(
+        apply_json["result"]["halts"],
+        json!([apply_json["result"]["halt"]])
     );
 
     // Gate seam, confirmed the hard way: the implementer's own gate lacks
@@ -1789,9 +1805,9 @@ fn packet_resume_refuses_a_claim_attached_by_a_different_packets_apply() {
         "json",
     ]);
     assert!(apply_b.status.success(), "stderr: {}", stderr(&apply_b));
-    let completed_through_b = stdout_json(&apply_b)["result"]["completed_through"]
+    let completed_through_b = stdout_json(&apply_b)["result"]["halt"]["completed_through"]
         .as_str()
-        .expect("completed_through b")
+        .expect("halt.completed_through b")
         .to_owned();
 
     // Claim A is honestly reviewed and accepted.
@@ -2042,9 +2058,9 @@ fn packet_resume_refuses_after_the_claim_is_rejected() {
         "json",
     ]);
     assert!(apply.status.success(), "stderr: {}", stderr(&apply));
-    let completed_through = stdout_json(&apply)["result"]["completed_through"]
+    let completed_through = stdout_json(&apply)["result"]["halt"]["completed_through"]
         .as_str()
-        .expect("completed_through")
+        .expect("halt.completed_through")
         .to_owned();
 
     let reject = run_cli(&[
@@ -12374,6 +12390,970 @@ fn native_frontier_step_args(
     }
     append_supersede_trace_args(&mut args, supersede_trace_ids);
     args
+}
+
+#[cfg(unix)]
+fn native_operate_args(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    base_revision_id: &str,
+    max_parallel: usize,
+    max_rounds: usize,
+    capability_ids: &[&str],
+    retry_step_ids: &[&str],
+) -> Vec<String> {
+    let mut args = vec![
+        "operate".to_owned(),
+        "--store".to_owned(),
+        directory.display().to_string(),
+        "--case-space-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--plan-id".to_owned(),
+        fixture.plan_id.clone(),
+        "--base-revision-id".to_owned(),
+        base_revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        "actor:native-run".to_owned(),
+        "--operation-scope-id".to_owned(),
+        native_case_space_id().to_owned(),
+        "--audience".to_owned(),
+        "audit".to_owned(),
+        "--source-boundary-id".to_owned(),
+        "source_boundary:native-case-management-contract".to_owned(),
+        "--max-parallel".to_owned(),
+        max_parallel.to_string(),
+        "--max-rounds".to_owned(),
+        max_rounds.to_string(),
+        "--enable-worker".to_owned(),
+        "shell".to_owned(),
+        "--format".to_owned(),
+        "json".to_owned(),
+    ];
+    for capability_id in capability_ids {
+        args.extend(["--capability-id".to_owned(), (*capability_id).to_owned()]);
+    }
+    for step_id in retry_step_ids {
+        args.extend(["--retry-step".to_owned(), (*step_id).to_owned()]);
+    }
+    args
+}
+
+#[cfg(unix)]
+fn run_native_operate(
+    directory: &Path,
+    fixture: &NativeFrontierFixture,
+    max_parallel: usize,
+    max_rounds: usize,
+) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_operate_args(
+            directory,
+            fixture,
+            &fixture.accepted_revision_id,
+            max_parallel,
+            max_rounds,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[],
+        ))
+        .output()
+        .expect("run casegraphen operate")
+}
+
+/// A single-step fixture whose one work cell carries an extra readiness
+/// obstruction the plan's own machinery never touches, so the step is never
+/// dispatchable at all — the halt this produces is visible before any worker
+/// ever runs. `relation_type` names the readiness rule under test
+/// (`requires_evidence` for `needs_evidence`, `waits_for` for
+/// `needs_external`); `blocking_target_id` is a real cell of a matching
+/// type that is present but deliberately never satisfied — trusted evidence
+/// and lifecycle completion are both about log-derived and lifecycle state,
+/// not mere existence, so an id that resolves to nothing would fail the
+/// import's dangling-reference check before readiness ever runs, and an id
+/// that resolves to something already complete would satisfy the
+/// requirement instead of blocking it.
+#[cfg(unix)]
+fn setup_native_operate_blocked_fixture(
+    directory: &Path,
+    suffix: &str,
+    relation_type: &str,
+    blocking_target_id: &str,
+    blocking_target_cell_type: &str,
+) -> NativeFrontierFixture {
+    use std::os::unix::fs::PermissionsExt;
+
+    let input_path = directory.join(format!("{suffix}.operate-blocked.native.input.json"));
+    let mut input = json_file(native_case_fixture());
+    let work_template = input["case_cells"]
+        .as_array()
+        .expect("native case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("native work template")
+        .clone();
+    let work_cell_id = format!("work:operate-blocked-{suffix}");
+    let space_id = input["space_id"].clone();
+    let mut work_cell = work_template.clone();
+    work_cell["id"] = json!(work_cell_id);
+    work_cell["title"] = json!(format!("Operate blocked fixture {suffix}"));
+    work_cell["lifecycle"] = json!("active");
+    work_cell["structure_ids"] = json!([]);
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .push(work_cell);
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .push(json!({
+            "id": blocking_target_id,
+            "cell_type": blocking_target_cell_type,
+            "space_id": space_id,
+            "title": format!("Operate blocked fixture {suffix} target"),
+            "summary": Value::Null,
+            "lifecycle": "active",
+            "source_ids": [],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }));
+    let relation_id = format!("relation:operate-blocked-{suffix}");
+    input["case_relations"]
+        .as_array_mut()
+        .expect("native case relations")
+        .push(json!({
+            "id": relation_id,
+            "relation_type": relation_type,
+            "relation_strength": "hard",
+            "from_id": work_cell_id,
+            "to_id": blocking_target_id,
+            "evidence_ids": [],
+            "source_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "accepted"
+            },
+            "metadata": {}
+        }));
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&input).expect("serialize blocked fixture case space"),
+    )
+    .expect("write blocked fixture case space");
+    let import_revision = format!("revision:operate-blocked-{suffix}-import");
+    import_native_case_space_from_input(directory, &input_path, &import_revision);
+
+    let script_path = directory.join(format!("{suffix}-blocked-worker.sh"));
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nset -eu\nprintf 'never invoked\\n'\n",
+    )
+    .expect("write unused blocked worker");
+    let mut permissions = fs::metadata(&script_path)
+        .expect("blocked worker metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("make blocked worker executable");
+    let binding_id = format!("worker_binding:operate-blocked-{suffix}");
+    let binding_input = directory.join(format!("{suffix}-blocked-worker.binding.input.json"));
+    write_pinned_worker_binding(&binding_input, &binding_id, directory, &script_path);
+    let register = run_cli(&[
+        "binding",
+        "register",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--input",
+        binding_input.to_str().expect("binding input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(register.status.success(), "stderr: {}", stderr(&register));
+
+    let plan_id = format!("plan:operate-blocked-{suffix}");
+    let step_id = format!("step:{plan_id}:1");
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": import_revision,
+        "steps": [{
+            "step_id": step_id,
+            "work_cell_id": work_cell_id,
+            "worker_binding_id": binding_id,
+            "success_evidence_requirement_ids": ["evidence:native-schema-json-valid"],
+            "allowed_transition_classes": [{
+                "morphism_type": "update",
+                "target_cell_types": ["work"],
+                "to_lifecycles": ["resolved"]
+            }]
+        }],
+        "provenance": {
+            "source": {"kind": "human", "title": "Operate blocked fixture plan"},
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    let plan_input = directory.join(format!("{suffix}-blocked.execution.plan.input.json"));
+    fs::write(
+        &plan_input,
+        serde_json::to_string_pretty(&plan).expect("serialize blocked fixture plan"),
+    )
+    .expect("write blocked fixture plan");
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &plan_id,
+        "--reviewer-id",
+        "reviewer:operate-blocked-plan",
+        "--reason",
+        "Accept operate blocked fixture plan",
+        "--base-revision-id",
+        &import_revision,
+        "--actor-id",
+        "actor:run-plan-review",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accepted_revision_id = stdout_json(&accept)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted blocked fixture revision")
+        .to_owned();
+    NativeFrontierFixture {
+        plan_id,
+        step_ids: vec![step_id],
+        work_cell_ids: vec![work_cell_id],
+        accepted_revision_id,
+    }
+}
+
+#[test]
+fn native_run_step_reports_needs_retry_decision_halt_after_a_worker_failure() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run(
+        &directory,
+        "halt-retry",
+        "printf 'failed-output'; printf 'failed-error' >&2; exit 1",
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("step_failed"));
+    assert_eq!(
+        value["result"]["halt"]["halt"],
+        json!("needs_retry_decision")
+    );
+    assert_eq!(
+        value["result"]["halt"]["target_ids"],
+        json!([fixture.step_id])
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn native_run_step_reports_needs_plan_review_halt_for_an_unauthorized_transition() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_run_with_allowed_lifecycle(
+        &directory,
+        "halt-plan-review",
+        "printf 'successful-but-not-authorized\\n'",
+        "accepted",
+    );
+
+    let output = run_native_step(&directory, &fixture, true, None);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(
+        value["result"]["status"],
+        json!("transition_not_authorized")
+    );
+    assert_eq!(value["result"]["halt"]["halt"], json!("needs_plan_review"));
+    assert_eq!(
+        value["result"]["halt"]["target_ids"],
+        json!([fixture.step_id])
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_reports_needs_evidence_halt_when_nothing_is_dispatchable() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    // The `requires_evidence` target is a requirement placeholder
+    // (`skills/casegraphen-operate/references/authoring.md`), not itself an
+    // evidence cell: an `evidence`-typed target here would additionally
+    // register as an untrusted (default-boundary) inference and produce an
+    // `UnreviewedInference` review gap, which correctly outranks
+    // `needs_evidence` under `derive_halt`'s priority order and would test
+    // the wrong halt.
+    let fixture = setup_native_operate_blocked_fixture(
+        &directory,
+        "evidence",
+        "requires_evidence",
+        "goal:operate-blocked-evidence-missing",
+        "goal",
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 1);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    assert_eq!(value["result"]["halt"]["halt"], json!("needs_evidence"));
+    // The unsatisfied requirement `evidence attach --satisfies` takes, not
+    // the work cell it blocks: a halt names what clears it.
+    assert_eq!(
+        value["result"]["halt"]["target_ids"],
+        json!(["goal:operate-blocked-evidence-missing"])
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_reports_needs_external_halt_when_nothing_is_dispatchable() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_operate_blocked_fixture(
+        &directory,
+        "external",
+        "waits_for",
+        "event:operate-blocked-external-wait",
+        "event",
+    );
+
+    let output = run_native_frontier(&directory, &fixture, 1);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["status"], json!("no_dispatchable_step"));
+    assert_eq!(value["result"]["halt"]["halt"], json!("needs_external"));
+    assert_eq!(
+        value["result"]["halt"]["target_ids"],
+        json!(fixture.work_cell_ids)
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// Two work cells and two plan steps, the second `depends_on` the first, so
+/// the second is not dispatchable until the first resolves. This is what
+/// makes a genuine second round necessary — `setup_native_frontier`'s
+/// independent work cells all dispatch in one round regardless of
+/// `--max-parallel`, since `select_steps` selects every eligible step across
+/// the whole plan at once and `--max-parallel` only bounds how many run
+/// concurrently within that round, not across rounds.
+#[cfg(unix)]
+fn setup_native_operate_dependency_fixture(
+    directory: &Path,
+    suffix: &str,
+) -> NativeFrontierFixture {
+    use std::os::unix::fs::PermissionsExt;
+
+    let input_path = directory.join(format!("{suffix}.operate-dependency.native.input.json"));
+    let mut input = json_file(native_case_fixture());
+    let work_template = input["case_cells"]
+        .as_array()
+        .expect("native case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("native work template")
+        .clone();
+    let upstream_id = format!("work:operate-dependency-{suffix}-upstream");
+    let downstream_id = format!("work:operate-dependency-{suffix}-downstream");
+    for cell_id in [&upstream_id, &downstream_id] {
+        let mut cell = work_template.clone();
+        cell["id"] = json!(cell_id);
+        cell["title"] = json!(format!("Operate dependency fixture {cell_id}"));
+        cell["lifecycle"] = json!("active");
+        cell["structure_ids"] = json!([]);
+        input["case_cells"]
+            .as_array_mut()
+            .expect("native case cells")
+            .push(cell);
+    }
+    input["case_relations"]
+        .as_array_mut()
+        .expect("native case relations")
+        .push(json!({
+            "id": format!("relation:operate-dependency-{suffix}"),
+            "relation_type": "depends_on",
+            "relation_strength": "hard",
+            "from_id": downstream_id,
+            "to_id": upstream_id,
+            "evidence_ids": [],
+            "source_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "accepted"
+            },
+            "metadata": {}
+        }));
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&input).expect("serialize dependency fixture case space"),
+    )
+    .expect("write dependency fixture case space");
+    let import_revision = format!("revision:operate-dependency-{suffix}-import");
+    import_native_case_space_from_input(directory, &input_path, &import_revision);
+
+    let mut step_ids = Vec::new();
+    let mut steps = Vec::new();
+    for (number, work_cell_id) in [&upstream_id, &downstream_id].into_iter().enumerate() {
+        let script_path = directory.join(format!("{suffix}-dependency-worker-{number}.sh"));
+        fs::write(&script_path, "#!/bin/sh\nset -eu\nprintf 'ok\\n'\n")
+            .expect("write dependency fixture worker");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("dependency worker metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make dependency worker executable");
+        let binding_id = format!("worker_binding:operate-dependency-{suffix}-{number}");
+        let binding_input = directory.join(format!(
+            "{suffix}-dependency-worker-{number}.binding.input.json"
+        ));
+        write_pinned_worker_binding(&binding_input, &binding_id, directory, &script_path);
+        let register = run_cli(&[
+            "binding",
+            "register",
+            "--store",
+            directory.to_str().expect("store path"),
+            "--input",
+            binding_input.to_str().expect("binding input path"),
+            "--format",
+            "json",
+        ]);
+        assert!(register.status.success(), "stderr: {}", stderr(&register));
+        let step_id = format!("step:operate-dependency-{suffix}:{number}");
+        step_ids.push(step_id.clone());
+        steps.push(json!({
+            "step_id": step_id,
+            "work_cell_id": work_cell_id,
+            "worker_binding_id": binding_id,
+            "success_evidence_requirement_ids": ["evidence:native-schema-json-valid"],
+            "allowed_transition_classes": [{
+                "morphism_type": "update",
+                "target_cell_types": ["work"],
+                "to_lifecycles": ["resolved"]
+            }]
+        }));
+    }
+    let plan_id = format!("plan:operate-dependency-{suffix}");
+    let plan_input = directory.join(format!("{suffix}-dependency.execution.plan.input.json"));
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": import_revision,
+        "steps": steps,
+        "provenance": {
+            "source": {"kind": "human", "title": "Operate dependency fixture plan"},
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    fs::write(
+        &plan_input,
+        serde_json::to_string_pretty(&plan).expect("serialize dependency fixture plan"),
+    )
+    .expect("write dependency fixture plan");
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &plan_id,
+        "--reviewer-id",
+        "reviewer:operate-dependency-plan",
+        "--reason",
+        "Accept operate dependency fixture plan",
+        "--base-revision-id",
+        &import_revision,
+        "--actor-id",
+        "actor:run-plan-review",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accepted_revision_id = stdout_json(&accept)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted dependency fixture revision")
+        .to_owned();
+    NativeFrontierFixture {
+        plan_id,
+        step_ids,
+        work_cell_ids: vec![upstream_id, downstream_id],
+        accepted_revision_id,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn operate_halts_on_round_budget_exhausted_when_dispatchable_work_remains() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_operate_dependency_fixture(&directory, "budget");
+
+    let output = run_native_operate(&directory, &fixture, 4, 1);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["rounds_used"], json!(1));
+    assert_eq!(
+        value["result"]["rounds"][0]["status"],
+        json!("round_executed")
+    );
+    assert_eq!(
+        value["result"]["halt"]["halt"],
+        json!("round_budget_exhausted")
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn operate_executes_two_independent_steps_then_halts_on_nothing_eligible() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "operate-two",
+        &[
+            ("work:operate-two-a", "printf 'a\\n'"),
+            ("work:operate-two-b", "printf 'b\\n'"),
+        ],
+    );
+
+    let output = run_native_operate(&directory, &fixture, 2, 2);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["rounds_used"], json!(1));
+    assert_eq!(
+        value["result"]["rounds"].as_array().expect("rounds").len(),
+        1
+    );
+    assert_eq!(
+        value["result"]["rounds"][0]["status"],
+        json!("round_executed")
+    );
+    // rounds_used bounds rounds, not work: both independent steps dispatched
+    // concurrently inside that one round (--max-parallel 2), so the actual
+    // spawn count this invocation used is 2, not rounds_used's 1.
+    assert_eq!(value["result"]["steps_dispatched"], json!(2));
+    assert_eq!(value["result"]["halt"]["halt"], json!("nothing_eligible"));
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn operate_halts_on_needs_retry_decision_after_a_worker_failure_and_stops_the_loop() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "operate-fail",
+        &[("work:operate-fail-a", "exit 1")],
+    );
+
+    let output = run_native_operate(&directory, &fixture, 1, 3);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["rounds_used"], json!(1));
+    assert_eq!(
+        value["result"]["halt"]["halt"],
+        json!("needs_retry_decision")
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// `--retry-step` on `operate` is refused, not consumed. Regression test for
+/// the adversarial-execution-reviewer finding: `--retry-step` named on
+/// `operate` used to stay exempt from `select_steps`'s `prior_failed` gate
+/// on every round of the invocation, so a step whose worker always fails
+/// was dispatched again automatically each round — an auto-retry loop
+/// bounded only by `--max-rounds`, the retry engine ADR 0002 excludes and
+/// ADR 0004 kept excluding. Consuming the consent after one attempt would
+/// have fixed the loop but needed per-round bookkeeping
+/// `docs/specs/operate-halt.fsl` does not model; refusing the flag outright
+/// keeps `--retry-step` exactly the between-invocations act the spec already
+/// models — run `run --frontier --retry-step <id>` explicitly, then
+/// `operate`.
+///
+/// A/B this by reverting the refusal in
+/// `src/native_cli/parser.rs::parse_operate` — this test then fails because
+/// the command succeeds, dispatches the always-failing worker, and the
+/// marker file exists.
+#[cfg(unix)]
+#[test]
+fn operate_refuses_retry_step_with_a_usage_error_and_spawns_no_worker() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    // The worker's `working_directory` is `directory` itself
+    // (`setup_native_frontier`), so a bare relative filename lands there.
+    let marker = directory.join("worker-ran.marker");
+    let fixture = setup_native_frontier(
+        &directory,
+        "operate-refuses-retry",
+        &[("work:operate-refuses-retry-a", "touch worker-ran.marker")],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(native_operate_args(
+            &directory,
+            &fixture,
+            &fixture.accepted_revision_id,
+            1,
+            4,
+            &["capability:dispatch", "capability:native-run-worker"],
+            &[&fixture.step_ids[0]],
+        ))
+        .output()
+        .expect("run casegraphen operate");
+    assert!(
+        !output.status.success(),
+        "operate --retry-step must be refused: {}",
+        stdout_json(&output)
+    );
+    let refusal = stderr_json(&output);
+    assert_eq!(refusal["error_code"], json!("usage"));
+    assert!(
+        !marker.is_file(),
+        "a refused --retry-step must dispatch nothing; the worker ran anyway"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// A two-step fixture whose upstream step is freely dispatchable and whose
+/// downstream step is blocked by an unaccepted `accepts` relation to a
+/// review cell — `native_eval.rs::required_review_relations` /
+/// `review_satisfied`, the same producer `needs_review`'s
+/// `is_clearable_by_review` keys on. Modelled on
+/// `setup_native_operate_dependency_fixture`, with the `depends_on` relation
+/// to a second work cell replaced by an `accepts` relation to a review cell,
+/// so `operate` gets one real round of dispatch before the halt this
+/// produces is reachable — unlike `setup_native_operate_blocked_fixture`'s
+/// single-cell fixtures, this exercises INV-OPERATE-002 against a morphism
+/// log that is not empty.
+#[cfg(unix)]
+fn setup_native_operate_review_seam_fixture(
+    directory: &Path,
+    suffix: &str,
+) -> NativeFrontierFixture {
+    use std::os::unix::fs::PermissionsExt;
+
+    let input_path = directory.join(format!("{suffix}.operate-review-seam.native.input.json"));
+    let mut input = json_file(native_case_fixture());
+    let work_template = input["case_cells"]
+        .as_array()
+        .expect("native case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("native work template")
+        .clone();
+    let upstream_id = format!("work:operate-review-seam-{suffix}-upstream");
+    let downstream_id = format!("work:operate-review-seam-{suffix}-downstream");
+    for cell_id in [&upstream_id, &downstream_id] {
+        let mut cell = work_template.clone();
+        cell["id"] = json!(cell_id);
+        cell["title"] = json!(format!("Operate review seam fixture {cell_id}"));
+        cell["lifecycle"] = json!("active");
+        cell["structure_ids"] = json!([]);
+        input["case_cells"]
+            .as_array_mut()
+            .expect("native case cells")
+            .push(cell);
+    }
+    let review_id = format!("review:operate-review-seam-{suffix}-blocking");
+    let space_id = input["space_id"].clone();
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .push(json!({
+            "id": review_id,
+            "cell_type": "review",
+            "space_id": space_id,
+            "title": format!("Operate review seam fixture {suffix} blocking review"),
+            "summary": Value::Null,
+            "lifecycle": "active",
+            "source_ids": [],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }));
+    input["case_relations"]
+        .as_array_mut()
+        .expect("native case relations")
+        .push(json!({
+            "id": format!("relation:operate-review-seam-{suffix}"),
+            "relation_type": "accepts",
+            "relation_strength": "hard",
+            "from_id": downstream_id,
+            "to_id": review_id,
+            "evidence_ids": [],
+            "source_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "accepted"
+            },
+            "metadata": {}
+        }));
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&input).expect("serialize review seam fixture case space"),
+    )
+    .expect("write review seam fixture case space");
+    let import_revision = format!("revision:operate-review-seam-{suffix}-import");
+    import_native_case_space_from_input(directory, &input_path, &import_revision);
+
+    let mut step_ids = Vec::new();
+    let mut steps = Vec::new();
+    for (number, work_cell_id) in [&upstream_id, &downstream_id].into_iter().enumerate() {
+        let script_path = directory.join(format!("{suffix}-review-seam-worker-{number}.sh"));
+        fs::write(&script_path, "#!/bin/sh\nset -eu\nprintf 'ok\\n'\n")
+            .expect("write review seam fixture worker");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("review seam worker metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make review seam worker executable");
+        let binding_id = format!("worker_binding:operate-review-seam-{suffix}-{number}");
+        let binding_input = directory.join(format!(
+            "{suffix}-review-seam-worker-{number}.binding.input.json"
+        ));
+        write_pinned_worker_binding(&binding_input, &binding_id, directory, &script_path);
+        let register = run_cli(&[
+            "binding",
+            "register",
+            "--store",
+            directory.to_str().expect("store path"),
+            "--input",
+            binding_input.to_str().expect("binding input path"),
+            "--format",
+            "json",
+        ]);
+        assert!(register.status.success(), "stderr: {}", stderr(&register));
+        let step_id = format!("step:operate-review-seam-{suffix}:{number}");
+        step_ids.push(step_id.clone());
+        steps.push(json!({
+            "step_id": step_id,
+            "work_cell_id": work_cell_id,
+            "worker_binding_id": binding_id,
+            "success_evidence_requirement_ids": ["evidence:native-schema-json-valid"],
+            "allowed_transition_classes": [{
+                "morphism_type": "update",
+                "target_cell_types": ["work"],
+                "to_lifecycles": ["resolved"]
+            }]
+        }));
+    }
+    let plan_id = format!("plan:operate-review-seam-{suffix}");
+    let plan_input = directory.join(format!("{suffix}-review-seam.execution.plan.input.json"));
+    let plan = json!({
+        "schema": "highergraphen.case.workflow.execution_plan.v1",
+        "schema_version": 1,
+        "plan_id": plan_id,
+        "case_space_id": native_case_space_id(),
+        "base_revision_id": import_revision,
+        "steps": steps,
+        "provenance": {
+            "source": {"kind": "human", "title": "Operate review seam fixture plan"},
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+        },
+        "review_status": "unreviewed",
+        "metadata": {}
+    });
+    fs::write(
+        &plan_input,
+        serde_json::to_string_pretty(&plan).expect("serialize review seam fixture plan"),
+    )
+    .expect("write review seam fixture plan");
+    let propose = run_cli(&[
+        "plan",
+        "propose",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        plan_input.to_str().expect("plan input path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let accept = run_cli(&[
+        "plan",
+        "accept",
+        "--store",
+        directory.to_str().expect("store path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--plan-id",
+        &plan_id,
+        "--reviewer-id",
+        "reviewer:operate-review-seam-plan",
+        "--reason",
+        "Accept operate review seam fixture plan",
+        "--base-revision-id",
+        &import_revision,
+        "--actor-id",
+        "actor:run-plan-review",
+        "--capability-id",
+        "capability:plan-review",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(accept.status.success(), "stderr: {}", stderr(&accept));
+    let accepted_revision_id = stdout_json(&accept)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted review seam fixture revision")
+        .to_owned();
+    NativeFrontierFixture {
+        plan_id,
+        step_ids,
+        work_cell_ids: vec![upstream_id, downstream_id],
+        accepted_revision_id,
+    }
+}
+
+/// `INV-OPERATE-002` (`docs/specs/operate-halt.fsl`): no actor accepts the
+/// claim it dispatched. ADR 0016 decision 4 states the stronger form —
+/// "the actor seam is a halt, never a step"; `operate` never performs a
+/// review itself, under any circumstance, including when a step it just
+/// finished dispatching is immediately followed by another step blocked on
+/// exactly that seam. A source-reading argument that `operate`'s dispatch
+/// path never calls into `review_apply` is real but does not survive a
+/// refactor, so this is an outcome check through the real binary instead:
+/// drive `operate` through one real dispatch to a `needs_review` halt, then
+/// read the actual persisted morphism log back and assert it contains no
+/// `review` morphism at all. A hypothetical auto-accept added behind a flag
+/// (the alternative ADR 0016 decision 4 rejects) would append exactly such
+/// an entry, and this test would catch it; a grep over the source would not.
+#[cfg(unix)]
+#[test]
+fn operate_halts_on_needs_review_and_appends_no_review_morphism() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_operate_review_seam_fixture(&directory, "seam");
+    let history_before = run_native_case_store_command(&directory, "history");
+    let entries_before_len = stdout_json(&history_before)["result"]["entries"]
+        .as_array()
+        .expect("history entries before operate")
+        .len();
+
+    let output = run_native_operate(&directory, &fixture, 2, 2);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let value = stdout_json(&output);
+    assert_eq!(value["result"]["rounds_used"], json!(1));
+    assert_eq!(
+        value["result"]["rounds"][0]["status"],
+        json!("round_executed")
+    );
+    assert_eq!(value["result"]["halt"]["halt"], json!("needs_review"));
+    // The review cell an independent actor must accept, not the work cell it
+    // gates: `review accept --target-id` takes the former, and against the
+    // latter it appends a `waiver` that clears nothing.
+    assert_eq!(
+        value["result"]["halt"]["target_ids"],
+        json!(["review:operate-review-seam-seam-blocking"])
+    );
+
+    // The outcome check: read the actual morphism log this invocation wrote
+    // — only the entries appended since setup finished, not the plan-accept
+    // and genesis entries setup itself legitimately recorded — and confirm
+    // not one of them is a review morphism, independent of anything the
+    // report claims about itself.
+    let history = run_native_case_store_command(&directory, "history");
+    let entries = stdout_json(&history)["result"]["entries"]
+        .as_array()
+        .expect("history entries")
+        .clone();
+    let appended_by_operate = &entries[entries_before_len..];
+    assert!(
+        !appended_by_operate.is_empty(),
+        "the upstream step's dispatch must have appended at least one entry"
+    );
+    let review_entries = appended_by_operate
+        .iter()
+        .filter(|entry| entry["morphism"]["morphism_type"] == json!("review"))
+        .count();
+    assert_eq!(
+        review_entries, 0,
+        "operate must never append a review morphism itself: {appended_by_operate:?}"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
 fn wait_for_file(path: &Path, timeout_message: &str) {

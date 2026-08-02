@@ -49,7 +49,7 @@ use mutations::{existing_case_space_ids, prepare_claim, ClaimPreparationState};
 pub use packet::EVIDENCE_PACKET_SCHEMA;
 pub(super) use packet::{packet_apply, packet_resume};
 pub(super) use plan::{plan_check, plan_propose, plan_review};
-pub(super) use run::{run_frontier, run_step};
+pub(super) use run::{operate, run_frontier, run_step};
 
 pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) action: ReviewAction,
@@ -98,6 +98,27 @@ pub(super) struct NativeRunFrontierOptions<'a> {
     pub(super) retry_step_ids: &'a [Id],
     pub(super) supersede_trace_ids: &'a [Id],
     pub(super) max_parallel: usize,
+    pub(super) gate_options: &'a NativeRunGateOptions,
+}
+
+/// `operate`'s options are `run --frontier`'s plus `max_rounds`, minus
+/// `retry_step_ids`: ADR 0016 decision 3 bounds the loop the way
+/// `--max-parallel` already bounds concurrency, and decision 6 makes it the
+/// thing that keeps "one gate authorizes the invocation" from meaning
+/// "unbounded work". `--retry-step` is refused at parse time
+/// (`parser.rs::parse_operate`) rather than accepted and threaded through:
+/// retry is an act between invocations (ADR 0002/0004), and a flag re-applied
+/// every round inside one invocation is a standing consent the spec never
+/// modelled and the loop had no way to spend correctly.
+pub(super) struct NativeOperateOptions<'a> {
+    pub(super) case_space_id: &'a Id,
+    pub(super) plan_id: &'a Id,
+    pub(super) base_revision_id: &'a Id,
+    pub(super) actor_id: &'a Id,
+    pub(super) enabled_worker_kinds: &'a [String],
+    pub(super) supersede_trace_ids: &'a [Id],
+    pub(super) max_parallel: usize,
+    pub(super) max_rounds: usize,
     pub(super) gate_options: &'a NativeRunGateOptions,
 }
 

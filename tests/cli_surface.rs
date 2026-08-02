@@ -67,9 +67,10 @@ fn accepted_commands_are_documented() {
             missing.push(format!("casegraphen {namespace}"));
         }
 
-        // `run` dispatches on parsed flags rather than an operation string.
-        // Assertion 1 proves both documented flag modes reach that dispatcher.
-        if namespace == "run" {
+        // `run` and `operate` dispatch on parsed flags rather than an
+        // operation string. Assertion 1 proves every documented flag shape
+        // reaches its dispatcher.
+        if namespace == "run" || namespace == "operate" {
             continue;
         }
 
@@ -235,6 +236,25 @@ fn expand_command_clause(command: &str) -> Vec<Vec<String>> {
         "command surface line has no command path: {command}"
     );
 
+    let mut paths = expand_path_tokens(&path_tokens, command);
+    // A namespace with no operation word at all (`operate`, the same shape
+    // `run` is) has no bare second token to stop this loop at one, so the
+    // first ordinary flag (`--store`) gets absorbed above as if it might be
+    // an operation marker — the way `--step`/`--frontier` genuinely are for
+    // `run`. Unlike `run`, `operate` has only one mode, and its report label
+    // (`native_cli/ops/run.rs`'s `operate` function) names only the bare
+    // namespace. When the second token is a flag, the namespace alone is
+    // therefore documented too, alongside the longer, coincidentally-absorbed
+    // path — this only adds paths `usage_paths()` accepts, it never narrows
+    // what `documented_commands_are_accepted` exercises against the real
+    // binary.
+    if path_tokens.len() >= 2 && path_tokens[1].starts_with("--") {
+        paths.extend(expand_path_tokens(&path_tokens[..1], command));
+    }
+    paths
+}
+
+fn expand_path_tokens(path_tokens: &[&str], command: &str) -> Vec<Vec<String>> {
     let mut paths = vec![Vec::new()];
     for token in path_tokens {
         let alternatives = token.split('|').collect::<Vec<_>>();

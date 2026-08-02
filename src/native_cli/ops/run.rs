@@ -4,8 +4,8 @@ use super::{
     case_reason,
     io::{provenance, timestamp, write_json},
     plan::{plan_path, read_stored_plan, verified_plan_review_status},
-    report, require_current_revision, NativeCliError, NativeCommandResult, NativeReasonSection,
-    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
+    report, require_current_revision, NativeCliError, NativeCommandResult, NativeOperateOptions,
+    NativeReasonSection, NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
 use crate::{
     exec::{
@@ -22,13 +22,14 @@ use crate::{
         ExecutionPlan, ExecutionStep,
     },
     native_eval::evaluate_native_case,
+    native_halt::{build_halt_reports, derive_halts, Halt, HaltReport},
     native_model::{
         apply_morphism, CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType,
         CaseRelation, CaseRelationType, CaseSpace, MorphismLogEntry, MorphismPayload,
         RelationStrength,
     },
     native_review::{check_operation_gate, NativeOperationGate},
-    native_store::NativeCaseStore,
+    native_store::{NativeCaseSpaceReplay, NativeCaseStore},
 };
 use higher_graphen_core::{Id, ReviewStatus, Severity, SourceKind};
 use serde_json::{json, Map, Value};
@@ -418,9 +419,19 @@ pub(in crate::native_cli) fn run_step(
         &supersede.blocking_step_ids,
     );
     let Some(&step_index) = selection.step_indices.first() else {
+        let halt = current_halt(
+            store,
+            &store_api,
+            options.case_space_id,
+            &plan,
+            &gate,
+            &retry_step_ids,
+            options.supersede_trace_ids,
+        )?;
         return Ok(no_dispatchable_report(
             selection.obstructions,
             selection.step_reasons,
+            halt,
         ));
     };
     let context = RunExecutionContext {
@@ -448,11 +459,21 @@ pub(in crate::native_cli) fn run_step(
         .steps
         .pop()
         .ok_or_else(|| NativeCliError::invalid("selected run step produced no result"))?;
+    let halt = current_halt(
+        store,
+        &store_api,
+        options.case_space_id,
+        &plan,
+        &gate,
+        &retry_step_ids,
+        options.supersede_trace_ids,
+    )?;
     Ok(run_report(
         &applied.status,
         Some(applied.trace),
         applied.worker_report.as_ref(),
         selection.step_reasons,
+        halt,
     ))
 }
 
@@ -471,19 +492,192 @@ pub(in crate::native_cli) fn run_frontier(
     verify_accepted_plan(&plan, &replay.case_space)?;
 
     let gate = dispatch_gate(options.actor_id, options.gate_options);
+    let retry_step_ids = options.retry_step_ids.iter().collect::<BTreeSet<_>>();
+    let frontier_selection = select_frontier_round(
+        store,
+        &plan,
+        &replay,
+        &gate,
+        &retry_step_ids,
+        options.supersede_trace_ids,
+    )?;
+    let outcome = dispatch_frontier_selection(
+        store,
+        &store_api,
+        options.case_space_id,
+        options.base_revision_id,
+        options.actor_id,
+        options.enabled_worker_kinds,
+        &plan,
+        &replay,
+        frontier_selection,
+        &gate,
+        options.max_parallel,
+    )?;
+    let halt = current_halt(
+        store,
+        &store_api,
+        options.case_space_id,
+        &plan,
+        &gate,
+        &retry_step_ids,
+        options.supersede_trace_ids,
+    )?;
+    Ok(frontier_report(
+        outcome.status,
+        outcome.traces,
+        outcome.step_reasons,
+        outcome.appended_entry_ids,
+        outcome.result_revision_id,
+        outcome.domain_finding,
+        halt,
+    ))
+}
+
+/// ADR 0016 decision 3: one invocation repeats exactly the round selection
+/// `run --frontier` performs (`select_frontier_round`, called nowhere else
+/// than it already is) until a halt other than progress is reached, then
+/// returns that halt. It never widens eligibility, never retries, never
+/// waits, and never authorizes or reviews anything itself — decisions 3/4 —
+/// so the only two ways this loop stops are "nothing is dispatchable right
+/// now" and "the round budget ran out while something still was"
+/// (`Halt::RoundBudgetExhausted`, decision 1, the reason `fslc` found this
+/// design needed that `--max-rounds` had not accounted for).
+pub(in crate::native_cli) fn operate(
+    store: &Path,
+    options: NativeOperateOptions<'_>,
+) -> Result<NativeCommandResult<Value>, NativeCliError> {
+    if options.max_parallel == 0 {
+        return Err(NativeCliError::usage("--max-parallel must be at least 1"));
+    }
+    if options.max_rounds == 0 {
+        return Err(NativeCliError::usage("--max-rounds must be at least 1"));
+    }
+    let store_api = NativeCaseStore::new(store.to_path_buf());
+    let mut replay = store_api.replay_current_case_space(options.case_space_id)?;
+    require_current_revision(&replay.current_revision_id, options.base_revision_id)?;
+
+    let plan = read_stored_plan(&plan_path(store, options.plan_id), options.plan_id)?;
+    verify_accepted_plan(&plan, &replay.case_space)?;
+
+    let gate = dispatch_gate(options.actor_id, options.gate_options);
+
+    // No `--retry-step`: `parser.rs::parse_operate` refuses it before this
+    // function is ever reached. Retry is an act between invocations (ADR
+    // 0002/0004); an empty retry set here is not a default that could be
+    // widened later, it is the fact that `operate` never retries anything on
+    // its own, in every round of every invocation.
+    let retry_step_ids: BTreeSet<&Id> = BTreeSet::new();
+
+    let mut rounds = Vec::new();
+    let mut appended_entry_ids = Vec::new();
+    let mut rounds_used: usize = 0;
+    // `rounds_used` bounds rounds, not work: a round dispatches up to
+    // `--max-parallel` steps concurrently (ADR 0004), so the real spawn
+    // bound for one invocation is `max_rounds * max_parallel`, not
+    // `max_rounds`. Reported alongside `rounds_used` so a caller does not
+    // have to reconstruct it from `rounds[].traces.len()` themselves.
+    let mut steps_dispatched: usize = 0;
+    let mut rounds_domain_finding = false;
+    let (halts, halt_domain_finding) = loop {
+        let frontier_selection = select_frontier_round(
+            store,
+            &plan,
+            &replay,
+            &gate,
+            &retry_step_ids,
+            options.supersede_trace_ids,
+        )?;
+        let budget_exhausted = rounds_used >= options.max_rounds;
+        let halt_reports = halt_reports_from_frontier_selection(
+            store,
+            options.case_space_id,
+            &plan,
+            &replay.current_revision_id,
+            &frontier_selection,
+            budget_exhausted,
+        );
+        if !halt_reports.is_empty() {
+            let domain_finding = halt_reports[0].halt == Halt::RoundBudgetExhausted
+                || run_results_have_domain_finding(std::iter::once((
+                    "no_dispatchable_step",
+                    frontier_selection.selection.obstructions.as_slice(),
+                )));
+            break (halt_reports, domain_finding);
+        }
+        let outcome = dispatch_frontier_selection(
+            store,
+            &store_api,
+            options.case_space_id,
+            options.base_revision_id,
+            options.actor_id,
+            options.enabled_worker_kinds,
+            &plan,
+            &replay,
+            frontier_selection,
+            &gate,
+            options.max_parallel,
+        )?;
+        rounds_used += 1;
+        steps_dispatched += outcome.traces.len();
+        rounds_domain_finding = rounds_domain_finding || outcome.domain_finding;
+        appended_entry_ids.extend(outcome.appended_entry_ids.iter().cloned());
+        rounds.push(json!({
+            "round": rounds_used,
+            "status": outcome.status,
+            "traces": outcome.traces,
+            "step_reasons": outcome.step_reasons,
+            "appended_entry_ids": outcome.appended_entry_ids,
+            "result_revision_id": outcome.result_revision_id,
+        }));
+        replay = store_api.replay_current_case_space(options.case_space_id)?;
+    };
+    Ok(operate_report(
+        rounds,
+        appended_entry_ids,
+        rounds_used,
+        steps_dispatched,
+        replay.current_revision_id,
+        halts,
+        rounds_domain_finding || halt_domain_finding,
+    ))
+}
+
+/// The evaluation, traces, and fully-filtered step selection for one round —
+/// `select_steps` (the same eligibility rule `run --step` uses) plus the
+/// operation-gate and worker-binding checks only `run --frontier` applies.
+/// `operate`'s loop calls this exactly where `run --frontier` does, and
+/// nowhere else: repeating this one function is what ADR 0016 decision 3
+/// means by "the loop may only repeat the selection `run --frontier` already
+/// performs".
+struct FrontierSelection {
+    selection: StepSelection,
+    binding_rejections: BTreeMap<usize, BindingRejection>,
+    evaluation: crate::native_eval::NativeCaseEvaluation,
+    traces: Vec<ExecutionTrace>,
+    superseded_trace_ids_by_step: BTreeMap<Id, Vec<Id>>,
+}
+
+fn select_frontier_round(
+    store: &Path,
+    plan: &ExecutionPlan,
+    replay: &NativeCaseSpaceReplay,
+    gate: &NativeOperationGate,
+    retry_step_ids: &BTreeSet<&Id>,
+    supersede_trace_ids: &[Id],
+) -> Result<FrontierSelection, NativeCliError> {
     let evaluation = evaluate_native_case(&replay.case_space)?;
     let traces = read_execution_traces(store, &replay.case_space)?;
-    let supersede = decide_superseded_traces(&plan, &traces, options.supersede_trace_ids)?;
-    let retry_step_ids = options.retry_step_ids.iter().collect::<BTreeSet<_>>();
+    let supersede = decide_superseded_traces(plan, &traces, supersede_trace_ids)?;
     let mut selection = select_steps(
-        &plan,
+        plan,
         &replay.case_space,
         &evaluation.frontier_cell_ids,
         &traces,
-        &retry_step_ids,
+        retry_step_ids,
         &supersede.blocking_step_ids,
     );
-    if check_operation_gate(&replay.case_space, &gate, "dispatch").is_err() {
+    if check_operation_gate(&replay.case_space, gate, "dispatch").is_err() {
         for &step_index in &selection.step_indices {
             selection.step_reasons[step_index]["eligible"] = Value::Bool(false);
             selection.step_reasons[step_index]["reasons"]
@@ -493,42 +687,74 @@ pub(in crate::native_cli) fn run_frontier(
         }
         selection.step_indices.clear();
     }
-    let binding_rejections = frontier_binding_rejections(store, &plan, &gate, &selection);
-    limit_one_step_per_work_cell(&plan, &mut selection, &binding_rejections);
-    if selection.step_indices.is_empty() {
+    let binding_rejections = frontier_binding_rejections(store, plan, gate, &selection);
+    limit_one_step_per_work_cell(plan, &mut selection, &binding_rejections);
+    Ok(FrontierSelection {
+        selection,
+        binding_rejections,
+        evaluation,
+        traces,
+        superseded_trace_ids_by_step: supersede.trace_ids_by_step,
+    })
+}
+
+struct FrontierRoundOutcome {
+    status: &'static str,
+    traces: Vec<ExecutionTrace>,
+    step_reasons: Vec<Value>,
+    appended_entry_ids: Vec<Id>,
+    result_revision_id: Id,
+    domain_finding: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_frontier_selection(
+    store: &Path,
+    store_api: &NativeCaseStore,
+    case_space_id: &Id,
+    base_revision_id: &Id,
+    actor_id: &Id,
+    enabled_worker_kinds: &[String],
+    plan: &ExecutionPlan,
+    replay: &NativeCaseSpaceReplay,
+    mut frontier_selection: FrontierSelection,
+    gate: &NativeOperationGate,
+    max_parallel: usize,
+) -> Result<FrontierRoundOutcome, NativeCliError> {
+    if frontier_selection.selection.step_indices.is_empty() {
         let domain_finding = run_results_have_domain_finding(std::iter::once((
             "no_dispatchable_step",
-            selection.obstructions.as_slice(),
+            frontier_selection.selection.obstructions.as_slice(),
         )));
-        return Ok(frontier_report(
-            "no_dispatchable_step",
-            Vec::new(),
-            selection.step_reasons,
-            Vec::new(),
-            replay.current_revision_id,
+        return Ok(FrontierRoundOutcome {
+            status: "no_dispatchable_step",
+            traces: Vec::new(),
+            step_reasons: frontier_selection.selection.step_reasons,
+            appended_entry_ids: Vec::new(),
+            result_revision_id: replay.current_revision_id.clone(),
             domain_finding,
-        ));
+        });
     }
 
     let context = RunExecutionContext {
         store,
-        case_space_id: options.case_space_id,
-        base_revision_id: options.base_revision_id,
-        actor_id: options.actor_id,
-        enabled_worker_kinds: options.enabled_worker_kinds,
-        gate: &gate,
-        superseded_trace_ids_by_step: &supersede.trace_ids_by_step,
+        case_space_id,
+        base_revision_id,
+        actor_id,
+        enabled_worker_kinds,
+        gate,
+        superseded_trace_ids_by_step: &frontier_selection.superseded_trace_ids_by_step,
         pinned_application_case_space: None,
         continue_on_step_failure: true,
     };
     let execution = execute_selected_steps(
         &context,
         &replay.case_space,
-        &plan,
-        &traces,
-        &selection.step_indices,
-        &binding_rejections,
-        options.max_parallel,
+        plan,
+        &frontier_selection.traces,
+        &frontier_selection.selection.step_indices,
+        &frontier_selection.binding_rejections,
+        max_parallel,
     )?;
     let round_executed = execution
         .steps
@@ -536,14 +762,15 @@ pub(in crate::native_cli) fn run_frontier(
         .any(|step| step.worker_report.is_some());
     for step in &execution.steps {
         if step.worker_report.is_none() {
-            selection.step_reasons[step.step_index]["eligible"] = Value::Bool(false);
+            frontier_selection.selection.step_reasons[step.step_index]["eligible"] =
+                Value::Bool(false);
             if let Some(reason) = step
                 .trace
                 .obstructions
                 .first()
                 .map(|obstruction| obstruction.obstruction_type.clone())
             {
-                selection.step_reasons[step.step_index]["reasons"]
+                frontier_selection.selection.step_reasons[step.step_index]["reasons"]
                     .as_array_mut()
                     .expect("step reasons is always an array")
                     .push(Value::String(reason));
@@ -565,19 +792,159 @@ pub(in crate::native_cli) fn run_frontier(
         .iter()
         .flat_map(|trace| trace.appended_entry_ids.iter().cloned())
         .collect::<Vec<_>>();
-    let final_replay = store_api.replay_current_case_space(options.case_space_id)?;
-    Ok(frontier_report(
-        if round_executed {
+    let final_replay = store_api.replay_current_case_space(case_space_id)?;
+    Ok(FrontierRoundOutcome {
+        status: if round_executed {
             "round_executed"
         } else {
             "no_dispatchable_step"
         },
         traces,
-        selection.step_reasons,
+        step_reasons: frontier_selection.selection.step_reasons,
         appended_entry_ids,
-        final_replay.current_revision_id,
+        result_revision_id: final_replay.current_revision_id,
         domain_finding,
+    })
+}
+
+/// The one halt derivation (`native_halt::derive_halt`), read against
+/// whatever the store says *right now* — always a fresh replay and a fresh
+/// [`select_frontier_round`], never the state a caller computed a step ago.
+/// A round that dispatched can still leave the plan with further
+/// dispatchable work (`Progress`) or none (some other halt): only a fresh
+/// selection against the post-round state answers which, so this is called
+/// once at the end of `run --step`, `run --frontier`, and each stop of
+/// `operate`'s loop — never mid-round.
+pub(in crate::native_cli::ops) fn current_halt(
+    store: &Path,
+    store_api: &NativeCaseStore,
+    case_space_id: &Id,
+    plan: &ExecutionPlan,
+    gate: &NativeOperationGate,
+    retry_step_ids: &BTreeSet<&Id>,
+    supersede_trace_ids: &[Id],
+) -> Result<Vec<HaltReport>, NativeCliError> {
+    let replay = store_api.replay_current_case_space(case_space_id)?;
+    let frontier_selection = select_frontier_round(
+        store,
+        plan,
+        &replay,
+        gate,
+        retry_step_ids,
+        supersede_trace_ids,
+    )?;
+    Ok(halt_reports_from_frontier_selection(
+        store,
+        case_space_id,
+        plan,
+        &replay.current_revision_id,
+        &frontier_selection,
+        false,
     ))
+}
+
+/// The one call site `derive_halts` is reached from for every command that
+/// reports a halt (`run --step`, `run --frontier`, and `operate`'s loop,
+/// through `current_halt` and directly). `budget_exhausted` is `false` for
+/// every caller except `operate`, which is the only one with a round budget
+/// to exhaust — `operate` must not decide `RoundBudgetExhausted` any other
+/// way, or the priority order `derive_halts` encodes could disagree with a
+/// second, inline copy of it (the exact shape CLAUDE.md's single-decision-
+/// rule constraint forbids). Returns every independently-true halt, ranked;
+/// the head is the single answer `run`'s existing `halt` field reports, the
+/// whole vector is `halts`.
+fn halt_reports_from_frontier_selection(
+    store: &Path,
+    case_space_id: &Id,
+    plan: &ExecutionPlan,
+    completed_through: &Id,
+    frontier_selection: &FrontierSelection,
+    budget_exhausted: bool,
+) -> Vec<HaltReport> {
+    let dispatchable = !frontier_selection.selection.step_indices.is_empty();
+    let solely_retry_blocked_step_ids =
+        solely_retry_blocked_step_ids(&frontier_selection.selection.step_reasons);
+    let in_flight_step_ids = in_flight_step_ids(&frontier_selection.selection.step_reasons);
+    let halts = derive_halts(
+        dispatchable,
+        budget_exhausted,
+        &frontier_selection.evaluation,
+        plan,
+        &frontier_selection.traces,
+        &solely_retry_blocked_step_ids,
+        &in_flight_step_ids,
+    );
+    build_halt_reports(
+        &halts,
+        store,
+        case_space_id,
+        plan,
+        completed_through,
+        &frontier_selection.evaluation,
+        &frontier_selection.traces,
+        &solely_retry_blocked_step_ids,
+        &in_flight_step_ids,
+    )
+}
+
+/// `select_steps`'s own eligibility verdict for `needs_retry_decision`,
+/// carried into `native_halt::derive_halt` instead of re-derived there. A
+/// step is only a candidate for `needs_retry_decision` when
+/// `prior_failed_trace_requires_retry` is the *sole* entry in its final
+/// `step_reasons` — final meaning after every reason `select_frontier_round`
+/// can still add on top of `select_steps` (`operation_gate_rejected`,
+/// `work_cell_already_selected_this_round`, a binding rejection), not just
+/// what `select_steps` itself produced. A step failed once but now blocked
+/// for an unrelated, permanent reason (its work cell left the frontier
+/// because it — or a sibling — already resolved it) has no retry that could
+/// ever make it dispatchable again; `derive_halt` computing this itself from
+/// the trace alone, without consulting the one function that already knows
+/// every ineligibility reason, is exactly the "second eligibility predicate"
+/// ADR 0016 decision 3 forbids.
+fn solely_retry_blocked_step_ids(step_reasons: &[Value]) -> BTreeSet<Id> {
+    step_reasons
+        .iter()
+        .filter_map(|entry| {
+            let reasons = entry["reasons"].as_array()?;
+            let sole_reason = match reasons.as_slice() {
+                [only] => only.as_str()?,
+                _ => return None,
+            };
+            if sole_reason != "prior_failed_trace_requires_retry" {
+                return None;
+            }
+            entry["step_id"]
+                .as_str()
+                .and_then(|id| Id::new(id.to_owned()).ok())
+        })
+        .collect()
+}
+
+/// The steps `select_steps` marked `dispatch_in_progress` this round —
+/// `native_halt::Halt::DispatchInProgress`'s own eligibility verdict, read
+/// the same way `solely_retry_blocked_step_ids` is: from `select_steps`'s
+/// own output, never re-derived from the traces or the case space
+/// independently. Unlike the retry set, membership does not require the
+/// reason to be sole — by the point `derive_halt` checks
+/// `DispatchInProgress` (after every higher-priority reason), a step
+/// carrying it alongside something else has already been accounted for by
+/// whichever check ran first.
+fn in_flight_step_ids(step_reasons: &[Value]) -> BTreeSet<Id> {
+    step_reasons
+        .iter()
+        .filter_map(|entry| {
+            let reasons = entry["reasons"].as_array()?;
+            if !reasons
+                .iter()
+                .any(|reason| reason == "dispatch_in_progress")
+            {
+                return None;
+            }
+            entry["step_id"]
+                .as_str()
+                .and_then(|id| Id::new(id.to_owned()).ok())
+        })
+        .collect()
 }
 
 fn frontier_binding_rejections(
@@ -2465,11 +2832,13 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), NativeCliError> {
 fn no_dispatchable_report(
     obstructions: Vec<ExecutionObstruction>,
     step_reasons: Vec<Value>,
+    halts: Vec<HaltReport>,
 ) -> NativeCommandResult<Value> {
     let domain_finding = run_results_have_domain_finding(std::iter::once((
         "no_dispatchable_step",
         obstructions.as_slice(),
     )));
+    let halt = halts.first().cloned();
     NativeCommandResult::with_domain_finding(
         report(
             "casegraphen run --step",
@@ -2480,6 +2849,8 @@ fn no_dispatchable_report(
             "appended_entry_ids": [],
             "obstructions": obstructions,
             "step_reasons": step_reasons,
+            "halt": halt,
+            "halts": halts,
             }),
         ),
         domain_finding,
@@ -2493,7 +2864,9 @@ fn frontier_report(
     appended_entry_ids: Vec<Id>,
     result_revision_id: Id,
     domain_finding: bool,
+    halts: Vec<HaltReport>,
 ) -> NativeCommandResult<Value> {
+    let halt = halts.first().cloned();
     NativeCommandResult::with_domain_finding(
         report(
             "casegraphen run --frontier",
@@ -2503,6 +2876,40 @@ fn frontier_report(
             "step_reasons": step_reasons,
             "appended_entry_ids": appended_entry_ids,
             "result_revision_id": result_revision_id,
+            "halt": halt,
+            "halts": halts,
+            }),
+        ),
+        domain_finding,
+    )
+}
+
+fn operate_report(
+    rounds: Vec<Value>,
+    appended_entry_ids: Vec<Id>,
+    rounds_used: usize,
+    steps_dispatched: usize,
+    result_revision_id: Id,
+    halts: Vec<HaltReport>,
+    domain_finding: bool,
+) -> NativeCommandResult<Value> {
+    let halt = halts.first().cloned();
+    NativeCommandResult::with_domain_finding(
+        report(
+            "casegraphen operate",
+            json!({
+            "rounds": rounds,
+            "rounds_used": rounds_used,
+            // `rounds_used` bounds rounds, not work: a round dispatches up
+            // to `--max-parallel` steps concurrently, so the actual spawn
+            // bound for this invocation was `max_rounds * max_parallel`,
+            // not `max_rounds`. This is how many of that budget were
+            // actually used.
+            "steps_dispatched": steps_dispatched,
+            "appended_entry_ids": appended_entry_ids,
+            "result_revision_id": result_revision_id,
+            "halt": halt,
+            "halts": halts,
             }),
         ),
         domain_finding,
@@ -2514,6 +2921,7 @@ fn run_report(
     trace: Option<ExecutionTrace>,
     worker_report: Option<&WorkerReport>,
     step_reasons: Vec<Value>,
+    halts: Vec<HaltReport>,
 ) -> NativeCommandResult<Value> {
     let appended_entry_ids = trace
         .as_ref()
@@ -2535,6 +2943,7 @@ fn run_report(
             .as_ref()
             .map_or(&[][..], |trace| trace.obstructions.as_slice()),
     )));
+    let halt = halts.first().cloned();
     NativeCommandResult::with_domain_finding(
         report(
             "casegraphen run --step",
@@ -2544,6 +2953,8 @@ fn run_report(
             "worker_report_summary": worker_report_summary,
             "appended_entry_ids": appended_entry_ids,
             "step_reasons": step_reasons,
+            "halt": halt,
+            "halts": halts,
             }),
         ),
         domain_finding,
@@ -2640,6 +3051,114 @@ mod tests {
                         "an assertion naming a non-started trace releases nothing"
                     );
                 }
+                Ok(())
+            },
+        );
+    }
+
+    /// `INV-OPERATE-001` (`docs/specs/operate-halt.fsl`) at the Rust
+    /// implementation level: `select_steps` is the *only* function that
+    /// decides which plan steps this round may touch, and its callers
+    /// (`select_frontier_round`, `run_step`) pass its `step_indices` straight
+    /// into `execute_selected_steps` unfiltered — so "a round only advances a
+    /// dispatchable step" reduces to "a step is selected iff none of
+    /// `select_steps`'s own blocking conditions holds of it", which is what
+    /// this fuzzes. `docs/specs/operate-halt.fsl` proves the model-level
+    /// statement of this unbounded; this is its witness against the function
+    /// that actually decides dispatch here.
+    #[test]
+    fn select_steps_eligibility_matches_its_own_blocking_conditions() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let dispatch_in_progress = bool::arbitrary(u)?;
+                let already_executed = bool::arbitrary(u)?;
+                let has_failed_trace = bool::arbitrary(u)?;
+                let retry_requested = bool::arbitrary(u)?;
+                let on_frontier = bool::arbitrary(u)?;
+                let lifecycle_active = bool::arbitrary(u)?;
+
+                let plan: ExecutionPlan = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.plan.example.json"
+                ))
+                .expect("execution plan example");
+                let step = plan.steps[0].clone();
+
+                let mut case_space: CaseSpace = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/native.case.space.example.json"
+                ))
+                .expect("native case space example");
+                let work_cell = case_space
+                    .case_cells
+                    .iter_mut()
+                    .find(|cell| cell.id == step.work_cell_id)
+                    .expect("plan example's work cell exists in the case space example");
+                work_cell.lifecycle = if lifecycle_active {
+                    CaseCellLifecycle::Active
+                } else {
+                    CaseCellLifecycle::Waiting
+                };
+                let frontier_cell_ids = if on_frontier {
+                    vec![step.work_cell_id.clone()]
+                } else {
+                    Vec::new()
+                };
+
+                let trace_template: ExecutionTrace = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.trace.example.json"
+                ))
+                .expect("execution trace example");
+                let mut traces = Vec::new();
+                if already_executed {
+                    let mut trace = trace_template.clone();
+                    trace.trace_id =
+                        Id::new("execution_trace:property:applied".to_owned()).expect("id");
+                    trace.plan_id = plan.plan_id.clone();
+                    trace.step_id = step.step_id.clone();
+                    trace.dispatch_state = ExecutionDispatchState::Completed;
+                    trace.transition_applied = true;
+                    traces.push(trace);
+                }
+                if has_failed_trace {
+                    let mut trace = trace_template.clone();
+                    trace.trace_id =
+                        Id::new("execution_trace:property:failed".to_owned()).expect("id");
+                    trace.plan_id = plan.plan_id.clone();
+                    trace.step_id = step.step_id.clone();
+                    trace.dispatch_state = ExecutionDispatchState::Failed;
+                    trace.transition_applied = false;
+                    traces.push(trace);
+                }
+
+                let mut blocking_started_step_ids = BTreeSet::new();
+                if dispatch_in_progress {
+                    blocking_started_step_ids.insert(step.step_id.clone());
+                }
+                let mut retry_step_ids = BTreeSet::new();
+                if retry_requested {
+                    retry_step_ids.insert(&step.step_id);
+                }
+
+                let selection = select_steps(
+                    &plan,
+                    &case_space,
+                    &frontier_cell_ids,
+                    &traces,
+                    &retry_step_ids,
+                    &blocking_started_step_ids,
+                );
+
+                let expected_eligible = !dispatch_in_progress
+                    && !already_executed
+                    && (!has_failed_trace || retry_requested)
+                    && on_frontier
+                    && lifecycle_active;
+                assert_eq!(
+                    selection.step_indices.contains(&0),
+                    expected_eligible,
+                    "dispatch_in_progress={dispatch_in_progress} already_executed={already_executed} \
+                     has_failed_trace={has_failed_trace} retry_requested={retry_requested} \
+                     on_frontier={on_frontier} lifecycle_active={lifecycle_active}"
+                );
                 Ok(())
             },
         );

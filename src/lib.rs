@@ -9,6 +9,7 @@ pub mod github_issue_snapshot;
 pub mod math_diagnostics;
 pub mod native_cli;
 pub mod native_eval;
+pub mod native_halt;
 mod native_hash;
 pub mod native_model;
 pub mod native_review;

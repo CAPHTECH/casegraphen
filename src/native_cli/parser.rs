@@ -4,7 +4,65 @@ use super::{
     NativeCliCommand, NativeCliError, NativeReasonSection,
 };
 use crate::native_model::ReviewAction;
+use higher_graphen_core::Id;
 use std::ffi::OsString;
+
+/// `run --frontier`'s and `operate`'s shared dispatch gate: `parse_operate`
+/// takes exactly `parse_run`'s frontier-branch gate flags, because ADR 0016
+/// decision 3 makes `operate` repeat that same selection round after round.
+/// The `--gate-actor-id` alias check is authorization-adjacent (it asserts
+/// the compatibility flag names the same actor the gate resolved to), so it
+/// stayed in exactly one place rather than two bodies that could disagree.
+struct RunFamilyGate {
+    actor_id: Id,
+    gate_options: NativeRunGateOptions,
+}
+
+fn resolve_run_family_gate(
+    options: &NativeOptions,
+    command: &'static str,
+) -> Result<RunFamilyGate, NativeCliError> {
+    let resolved_gate =
+        options.resolve_operation_gate_options(OperationGateRequirement::Required {
+            command,
+            actor_command: None,
+        })?;
+    let actor_id = resolved_gate
+        .actor_id
+        .clone()
+        .expect("required gate resolution checked actor_id");
+    if let Some(gate_actor_id) = &options.gate_actor_id {
+        if gate_actor_id != &actor_id {
+            return Err(NativeCliError::usage(
+                "--gate-actor-id is a compatibility alias and must equal --actor-id",
+            ));
+        }
+    }
+    let gate_options = NativeRunGateOptions {
+        capability_ids: resolved_gate.capability_ids,
+        operation_scope_id: resolved_gate
+            .operation_scope_id
+            .expect("required gate resolution checked operation_scope_id"),
+        audience: resolved_gate
+            .audience
+            .expect("required gate resolution checked audience"),
+        source_boundary_id: resolved_gate
+            .source_boundary_id
+            .expect("required gate resolution checked source_boundary_id"),
+    };
+    Ok(RunFamilyGate {
+        actor_id,
+        gate_options,
+    })
+}
+
+fn resolve_max_parallel(options: &NativeOptions) -> Result<usize, NativeCliError> {
+    let max_parallel = options.max_parallel.unwrap_or(4);
+    if max_parallel == 0 {
+        return Err(NativeCliError::usage("--max-parallel must be at least 1"));
+    }
+    Ok(max_parallel)
+}
 
 impl NativeCliCommand {
     pub fn parse(
@@ -38,6 +96,7 @@ impl NativeCliCommand {
                 Self::parse_binding(required_segment(&mut args, "binding operation")?, args)
             }
             "run" => Self::parse_run(args),
+            "operate" => Self::parse_operate(args),
             "review" => Self::parse_review(required_segment(&mut args, "review operation")?, args),
             "evidence" => {
                 Self::parse_evidence(required_segment(&mut args, "evidence operation")?, args)
@@ -413,34 +472,10 @@ impl NativeCliCommand {
         } else {
             "run --frontier"
         };
-        let resolved_gate =
-            options.resolve_operation_gate_options(OperationGateRequirement::Required {
-                command: mode,
-                actor_command: None,
-            })?;
-        let actor_id = resolved_gate
-            .actor_id
-            .clone()
-            .expect("required gate resolution checked actor_id");
-        if let Some(gate_actor_id) = &options.gate_actor_id {
-            if gate_actor_id != &actor_id {
-                return Err(NativeCliError::usage(
-                    "--gate-actor-id is a compatibility alias and must equal --actor-id",
-                ));
-            }
-        }
-        let gate_options = NativeRunGateOptions {
-            capability_ids: resolved_gate.capability_ids,
-            operation_scope_id: resolved_gate
-                .operation_scope_id
-                .expect("required gate resolution checked operation_scope_id"),
-            audience: resolved_gate
-                .audience
-                .expect("required gate resolution checked audience"),
-            source_boundary_id: resolved_gate
-                .source_boundary_id
-                .expect("required gate resolution checked source_boundary_id"),
-        };
+        let RunFamilyGate {
+            actor_id,
+            gate_options,
+        } = resolve_run_family_gate(&options, mode)?;
         if options.run_step {
             Ok(Self::RunStep {
                 store: options.require_store()?,
@@ -450,7 +485,7 @@ impl NativeCliCommand {
                     .base_revision_id
                     .clone()
                     .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-                actor_id: actor_id.clone(),
+                actor_id,
                 enabled_worker_kinds: options.enabled_worker_kinds,
                 retry_step_id: options.retry_step_ids.last().cloned(),
                 supersede_trace_ids: options.supersede_trace_ids,
@@ -459,10 +494,7 @@ impl NativeCliCommand {
                 output: options.output,
             })
         } else {
-            let max_parallel = options.max_parallel.unwrap_or(4);
-            if max_parallel == 0 {
-                return Err(NativeCliError::usage("--max-parallel must be at least 1"));
-            }
+            let max_parallel = resolve_max_parallel(&options)?;
             Ok(Self::RunFrontier {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
@@ -471,7 +503,7 @@ impl NativeCliCommand {
                     .base_revision_id
                     .clone()
                     .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
-                actor_id: actor_id.clone(),
+                actor_id,
                 enabled_worker_kinds: options.enabled_worker_kinds,
                 retry_step_ids: options.retry_step_ids,
                 supersede_trace_ids: options.supersede_trace_ids,
@@ -481,6 +513,58 @@ impl NativeCliCommand {
                 output: options.output,
             })
         }
+    }
+
+    /// ADR 0016 decision 3: `operate` repeats exactly the round selection
+    /// `run --frontier` performs, so it takes the same gate and dispatch
+    /// flags `run --frontier` does, plus the one flag that bounds the loop.
+    /// `--max-rounds` has no default, unlike `--max-parallel` — decision 6
+    /// makes it the thing that keeps "one gate authorizes the invocation"
+    /// from meaning "unbounded work", so a caller states the bound rather
+    /// than inheriting one silently.
+    fn parse_operate(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
+        let options = NativeOptions::parse_with_strict("operate", args)?;
+        let RunFamilyGate {
+            actor_id,
+            gate_options,
+        } = resolve_run_family_gate(&options, "operate")?;
+        let max_parallel = resolve_max_parallel(&options)?;
+        let max_rounds = options
+            .max_rounds
+            .ok_or_else(|| NativeCliError::usage("--max-rounds <n> is required for operate"))?;
+        if max_rounds == 0 {
+            return Err(NativeCliError::usage("--max-rounds must be at least 1"));
+        }
+        // Retry is an act between invocations (ADR 0002/0004), never a
+        // standing flag the loop re-applies every round: a step named once
+        // stays exempt from `select_steps`'s failed-trace gate for the
+        // invocation's whole life, so a step that fails again after being
+        // retried is retried again automatically — an auto-retry loop
+        // bounded only by `--max-rounds`. Run `run --frontier --retry-step
+        // <id>` explicitly, then `operate` again.
+        if !options.retry_step_ids.is_empty() {
+            return Err(NativeCliError::usage(
+                "--retry-step is not accepted by operate; retry is an explicit act between \
+                 invocations — run `run --frontier --retry-step <id>` first, then operate again",
+            ));
+        }
+        Ok(Self::Operate {
+            store: options.require_store()?,
+            case_space_id: options.require_id("--case-space-id")?,
+            plan_id: options.require_id("--plan-id")?,
+            base_revision_id: options
+                .base_revision_id
+                .clone()
+                .ok_or_else(|| NativeCliError::usage("--base-revision-id <id> is required"))?,
+            actor_id,
+            enabled_worker_kinds: options.enabled_worker_kinds,
+            supersede_trace_ids: options.supersede_trace_ids,
+            max_parallel,
+            max_rounds,
+            gate_options,
+            strict: options.strict,
+            output: options.output,
+        })
     }
 
     fn parse_review(
