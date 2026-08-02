@@ -107,6 +107,7 @@ struct RunExecutionContext<'a> {
     enabled_worker_kinds: &'a [String],
     gate: &'a NativeOperationGate,
     superseded_trace_ids_by_step: &'a BTreeMap<Id, Vec<Id>>,
+    retried_trace_ids_by_step: &'a BTreeMap<Id, Vec<Id>>,
     pinned_application_case_space: Option<&'a CaseSpace>,
     continue_on_step_failure: bool,
 }
@@ -442,6 +443,7 @@ pub(in crate::native_cli) fn run_step(
         enabled_worker_kinds: options.enabled_worker_kinds,
         gate: &gate,
         superseded_trace_ids_by_step: &supersede.trace_ids_by_step,
+        retried_trace_ids_by_step: &selection.retried_trace_ids_by_step,
         pinned_application_case_space: Some(&replay.case_space),
         continue_on_step_failure: false,
     };
@@ -643,6 +645,59 @@ pub(in crate::native_cli) fn operate(
     ))
 }
 
+/// `run --step --format text` (issue #35). Calls `run_step` exactly once —
+/// this dispatches a worker and appends to the log, so a second call would
+/// mean a second dispatch, not a second view of the first — and projects
+/// `result.halt`/`result.halts` from the same `Value` the JSON path already
+/// built. Nothing here is re-derived; `super::halt_fields_from_value` reads
+/// back the fields `run_step` itself already computed and serialized.
+pub(in crate::native_cli) fn run_step_text(
+    store: &Path,
+    options: NativeRunStepOptions<'_>,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let result = run_step(store, options)?;
+    let (value, domain_finding) = result.into_parts();
+    let (halt, halts) = super::halt_fields_from_value(&value);
+    let rendered = super::super::text::render_halt_section(halt.as_ref(), &halts);
+    Ok(NativeCommandResult::with_domain_finding(
+        rendered,
+        domain_finding,
+    ))
+}
+
+/// `run --frontier --format text`. See `run_step_text`: same discipline,
+/// one dispatching call, then a render-only projection of its own result.
+pub(in crate::native_cli) fn run_frontier_text(
+    store: &Path,
+    options: NativeRunFrontierOptions<'_>,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let result = run_frontier(store, options)?;
+    let (value, domain_finding) = result.into_parts();
+    let (halt, halts) = super::halt_fields_from_value(&value);
+    let rendered = super::super::text::render_halt_section(halt.as_ref(), &halts);
+    Ok(NativeCommandResult::with_domain_finding(
+        rendered,
+        domain_finding,
+    ))
+}
+
+/// `operate --format text`. See `run_step_text`: same discipline, one
+/// dispatching call (`operate`'s whole round loop), then a render-only
+/// projection of its own result.
+pub(in crate::native_cli) fn operate_text(
+    store: &Path,
+    options: NativeOperateOptions<'_>,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let result = operate(store, options)?;
+    let (value, domain_finding) = result.into_parts();
+    let (halt, halts) = super::halt_fields_from_value(&value);
+    let rendered = super::super::text::render_halt_section(halt.as_ref(), &halts);
+    Ok(NativeCommandResult::with_domain_finding(
+        rendered,
+        domain_finding,
+    ))
+}
+
 /// The evaluation, traces, and fully-filtered step selection for one round —
 /// `select_steps` (the same eligibility rule `run --step` uses) plus the
 /// operation-gate and worker-binding checks only `run --frontier` applies.
@@ -656,6 +711,7 @@ struct FrontierSelection {
     evaluation: crate::native_eval::NativeCaseEvaluation,
     traces: Vec<ExecutionTrace>,
     superseded_trace_ids_by_step: BTreeMap<Id, Vec<Id>>,
+    retried_trace_ids_by_step: BTreeMap<Id, Vec<Id>>,
 }
 
 fn select_frontier_round(
@@ -689,12 +745,14 @@ fn select_frontier_round(
     }
     let binding_rejections = frontier_binding_rejections(store, plan, gate, &selection);
     limit_one_step_per_work_cell(plan, &mut selection, &binding_rejections);
+    let retried_trace_ids_by_step = selection.retried_trace_ids_by_step.clone();
     Ok(FrontierSelection {
         selection,
         binding_rejections,
         evaluation,
         traces,
         superseded_trace_ids_by_step: supersede.trace_ids_by_step,
+        retried_trace_ids_by_step,
     })
 }
 
@@ -744,6 +802,7 @@ fn dispatch_frontier_selection(
         enabled_worker_kinds,
         gate,
         superseded_trace_ids_by_step: &frontier_selection.superseded_trace_ids_by_step,
+        retried_trace_ids_by_step: &frontier_selection.retried_trace_ids_by_step,
         pinned_application_case_space: None,
         continue_on_step_failure: true,
     };
@@ -1226,6 +1285,17 @@ fn apply_step_result(
             json!(superseded_trace_ids),
         );
     }
+    // `retried_trace_ids` is set once, in `TraceGuard::start`, from exactly
+    // the set `select_steps` computed and consulted to authorize this
+    // dispatch past its step's failed traces — this branch only carries it
+    // forward into the new `metadata` map below, rather than recomputing it,
+    // so it can never disagree with the eligibility gate. This branch
+    // replaces `trace_guard.trace` wholesale, which is the only reason this
+    // carry-forward is needed at all: every other finishing path mutates the
+    // existing `metadata` map in place and inherits the field for free.
+    if let Some(retried_trace_ids) = trace_guard.trace.metadata.get("retried_trace_ids") {
+        metadata.insert("retried_trace_ids".to_owned(), retried_trace_ids.clone());
+    }
     trace_guard.trace = ExecutionTrace {
         schema: EXECUTION_TRACE_SCHEMA.to_owned(),
         schema_version: EXECUTION_RECORD_SCHEMA_VERSION,
@@ -1319,6 +1389,10 @@ fn execute_selected_steps(
             &trace_started_at,
             context
                 .superseded_trace_ids_by_step
+                .get(&step.step_id)
+                .map_or(&[], Vec::as_slice),
+            context
+                .retried_trace_ids_by_step
                 .get(&step.step_id)
                 .map_or(&[], Vec::as_slice),
         ) {
@@ -1502,6 +1576,10 @@ fn record_reservation_failure(
             .superseded_trace_ids_by_step
             .get(&step.step_id)
             .map_or(&[], Vec::as_slice),
+        context
+            .retried_trace_ids_by_step
+            .get(&step.step_id)
+            .map_or(&[], Vec::as_slice),
     )?;
     finish_reserved_step_failure(
         context,
@@ -1594,6 +1672,7 @@ struct StepSelection {
     step_indices: Vec<usize>,
     step_reasons: Vec<Value>,
     obstructions: Vec<ExecutionObstruction>,
+    retried_trace_ids_by_step: BTreeMap<Id, Vec<Id>>,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -1748,6 +1827,7 @@ fn select_steps(
     let mut selected = Vec::new();
     let mut step_reasons = Vec::new();
     let mut obstructions = Vec::new();
+    let mut retried_trace_ids_by_step = BTreeMap::<Id, Vec<Id>>::new();
     for (index, step) in plan.steps.iter().enumerate() {
         let mut reasons = Vec::new();
         let prior_started = blocking_started_step_ids.contains(&step.step_id);
@@ -1756,11 +1836,22 @@ fn select_steps(
                 && trace.step_id == step.step_id
                 && trace.transition_applied
         });
-        let prior_failed = traces.iter().any(|trace| {
-            trace.plan_id == plan.plan_id
-                && trace.step_id == step.step_id
-                && trace.dispatch_state == ExecutionDispatchState::Failed
-        });
+        // Issue #33 / ADR 0018: the exact set `prior_failed_trace_requires_retry`
+        // below ranges over — a failed trace of this step, in this plan. This
+        // is the single place that decides "which failed traces block this
+        // step", so it is also the single source for `retried_trace_ids_by_step`
+        // (recorded only when the step is authorized past them, further down):
+        // never a second, separately-computed notion of what was retried.
+        let failed_trace_ids = traces
+            .iter()
+            .filter(|trace| {
+                trace.plan_id == plan.plan_id
+                    && trace.step_id == step.step_id
+                    && trace.dispatch_state == ExecutionDispatchState::Failed
+            })
+            .map(|trace| trace.trace_id.clone())
+            .collect::<BTreeSet<_>>();
+        let prior_failed = !failed_trace_ids.is_empty();
         if prior_started {
             reasons.push("dispatch_in_progress");
             obstructions.push(ExecutionObstruction {
@@ -1793,6 +1884,14 @@ fn select_steps(
         let eligible = reasons.is_empty();
         if eligible {
             selected.push(index);
+            // "Authorized past" (ADR 0018): only an eligible step is actually
+            // dispatched, and eligible-with-`prior_failed` is only reachable
+            // because `retry_step_ids` named it above — an ineligible step
+            // never reaches the metadata that would read this map anyway.
+            if !failed_trace_ids.is_empty() {
+                retried_trace_ids_by_step
+                    .insert(step.step_id.clone(), failed_trace_ids.into_iter().collect());
+            }
         }
         step_reasons.push(json!({
             "step_id": step.step_id,
@@ -1805,6 +1904,7 @@ fn select_steps(
         step_indices: selected,
         step_reasons,
         obstructions,
+        retried_trace_ids_by_step,
     }
 }
 
@@ -2231,6 +2331,7 @@ impl TraceGuard {
         operation_gate: &NativeOperationGate,
         started_at: &str,
         superseded_trace_ids: &[Id],
+        retried_trace_ids: &[Id],
     ) -> Result<Self, NativeCliError> {
         write_bytes(&identity.run_directory.join("stdout"), &[])?;
         write_bytes(&identity.run_directory.join("stderr"), &[])?;
@@ -2254,6 +2355,20 @@ impl TraceGuard {
                 "superseded_trace_ids".to_owned(),
                 json!(superseded_trace_ids),
             );
+        }
+        // Issue #33 / ADR 0018, Finding 3 of the invariant-duplication audit:
+        // set once, here, beside `superseded_trace_ids`, so every dispatch
+        // outcome inherits it regardless of which of the three
+        // `finish`/`Drop`/reservation-failure paths ends up writing the
+        // trace. Previously only `apply_step_result`'s `Executed` branch set
+        // this, so a dispatch a worker never ran (`WorkerDispatch::Rejected`,
+        // `finish_reserved_step_failure`, or an abandoned `TraceGuard::drop`)
+        // recorded a `Failed` trace with no `retried_trace_ids` — the field
+        // meant less than `docs/specs/casegraphen.md` states, and a
+        // subsequent `--retry-step` then named both failed traces as if the
+        // second attempt were the first.
+        if !retried_trace_ids.is_empty() {
+            metadata.insert("retried_trace_ids".to_owned(), json!(retried_trace_ids));
         }
         let trace = ExecutionTrace {
             schema: EXECUTION_TRACE_SCHEMA.to_owned(),
@@ -3194,6 +3309,441 @@ mod tests {
                 Ok(())
             },
         );
+    }
+
+    /// Issue #33 / ADR 0018: a dispatch authorized past a step's failed
+    /// traces names exactly those traces in `retried_trace_ids_by_step` —
+    /// the same set `prior_failed_trace_requires_retry` above reads, not a
+    /// second notion of what was retried. Two failed traces are used
+    /// (`select_steps` collects a set, not "the latest") and the retry-not-
+    /// requested and no-prior-failure cases are both checked to record
+    /// nothing.
+    #[test]
+    fn select_steps_records_the_failed_traces_a_retry_was_authorized_past() {
+        let plan: ExecutionPlan = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.plan.example.json"
+        ))
+        .expect("execution plan example");
+        let step = plan.steps[0].clone();
+        let mut case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .expect("native case space example");
+        if let Some(cell) = case_space
+            .case_cells
+            .iter_mut()
+            .find(|cell| cell.id == step.work_cell_id)
+        {
+            cell.lifecycle = CaseCellLifecycle::Active;
+        }
+        let frontier_cell_ids = vec![step.work_cell_id.clone()];
+        let trace_template: ExecutionTrace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.trace.example.json"
+        ))
+        .expect("execution trace example");
+        let failed_trace = |suffix: &str| {
+            let mut trace = trace_template.clone();
+            trace.trace_id =
+                Id::new(format!("execution_trace:property:failed-{suffix}")).expect("id");
+            trace.plan_id = plan.plan_id.clone();
+            trace.step_id = step.step_id.clone();
+            trace.dispatch_state = ExecutionDispatchState::Failed;
+            trace.transition_applied = false;
+            trace
+        };
+        let traces = vec![failed_trace("a"), failed_trace("b")];
+        let failed_ids = traces
+            .iter()
+            .map(|trace| trace.trace_id.clone())
+            .collect::<BTreeSet<_>>();
+
+        // Retry requested: both failed traces are named, as a set.
+        let mut retry_step_ids = BTreeSet::new();
+        retry_step_ids.insert(&step.step_id);
+        let retried = select_steps(
+            &plan,
+            &case_space,
+            &frontier_cell_ids,
+            &traces,
+            &retry_step_ids,
+            &BTreeSet::new(),
+        );
+        assert!(retried.step_indices.contains(&0));
+        assert_eq!(
+            retried
+                .retried_trace_ids_by_step
+                .get(&step.step_id)
+                .cloned()
+                .map(|ids| ids.into_iter().collect::<BTreeSet<_>>()),
+            Some(failed_ids)
+        );
+
+        // No --retry-step: the step stays ineligible and nothing is recorded.
+        let not_retried = select_steps(
+            &plan,
+            &case_space,
+            &frontier_cell_ids,
+            &traces,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
+        assert!(!not_retried.step_indices.contains(&0));
+        assert!(!not_retried
+            .retried_trace_ids_by_step
+            .contains_key(&step.step_id));
+
+        // No prior failure at all: eligible on its own merits, still nothing
+        // to record.
+        let fresh = select_steps(
+            &plan,
+            &case_space,
+            &frontier_cell_ids,
+            &[],
+            &retry_step_ids,
+            &BTreeSet::new(),
+        );
+        assert!(fresh.step_indices.contains(&0));
+        assert!(!fresh.retried_trace_ids_by_step.contains_key(&step.step_id));
+    }
+
+    /// Issue #33: two independent, unrelated dispatches — here, of two
+    /// different steps in the same plan, neither ever failed — record no
+    /// link at all. Nothing in `select_steps` may infer a relationship from
+    /// mere adjacency; the map must simply be empty when there is nothing to
+    /// authorize past.
+    #[test]
+    fn select_steps_records_no_link_for_independent_dispatches_of_different_steps() {
+        let mut plan: ExecutionPlan = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.plan.example.json"
+        ))
+        .expect("execution plan example");
+        let mut case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .expect("native case space example");
+        // The fixture plan has exactly one step; a second, wholly independent
+        // step (own step_id, own work cell) is synthesized here so the test
+        // has two unrelated dispatch targets to check, neither ever failed.
+        let mut second_step = plan.steps[0].clone();
+        second_step.step_id = Id::new("step:property:independent-second".to_owned()).expect("id");
+        second_step.work_cell_id =
+            Id::new("work:property:independent-second".to_owned()).expect("id");
+        let mut second_cell = case_space
+            .case_cells
+            .iter()
+            .find(|cell| cell.id == plan.steps[0].work_cell_id)
+            .expect("plan's own work cell exists in the case space example")
+            .clone();
+        second_cell.id = second_step.work_cell_id.clone();
+        case_space.case_cells.push(second_cell);
+        plan.steps.push(second_step);
+
+        let frontier_cell_ids = plan
+            .steps
+            .iter()
+            .map(|step| {
+                if let Some(cell) = case_space
+                    .case_cells
+                    .iter_mut()
+                    .find(|cell| cell.id == step.work_cell_id)
+                {
+                    cell.lifecycle = CaseCellLifecycle::Active;
+                }
+                step.work_cell_id.clone()
+            })
+            .collect::<Vec<_>>();
+
+        let selection = select_steps(
+            &plan,
+            &case_space,
+            &frontier_cell_ids,
+            &[],
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
+
+        assert_eq!(selection.step_indices, vec![0, 1]);
+        assert!(selection.retried_trace_ids_by_step.is_empty());
+    }
+
+    /// Issue #33 / ADR 0018 constraint 1: the tool computes
+    /// `retried_trace_ids`; it is never accepted from input. A stored trace
+    /// file is not input this tool controls the shape of after the fact — an
+    /// operator, another tool, or a bug could have written anything into its
+    /// `metadata`. This forges `metadata.retried_trace_ids` on the failed
+    /// trace itself and confirms `select_steps` never reads it: the recorded
+    /// set is computed from `dispatch_state`/`trace_id`/`step_id`/`plan_id`
+    /// only, so the forged value cannot reach the new dispatch's trace.
+    #[test]
+    fn select_steps_never_reads_a_stored_traces_own_metadata_for_retried_trace_ids() {
+        let plan: ExecutionPlan = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.plan.example.json"
+        ))
+        .expect("execution plan example");
+        let step = plan.steps[0].clone();
+        let mut case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .expect("native case space example");
+        if let Some(cell) = case_space
+            .case_cells
+            .iter_mut()
+            .find(|cell| cell.id == step.work_cell_id)
+        {
+            cell.lifecycle = CaseCellLifecycle::Active;
+        }
+        let frontier_cell_ids = vec![step.work_cell_id.clone()];
+        let mut trace: ExecutionTrace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.trace.example.json"
+        ))
+        .expect("execution trace example");
+        trace.trace_id = Id::new("execution_trace:property:real-failure".to_owned()).expect("id");
+        trace.plan_id = plan.plan_id.clone();
+        trace.step_id = step.step_id.clone();
+        trace.dispatch_state = ExecutionDispatchState::Failed;
+        trace.transition_applied = false;
+        trace.metadata.insert(
+            "retried_trace_ids".to_owned(),
+            json!(["execution_trace:forged-by-caller"]),
+        );
+        let traces = vec![trace];
+
+        let mut retry_step_ids = BTreeSet::new();
+        retry_step_ids.insert(&step.step_id);
+        let selection = select_steps(
+            &plan,
+            &case_space,
+            &frontier_cell_ids,
+            &traces,
+            &retry_step_ids,
+            &BTreeSet::new(),
+        );
+
+        let recorded = selection
+            .retried_trace_ids_by_step
+            .get(&step.step_id)
+            .expect("a failed trace authorized past must be recorded");
+        assert_eq!(
+            recorded,
+            &vec![Id::new("execution_trace:property:real-failure".to_owned()).expect("id")]
+        );
+        assert!(
+            !recorded
+                .iter()
+                .any(|id| id.as_str() == "execution_trace:forged-by-caller"),
+            "the forged value inside the stored trace's own metadata must never surface"
+        );
+    }
+
+    /// Issue #33 / ADR 0018's soundness property: **the link is never
+    /// invented**. Simulated over arbitrary sequences of dispatch rounds —
+    /// each round either retries (only possible once a failed trace exists)
+    /// or dispatches fresh, and the round's outcome (failed or completed) is
+    /// itself arbitrary — every id `select_steps` ever places in
+    /// `retried_trace_ids_by_step` must, at the moment it is recorded, (a)
+    /// already exist among the traces this round was given, (b) have
+    /// `dispatch_state: Failed`, (c) share this step's `step_id` and
+    /// `plan_id`, and (d) precede the dispatch being authorized — which this
+    /// simulation gets for free by construction, since the id can only have
+    /// come from `traces` as captured *before* this round's (not yet
+    /// created) new trace exists.
+    #[test]
+    fn retried_trace_ids_never_names_a_trace_that_is_not_an_existing_failed_predecessor() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let plan: ExecutionPlan = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.plan.example.json"
+                ))
+                .expect("execution plan example");
+                let step = plan.steps[0].clone();
+                let mut case_space: CaseSpace = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/native.case.space.example.json"
+                ))
+                .expect("native case space example");
+                if let Some(cell) = case_space
+                    .case_cells
+                    .iter_mut()
+                    .find(|cell| cell.id == step.work_cell_id)
+                {
+                    cell.lifecycle = CaseCellLifecycle::Active;
+                }
+                let frontier_cell_ids = vec![step.work_cell_id.clone()];
+                let trace_template: ExecutionTrace = serde_json::from_str(include_str!(
+                    "../../../schemas/casegraphen/execution.trace.example.json"
+                ))
+                .expect("execution trace example");
+
+                let mut traces: Vec<ExecutionTrace> = Vec::new();
+                let round_count = u.int_in_range(1_usize..=6)?;
+                for round in 0..round_count {
+                    let ids_before_this_round = traces
+                        .iter()
+                        .map(|trace| trace.trace_id.clone())
+                        .collect::<BTreeSet<_>>();
+                    let has_failed_predecessor = traces.iter().any(|trace| {
+                        trace.plan_id == plan.plan_id
+                            && trace.step_id == step.step_id
+                            && trace.dispatch_state == ExecutionDispatchState::Failed
+                    });
+                    let mut retry_step_ids = BTreeSet::new();
+                    if has_failed_predecessor && bool::arbitrary(u)? {
+                        retry_step_ids.insert(&step.step_id);
+                    }
+
+                    let selection = select_steps(
+                        &plan,
+                        &case_space,
+                        &frontier_cell_ids,
+                        &traces,
+                        &retry_step_ids,
+                        &BTreeSet::new(),
+                    );
+
+                    if let Some(retried) = selection.retried_trace_ids_by_step.get(&step.step_id) {
+                        for retried_id in retried {
+                            // (d) precedes: must already have existed before
+                            // this round's own (not yet appended) trace.
+                            assert!(
+                                ids_before_this_round.contains(retried_id),
+                                "round {round}: {retried_id} was not among the traces this round saw"
+                            );
+                            // (a) exists, (b) failed, (c) same step and plan.
+                            let predecessor = traces
+                                .iter()
+                                .find(|trace| trace.trace_id == *retried_id)
+                                .expect("id claimed to precede must resolve to a real trace");
+                            assert_eq!(
+                                predecessor.dispatch_state,
+                                ExecutionDispatchState::Failed,
+                                "round {round}: {retried_id} is named but is not failed"
+                            );
+                            assert_eq!(predecessor.plan_id, plan.plan_id);
+                            assert_eq!(predecessor.step_id, step.step_id);
+                        }
+                    }
+
+                    if selection.step_indices.contains(&0) {
+                        let mut new_trace = trace_template.clone();
+                        new_trace.trace_id =
+                            Id::new(format!("execution_trace:property:round-{round}")).expect("id");
+                        new_trace.plan_id = plan.plan_id.clone();
+                        new_trace.step_id = step.step_id.clone();
+                        // A third outcome, `Started`, alongside `Failed` and
+                        // `Completed`: a dispatch that has not yet finished.
+                        // `prior_started` is a *separate* signal
+                        // (`blocking_started_step_ids`, left empty here, not
+                        // derived from `traces`), so a `Started` trace by
+                        // itself neither blocks nor counts as a failure this
+                        // step must be retried past — exercising exactly the
+                        // dispatch_state distinction the recorded set must
+                        // respect.
+                        new_trace.dispatch_state = match u.int_in_range(0_u8..=2)? {
+                            0 => ExecutionDispatchState::Failed,
+                            1 => ExecutionDispatchState::Completed,
+                            _ => ExecutionDispatchState::Started,
+                        };
+                        new_trace.transition_applied =
+                            new_trace.dispatch_state == ExecutionDispatchState::Completed;
+                        traces.push(new_trace);
+                    }
+                }
+                Ok(())
+            },
+        );
+    }
+
+    /// Finding 3 of the invariant-duplication audit: before this fix,
+    /// `retried_trace_ids` was written only in `apply_step_result`'s
+    /// `Executed` branch, reached only after `WorkerDispatch::Executed`.
+    /// Three sibling paths finish a `Failed` trace without ever reaching
+    /// that branch: `apply_step_result`'s `WorkerDispatch::Rejected` arm,
+    /// `finish_reserved_step_failure` (`run --frontier`'s
+    /// continue-on-failure path), and an abandoned `TraceGuard::drop`. All
+    /// three either call `TraceGuard::finish` or mutate
+    /// `TraceGuard::trace.metadata` in place — neither touches the
+    /// `retried_trace_ids` key `TraceGuard::start` already set — so this
+    /// exercises the mechanism directly: `start` with a non-empty
+    /// `retried_trace_ids`, then `finish` exactly as the `Rejected` arm and
+    /// `finish_reserved_step_failure` both do (`ExecutionDispatchState::
+    /// Failed`, a rejection-shaped obstruction), and confirm the field
+    /// survives onto the finished trace rather than only appearing when a
+    /// worker actually ran.
+    #[test]
+    fn retried_trace_ids_survives_a_finish_that_never_executed_a_worker() {
+        use crate::native_model::ProjectionAudience;
+
+        let directory = std::env::temp_dir().join(format!(
+            "casegraphen-retried-trace-ids-finish-{}-{}",
+            std::process::id(),
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let plan: ExecutionPlan = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/execution.plan.example.json"
+        ))
+        .expect("execution plan example");
+        let step = plan.steps[0].clone();
+        let case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../../../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .expect("native case space example");
+
+        let identity =
+            reserve_trace_identity(&directory, &plan, &step, &[]).expect("reserve trace identity");
+        // A gate that cannot pass `check_operation_gate`'s "dispatch" check
+        // (an unsatisfiable capability id), so `finish` takes its no-anchor
+        // branch — it writes the trace locally and returns without touching
+        // a store, which this test does not set up.
+        let gate = NativeOperationGate {
+            actor_id: Id::new("actor:test".to_owned()).expect("id"),
+            operation: "morphism-apply".to_owned(),
+            operation_scope_id: case_space.case_space_id.clone(),
+            audience: ProjectionAudience::Audit,
+            capability_ids: vec![Id::new("capability:does-not-exist".to_owned()).expect("id")],
+            source_boundary_id: Id::new("source_boundary:does-not-exist".to_owned()).expect("id"),
+        };
+        let retried_trace_ids =
+            vec![Id::new("execution_trace:prior-failure".to_owned()).expect("id")];
+
+        let trace_guard = TraceGuard::start(
+            &directory,
+            &case_space.case_space_id,
+            &Id::new("actor:test".to_owned()).expect("id"),
+            &case_space,
+            &plan,
+            &step,
+            &case_space.revision.revision_id,
+            &identity,
+            "sha256:test".to_owned(),
+            &gate,
+            "2026-08-02T00:00:00Z",
+            &[],
+            &retried_trace_ids,
+        )
+        .expect("start trace guard");
+
+        let trace = trace_guard
+            .finish(
+                &case_space,
+                ExecutionDispatchState::Failed,
+                "no_dispatchable_step",
+                vec![ExecutionObstruction {
+                    obstruction_type: "binding_rejected".to_owned(),
+                    summary: "test rejection".to_owned(),
+                    witness_ids: vec![step.step_id.clone()],
+                    blocking: true,
+                }],
+            )
+            .expect("finish a dispatch that never executed a worker");
+
+        assert_eq!(
+            trace.metadata.get("retried_trace_ids"),
+            Some(&json!(retried_trace_ids)),
+            "a dispatch that finished without executing a worker must still record \
+             retried_trace_ids: metadata={:?}",
+            trace.metadata
+        );
+
+        fs::remove_dir_all(&directory).expect("remove test directory");
     }
 
     #[test]

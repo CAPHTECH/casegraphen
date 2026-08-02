@@ -3894,11 +3894,16 @@ fn space_reason_text_shows_a_satisfied_placeholder_gap_without_reading_as_contra
 /// requires `evidence:a`; `evidence:a` itself requires `evidence:x`;
 /// `work:w2` requires `evidence:x` directly. `evidence:y` (source-backed,
 /// trusted) covers `evidence:a` only — never `evidence:x`. That makes
-/// `evidence:a` a valid coverage target, so
-/// `compute_satisfied_requirement_ids`'s per-holder union marks `evidence:x`
+/// `evidence:a` a valid coverage target, so before issue #34,
+/// `compute_satisfied_requirement_ids`'s per-holder union marked `evidence:x`
 /// "satisfied" via holder `evidence:a`, even though `work:w2`'s own
-/// requirement of `evidence:x` remains genuinely uncovered — reproduced
-/// against the live evaluator during review, before the allowlist fix.
+/// requirement of `evidence:x` remained genuinely uncovered — reproduced
+/// against the live evaluator during #24's review, before the allowlist fix
+/// below. #34 scoped `compute_satisfied_requirement_ids` to require every
+/// holder, so this fixture no longer produces that coarse answer; it is kept
+/// because it still exercises the renderer's allowlist (see the comment on
+/// `space_reason_text_never_annotates_an_evidence_missing_finding_even_at_a_shared_requirement`
+/// below for why that allowlist still matters).
 fn two_holder_evidence_missing_fixture() -> Value {
     let space_id = "space:two-holder-evidence-missing";
     let source_boundary = json!({
@@ -4064,16 +4069,18 @@ fn space_reason_text_never_annotates_an_evidence_missing_finding_even_at_a_share
         stderr(&json_report)
     );
     let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
-    // Confirms the fixture reproduces the coarse union this review found:
-    // `evidence:x`'s own gap reads satisfied even though `work:w2`'s
-    // requirement of it is still blocking.
+    // Issue #34: `evidence:x`'s own gap now correctly reads unsatisfied,
+    // because `work:w2`'s requirement of it is still blocking and
+    // `compute_satisfied_requirement_ids` requires every holder, not just
+    // one. Before #34 this read `true`, via holder `evidence:a` alone — the
+    // coarse union this fixture was built to catch.
     let x_gap = evaluation["review_gaps"]
         .as_array()
         .expect("review gaps")
         .iter()
         .find(|gap| gap["target_id"] == json!("evidence:x"))
         .expect("evidence:x review gap");
-    assert_eq!(x_gap["requirement_satisfied"], json!(true));
+    assert_eq!(x_gap["requirement_satisfied"], json!(false));
     assert!(evaluation["obstructions"]
         .as_array()
         .expect("obstructions")
@@ -4097,18 +4104,36 @@ fn space_reason_text_never_annotates_an_evidence_missing_finding_even_at_a_share
     );
     let text = stdout(&text_report);
     // The `evidence_missing` finding for work:w2 must state the obstruction
-    // plainly, with no `requirement_satisfied` annotation at all — asserting
-    // both "none is available" and "requirement_satisfied=true" in the same
-    // line is exactly the contradiction #24 exists to stop.
+    // plainly, with no `requirement_satisfied` annotation at all. Before #34
+    // this mattered because the flag could disagree with the finding —
+    // asserting both "none is available" and "requirement_satisfied=true" in
+    // the same line was exactly the contradiction #24 exists to stop. After
+    // #34, `INV-EVID-001` (`docs/specs/requirement-satisfaction.fsl`, proved
+    // by k-induction) makes that disagreement impossible: a `true` flag and
+    // a blocking `missing_evidence` obstruction naming the same requirement
+    // are now mutually exclusive by construction, so the renderer's
+    // allowlist in `push_evidence_finding` is redundant with respect to the
+    // evaluator's current strictness. It stays anyway, and this test stays
+    // with it, because the reason for the exclusion was never the
+    // evaluator's strictness — it is that an `EvidenceMissing` finding's
+    // subject is a *(holder, requirement)* pair while `requirement_satisfied`
+    // names the requirement alone, and joining across a subject mismatch is
+    // wrong regardless of how strict the flag currently happens to be. A
+    // reader who sees the allowlist can never fire under today's evaluator
+    // must not conclude it can be deleted — the same reasoning
+    // `native_halt.rs::is_clearable_by_review`'s doc comment gives for
+    // keeping its own constant comparison after its second producer was
+    // deleted.
     assert!(text.contains(
         "work:w2 requires source-backed or accepted evidence evidence:x, but none is available. \
          [review_status=unreviewed]\n"
     ));
-    // The gap itself still reports its own (coarse, upstream, tracked
-    // separately as #33) `requirement_satisfied` — that fact is not hidden,
-    // only kept off a finding it does not describe.
+    // The gap itself still reports its own `requirement_satisfied` — now
+    // correctly `false`, since #34 scopes it to every holder and work:w2's
+    // holder of evidence:x is still blocked. That fact is not hidden, only
+    // kept off a finding it does not describe.
     assert!(text.contains("[target=evidence:x]"));
-    assert!(text.contains("[requirement_satisfied=true]"));
+    assert!(text.contains("[requirement_satisfied=false]"));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -5414,12 +5439,20 @@ fn native_run_step_distinguishes_an_empty_group_from_missing_containment() {
 
 #[test]
 fn native_run_step_does_not_rebase_after_an_intervening_append() {
+    // Issue #32: this used to bet that a whole external `cell transition`
+    // invocation (spawn, load, evaluate, snapshot, append) finished inside a
+    // fixed 0.5 s worker sleep — a wall-clock race a loaded machine can
+    // lose. The worker now waits on a marker the test creates only after
+    // the intervening append has actually landed, so there is no window to
+    // miss.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let worker_started = directory.join("worker-started");
+    let proceed = directory.join("worker-proceed");
     let script = format!(
-        "printf 'started\\n' > '{}'; sleep 0.5; printf 'worker-output\\n'",
-        worker_started.display()
+        "printf 'started\\n' > '{}'; {}; printf 'worker-output\\n'",
+        worker_started.display(),
+        shell_wait_for_marker(&proceed)
     );
     let fixture = setup_native_run(&directory, "pinned-application-base", &script);
     let child = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
@@ -5435,14 +5468,7 @@ fn native_run_step_does_not_rebase_after_an_intervening_append() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn casegraphen run --step");
-    let wait_started_at = Instant::now();
-    while !worker_started.is_file() && wait_started_at.elapsed() < Duration::from_secs(5) {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        worker_started.is_file(),
-        "worker did not start before timeout"
-    );
+    wait_for_file(&worker_started, "worker did not start before timeout");
 
     let intervening = run_cli_with_mutation_gate(
         &[
@@ -5468,6 +5494,7 @@ fn native_run_step_does_not_rebase_after_an_intervening_append() {
         "stderr: {}",
         stderr(&intervening)
     );
+    signal_rendezvous_marker(&proceed);
 
     let output = child.wait_with_output().expect("wait for run --step");
 
@@ -6419,16 +6446,25 @@ fn native_run_step_blocks_successful_worker_when_success_evidence_is_unsatisfied
 #[cfg(unix)]
 #[test]
 fn native_run_frontier_executes_independent_steps_and_appends_in_plan_order() {
+    // Issue #32: this used to bet that the "first" work cell's worker,
+    // delayed by a fixed 1 s sleep, would still lose the race to "second"'s
+    // near-instant worker — true on a quiet machine, not guaranteed on a
+    // loaded one. "first" now waits on a marker "second" creates as its own
+    // final act, so "second" finishing first is a fact this test drives
+    // directly rather than a race it merely tends to win.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let completion_order = directory.join("worker-completion-order");
+    let second_done = directory.join("worker-second-done");
     let first_script = format!(
-        "sleep 1\nprintf 'first\\n' >> '{}'\nprintf 'first-output\\n'",
+        "{}\nprintf 'first\\n' >> '{}'\nprintf 'first-output\\n'",
+        shell_wait_for_marker(&second_done),
         completion_order.display()
     );
     let second_script = format!(
-        "printf 'second\\n' >> '{}'\nprintf 'second-output\\n'",
-        completion_order.display()
+        "printf 'second\\n' >> '{}'\nprintf 'second-output\\n'\ntouch '{}'",
+        completion_order.display(),
+        second_done.display()
     );
     let fixture = setup_native_frontier(
         &directory,
@@ -6896,12 +6932,18 @@ fn native_run_frontier_reports_each_disabled_worker_without_aborting_the_round()
 #[cfg(unix)]
 #[test]
 fn native_run_frontier_refuses_transition_when_cell_leaves_frontier_during_round() {
+    // Issue #32: this used to bet that a whole external `morphism apply`
+    // invocation finished inside a fixed 0.5 s worker sleep — a wall-clock
+    // race a loaded machine can lose. The worker now waits on a marker the
+    // test creates only after the intervening apply has actually landed.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let worker_started = directory.join("frontier-membership-worker-started");
+    let proceed = directory.join("frontier-membership-worker-proceed");
     let script = format!(
-        "printf 'started\\n' > '{}'\nsleep 0.5\nprintf 'worker-output\\n'",
-        worker_started.display()
+        "printf 'started\\n' > '{}'\n{}\nprintf 'worker-output\\n'",
+        worker_started.display(),
+        shell_wait_for_marker(&proceed)
     );
     let fixture = setup_native_frontier(
         &directory,
@@ -7026,6 +7068,7 @@ fn native_run_frontier_refuses_transition_when_cell_leaves_frontier_during_round
         "actor:native-mutation-cli",
     );
     assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    signal_rendezvous_marker(&proceed);
 
     let output = child.wait_with_output().expect("wait for frontier round");
 
@@ -7475,28 +7518,24 @@ fn space_history_text_folds_only_the_supersession_the_new_trace_actually_names()
 #[cfg(unix)]
 #[test]
 fn space_history_text_does_not_fold_adjacent_but_unrelated_traces() {
+    // Issue #32: neither worker's completion order matters to this test —
+    // it only checks that both anchors render and are not folded together
+    // — so the fixed `sleep 1` one of them used to carry was a wall-clock
+    // assumption nothing here actually depended on. Removed rather than
+    // converted.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
-    let completion_order = directory.join("history-adjacent-completion-order");
-    let first_script = format!(
-        "sleep 1\nprintf 'first\\n' >> '{}'\nprintf 'first-output\\n'",
-        completion_order.display()
-    );
-    let second_script = format!(
-        "printf 'second\\n' >> '{}'\nprintf 'second-output\\n'",
-        completion_order.display()
-    );
     let fixture = setup_native_frontier(
         &directory,
         "history-adjacent",
         &[
             (
                 "work:frontier-history-adjacent-first",
-                first_script.as_str(),
+                "printf 'first-output\\n'",
             ),
             (
                 "work:frontier-history-adjacent-second",
-                second_script.as_str(),
+                "printf 'second-output\\n'",
             ),
         ],
     );
@@ -7632,14 +7671,23 @@ fn space_reason_text_groups_unreviewed_morphism_gaps_by_count_not_by_line() {
 #[cfg(unix)]
 #[test]
 fn native_run_step_retry_does_not_release_a_live_dispatch_after_revision_moves() {
+    // Issue #32 (one of the tests actually observed flaking): this used to
+    // bet that spawning and completing two whole separate `run --step`
+    // invocations (the sibling, then the refused retry attempt) fit inside
+    // a fixed 3 s worker sleep — a wall-clock race a loaded machine can
+    // lose, and did. The slow worker now waits on a marker the test creates
+    // only after both invocations have finished and the "still live" check
+    // has passed, so there is no window to miss.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let slow_started = directory.join("live-slow-worker-started");
     let slow_pids = directory.join("live-slow-worker-pids");
+    let slow_proceed = directory.join("live-slow-worker-proceed");
     let slow_script = format!(
-        "printf '%s\\n' \"$$\" >> '{}'\nprintf 'started\\n' > '{}'\nsleep 3\nprintf 'slow-output\\n'",
+        "printf '%s\\n' \"$$\" >> '{}'\nprintf 'started\\n' > '{}'\n{}\nprintf 'slow-output\\n'",
         slow_pids.display(),
-        slow_started.display()
+        slow_started.display(),
+        shell_wait_for_marker(&slow_proceed)
     );
     let fixture = setup_native_frontier(
         &directory,
@@ -7722,6 +7770,7 @@ fn native_run_step_retry_does_not_release_a_live_dispatch_after_revision_moves()
         process_exists(slow_pid),
         "the original worker must still be live when retry is refused"
     );
+    signal_rendezvous_marker(&slow_proceed);
 
     let live_output = live_run.wait_with_output().expect("wait for live slow run");
     assert!(
@@ -7876,13 +7925,31 @@ fn native_run_step_refuses_invalid_supersede_trace_assertions() {
 #[cfg(unix)]
 #[test]
 fn native_run_step_asserting_trace_a_does_not_release_later_trace_b() {
+    // Issue #32: both dispatches of this work cell run the identical
+    // script (the whole point is retrying/superseding the *same* step), so
+    // the two invocations cannot be told apart from the outside. The first
+    // invocation's own completion timing was never fragile — nothing races
+    // it, it just needs to finish on its own before `second` is even
+    // spawned, and `wait_for_line_count`'s generous bound already covers
+    // that. The second invocation's completion *was* fragile: this used to
+    // bet that the whole `refused` retry-attempt invocation completed
+    // inside the same fixed 1 s sleep the first invocation used, a
+    // wall-clock race a loaded machine can lose. The script now tells the
+    // two apart by checking whether `finishes` already has an entry — true
+    // only for a later invocation, since the first invocation's own write
+    // to `finishes` is what the test waits for before ever spawning a
+    // second one — and only a later invocation waits on a proceed marker,
+    // created once the `refused` check has actually run.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let starts = directory.join("successive-dispatch-starts");
     let finishes = directory.join("successive-dispatch-finishes");
+    let later_proceed = directory.join("successive-dispatch-later-proceed");
     let script = format!(
-        "printf '%s\\n' \"$$\" >> '{}'\nsleep 1\nprintf '%s\\n' \"$$\" >> '{}'\nprintf 'worker-output\\n'",
+        "printf '%s\\n' \"$$\" >> '{}'\nif [ -s '{}' ]; then {}; else sleep 1; fi\nprintf '%s\\n' \"$$\" >> '{}'\nprintf 'worker-output\\n'",
         starts.display(),
+        finishes.display(),
+        shell_wait_for_marker(&later_proceed),
         finishes.display()
     );
     let fixture = setup_native_run(&directory, "successive-started", &script);
@@ -7951,6 +8018,7 @@ fn native_run_step_asserting_trace_a_does_not_release_later_trace_b() {
         2,
         "asserting trace A must not start a third worker while trace B is live"
     );
+    signal_rendezvous_marker(&later_proceed);
 
     let second_output = second.wait_with_output().expect("wait for second dispatch");
     assert!(
@@ -8782,38 +8850,45 @@ fn a_refusal_after_a_landed_mutation_reports_completed_through() {
 }
 
 #[test]
-fn stderr_stays_one_json_object_when_a_refusal_follows_a_broken_stale_lock() {
-    // Regression: acquiring the store lock used to print a bare prose
-    // notice to stderr when it broke a stale lock, unconditionally,
-    // regardless of `--format` — a second writer to the same channel a
-    // refusal from the same invocation also uses. Forge a stale lock, then
-    // fail this same invocation *after* the append succeeds (the same
-    // `--output` failure shape as the `completed_through` regression
-    // above) so the old code would have put two lines on stderr: the
-    // lock-break notice, then the JSON refusal. `stderr_json` asserts
-    // exactly one line — this is the test that would have caught the
-    // notice if it were still there.
+fn native_evidence_attach_refuses_rather_than_breaking_an_aged_case_lock() {
+    // ADR 0017 / issue #30: the tool never infers a live lock is abandoned
+    // from file age alone. This test used to be
+    // `stderr_stays_one_json_object_when_a_refusal_follows_a_broken_stale_lock`,
+    // which forged a lock aged past the old 60s staleness threshold and
+    // asserted it got *broken*, letting the append through to a second,
+    // unrelated failure — before ADR 0017 that was correct behaviour; after
+    // it, the exact same setup must refuse instead, which is what this test
+    // now proves. It also keeps the property the old test was named for:
+    // `stderr_json` panics if stderr is not exactly one line of valid JSON,
+    // so a `LockUnavailable` refusal still only ever produces one JSON
+    // object on stderr.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
-    let imported = import_native_case_space(&directory, "revision:stale-lock-base");
+    let imported = import_native_case_space(&directory, "revision:aged-lock-base");
     let imported_json = stdout_json(&imported);
     let log_path = imported_native_log_path(&directory, &imported_json);
     let lock_path = log_path.with_file_name(".lock");
-    fs::write(&lock_path, "token=forged-stale-lock\n").expect("forge a lock file");
+    let lock_contents = "token=forged-aged-lock\n";
+    fs::write(&lock_path, lock_contents).expect("forge a lock file");
     fs::OpenOptions::new()
         .write(true)
         .open(&lock_path)
         .expect("open forged lock")
         .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH))
-        .expect("age forged lock past the stale threshold");
+        .expect("age forged lock far past the old 60s staleness threshold");
+
+    let log_before = fs::read_to_string(&log_path).expect("read log before refused acquire");
+    let revision_before = stdout_json(&run_native_case_store_command(&directory, "inspect"))
+        ["result"]["record"]["current_revision_id"]
+        .clone();
 
     let input_path = directory.join("attached-evidence-cell.json");
     let mut evidence_cell = json_file(native_case_fixture())["case_cells"][3].clone();
-    evidence_cell["id"] = json!("evidence:stale-lock");
-    evidence_cell["title"] = json!("Stale-lock evidence");
+    evidence_cell["id"] = json!("evidence:aged-lock");
+    evidence_cell["title"] = json!("Aged-lock evidence");
     evidence_cell["lifecycle"] = json!("active");
     evidence_cell["provenance"]["review_status"] = json!("unreviewed");
-    evidence_cell["source_ids"] = json!(["source:stale-lock"]);
+    evidence_cell["source_ids"] = json!(["source:aged-lock"]);
     evidence_cell["metadata"] =
         json!({"evidence_boundary": "source_backed", "content_hash": "caller-bogus-hash"});
     fs::write(
@@ -8822,6 +8897,10 @@ fn stderr_stays_one_json_object_when_a_refusal_follows_a_broken_stale_lock() {
     )
     .expect("write evidence cell");
 
+    // This waits out the real `LOCK_WAIT_BUDGET` (30s) on purpose, matching
+    // `append_fails_while_case_lock_is_held_without_corrupting_history` in
+    // `src/native_store/tests.rs`: shrinking that budget to make the test
+    // faster would stop testing the timing this refusal depends on.
     let attach = run_cli_with_mutation_gate(
         &[
             "evidence",
@@ -8831,27 +8910,45 @@ fn stderr_stays_one_json_object_when_a_refusal_follows_a_broken_stale_lock() {
             "--case-space-id",
             native_case_space_id(),
             "--base-revision-id",
-            "revision:stale-lock-base",
+            "revision:aged-lock-base",
             "--input",
             input_path.to_str().expect("evidence path"),
             "--satisfies",
             "evidence:native-schema-json-valid",
             "--format",
             "json",
-            "--output",
-            "/nonexistent-dir-stale-lock-xyz/report.json",
         ],
         "actor:native-evidence-cli",
     );
     assert!(!attach.status.success());
-    assert!(
-        !lock_path.exists(),
-        "the forged stale lock must have been broken to let the append through"
-    );
-    // `stderr_json` itself is the assertion: it panics if stderr is not
-    // exactly one line of valid JSON.
+
+    // `stderr_json` itself is part of the assertion: it panics if stderr is
+    // not exactly one line of valid JSON.
     let refusal = stderr_json(&attach);
-    assert_eq!(refusal["error_code"], json!("io_error"));
+    assert_eq!(refusal["error_code"], json!("lock_unavailable"));
+
+    assert!(
+        lock_path.exists(),
+        "an aged lock must not be broken — recovery is an operator's own act, not an inference"
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path).expect("read lock after refusal"),
+        lock_contents,
+        "the lock file must be byte-identical after a refusal"
+    );
+
+    let revision_after = stdout_json(&run_native_case_store_command(&directory, "inspect"))
+        ["result"]["record"]["current_revision_id"]
+        .clone();
+    assert_eq!(
+        revision_after, revision_before,
+        "a refused lock acquisition must not move the store"
+    );
+    assert_eq!(
+        fs::read_to_string(&log_path).expect("read log after refused acquire"),
+        log_before,
+        "a refused lock acquisition must not change the log"
+    );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
@@ -13676,6 +13773,169 @@ fn native_run_frontier_reports_needs_external_halt_when_nothing_is_dispatchable(
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// Issue #28 end to end through the real binary: `space reason`'s
+/// `readiness.waiting_cell_ids` must include a cell blocked only by an
+/// unresolved `waits_for` target, and must exclude a cell that is *also*
+/// missing evidence — the all-or-nothing rule the unit tests in
+/// `src/native_eval/tests.rs` pin at the function level.
+#[test]
+fn space_reason_reports_waiting_cell_ids_for_external_waits_and_excludes_mixed_blockers() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+
+    let input_path = directory.join("issue28.native.input.json");
+    let mut input = json_file(native_case_fixture());
+    let work_template = input["case_cells"]
+        .as_array()
+        .expect("native case cells")
+        .iter()
+        .find(|cell| cell["id"] == json!("work:review-native-contract"))
+        .expect("native work template")
+        .clone();
+    let space_id = input["space_id"].clone();
+
+    let waiting_only_id = "work:issue28-waiting-only";
+    let mut waiting_only = work_template.clone();
+    waiting_only["id"] = json!(waiting_only_id);
+    waiting_only["title"] = json!("Issue 28 waiting-only fixture");
+    waiting_only["lifecycle"] = json!("active");
+    waiting_only["structure_ids"] = json!([]);
+
+    let mixed_id = "work:issue28-mixed-blockers";
+    let mut mixed = work_template.clone();
+    mixed["id"] = json!(mixed_id);
+    mixed["title"] = json!("Issue 28 mixed-blockers fixture");
+    mixed["lifecycle"] = json!("active");
+    mixed["structure_ids"] = json!([]);
+
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .extend([waiting_only, mixed]);
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .push(json!({
+            "id": "event:issue28-external-wait",
+            "cell_type": "event",
+            "space_id": space_id,
+            "title": "Issue 28 unresolved wait target",
+            "summary": Value::Null,
+            "lifecycle": "active",
+            "source_ids": [],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }));
+    input["case_cells"]
+        .as_array_mut()
+        .expect("native case cells")
+        .push(json!({
+            "id": "evidence:issue28-missing-requirement",
+            "cell_type": "evidence",
+            "space_id": space_id,
+            "title": "Issue 28 unsatisfied evidence requirement",
+            "summary": Value::Null,
+            "lifecycle": "proposed",
+            "source_ids": [],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }));
+    input["case_relations"]
+        .as_array_mut()
+        .expect("native case relations")
+        .extend([
+            json!({
+                "id": "relation:issue28-waiting-only-waits-for-event",
+                "relation_type": "waits_for",
+                "relation_strength": "hard",
+                "from_id": waiting_only_id,
+                "to_id": "event:issue28-external-wait",
+                "evidence_ids": [],
+                "source_ids": [],
+                "provenance": {
+                    "source": {"kind": "human"},
+                    "confidence": 1.0,
+                    "review_status": "accepted"
+                },
+                "metadata": {}
+            }),
+            json!({
+                "id": "relation:issue28-mixed-waits-for-event",
+                "relation_type": "waits_for",
+                "relation_strength": "hard",
+                "from_id": mixed_id,
+                "to_id": "event:issue28-external-wait",
+                "evidence_ids": [],
+                "source_ids": [],
+                "provenance": {
+                    "source": {"kind": "human"},
+                    "confidence": 1.0,
+                    "review_status": "accepted"
+                },
+                "metadata": {}
+            }),
+            json!({
+                "id": "relation:issue28-mixed-requires-evidence",
+                "relation_type": "requires_evidence",
+                "relation_strength": "hard",
+                "from_id": mixed_id,
+                "to_id": "evidence:issue28-missing-requirement",
+                "evidence_ids": [],
+                "source_ids": [],
+                "provenance": {
+                    "source": {"kind": "human"},
+                    "confidence": 1.0,
+                    "review_status": "accepted"
+                },
+                "metadata": {}
+            }),
+        ]);
+
+    fs::write(
+        &input_path,
+        serde_json::to_string_pretty(&input).expect("serialize issue28 fixture case space"),
+    )
+    .expect("write issue28 fixture case space");
+    import_native_case_space_from_input(&directory, &input_path, "revision:issue28-import");
+
+    let report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--format",
+        "json",
+    ]);
+    assert!(report.status.success(), "stderr: {}", stderr(&report));
+    let waiting_cell_ids = stdout_json(&report)["result"]["evaluation"]["readiness"]
+        ["waiting_cell_ids"]
+        .as_array()
+        .expect("waiting cell ids")
+        .clone();
+    assert!(
+        waiting_cell_ids.contains(&json!(waiting_only_id)),
+        "waiting_cell_ids: {waiting_cell_ids:?}"
+    );
+    assert!(
+        !waiting_cell_ids.contains(&json!(mixed_id)),
+        "a cell also missing evidence must not read as purely waiting: {waiting_cell_ids:?}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 /// Two work cells and two plan steps, the second `depends_on` the first, so
 /// the second is not dispatchable until the first resolves. This is what
 /// makes a genuine second round necessary — `setup_native_frontier`'s
@@ -14262,9 +14522,22 @@ fn operate_halts_on_needs_review_and_appends_no_review_morphism() {
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// Issue #32: this is a "this should never actually take this long"
+/// detector, not a synchronization primitive a test's own timing races
+/// against. `wait_for_file`/`wait_for_line_count` poll for an event a
+/// spawned process is expected to produce almost immediately (writing a
+/// marker file at the very start of a worker script); the bound only exists
+/// to fail loudly, with a clear message, if that event genuinely never
+/// happens (a real bug) rather than hanging the test suite forever. It must
+/// not be read as "this event normally takes up to N seconds" — under a
+/// loaded machine, process spawn plus store setup before a worker even
+/// starts can itself take a noticeable fraction of a generous bound, which
+/// is exactly why this is generous rather than tight.
+const EVENT_SHOULD_HAVE_HAPPENED_BY_NOW: Duration = Duration::from_secs(30);
+
 fn wait_for_file(path: &Path, timeout_message: &str) {
     let wait_started_at = Instant::now();
-    while !path.is_file() && wait_started_at.elapsed() < Duration::from_secs(5) {
+    while !path.is_file() && wait_started_at.elapsed() < EVENT_SHOULD_HAVE_HAPPENED_BY_NOW {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(path.is_file(), "{timeout_message}");
@@ -14273,7 +14546,7 @@ fn wait_for_file(path: &Path, timeout_message: &str) {
 fn wait_for_line_count(path: &Path, expected: usize, timeout_message: &str) {
     let wait_started_at = Instant::now();
     while fs::read_to_string(path).map_or(0, |contents| contents.lines().count()) < expected
-        && wait_started_at.elapsed() < Duration::from_secs(5)
+        && wait_started_at.elapsed() < EVENT_SHOULD_HAVE_HAPPENED_BY_NOW
     {
         thread::sleep(Duration::from_millis(10));
     }
@@ -14282,6 +14555,43 @@ fn wait_for_line_count(path: &Path, expected: usize, timeout_message: &str) {
         expected,
         "{timeout_message}"
     );
+}
+
+/// The worker-side half of a file-based test rendezvous (issue #32):
+/// embedded into a generated shell script, this polls for `marker`'s
+/// existence with its own bounded, generous timeout so a genuine bug — the
+/// marker never appearing — still fails the worker loudly instead of
+/// hanging the test suite forever, rather than an unbounded wait.
+///
+/// The bound here (120 s) is deliberately longer than
+/// `EVENT_SHOULD_HAVE_HAPPENED_BY_NOW`'s 30 s: that one waits for a worker
+/// to announce it started, effectively instant even under load, while this
+/// one waits for the *test* to run one or more whole external CLI
+/// invocations (spawn, load the store, evaluate, snapshot, append) before
+/// signalling — measured under three concurrent full-suite runs
+/// (`cargo test --test command` x3, real reproduction of "concurrent cargo
+/// processes competing for the target-dir lock") to occasionally exceed
+/// 30 s; 120 s did not reproduce a timeout in that same stress test. If this
+/// still times out under some future load, the fix is a more generous bound
+/// again, not a shorter one disguised as a shorter sleep.
+///
+/// Pairs with a test creating `marker` after its own action finishes
+/// (`signal_rendezvous_marker`) once the worker's `started` write has
+/// already been observed via `wait_for_file`/`wait_for_line_count` — so a
+/// test's timing depends on a real event, never on a fixed sleep long
+/// enough to usually win a race. It can equally pair with a *sibling*
+/// worker creating the marker as its own completion signal, for a
+/// worker-to-worker rendezvous with no test-side action in between.
+fn shell_wait_for_marker(marker: &Path) -> String {
+    format!(
+        "i=0; while [ ! -f '{}' ] && [ \"$i\" -lt 1200 ]; do sleep 0.1; i=$((i+1)); done",
+        marker.display()
+    )
+}
+
+/// The test-side half of the rendezvous `shell_wait_for_marker` waits for.
+fn signal_rendezvous_marker(marker: &Path) {
+    fs::write(marker, "").expect("write rendezvous marker");
 }
 
 #[cfg(unix)]
@@ -14694,4 +15004,413 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
     .iter()
     .map(|(schema, example)| (repo_path(schema), repo_path(example)))
     .collect()
+}
+
+/// Rewrites the `--format json` an args-builder helper hardcodes to
+/// `--format text`, for a `--format text` variant of a test the JSON form
+/// already covers — issue #35 render-only tests reuse the exact fixture
+/// setup an existing JSON-format test uses rather than duplicating it.
+#[cfg(unix)]
+fn set_format_text(args: &mut [String]) {
+    let format_index = args
+        .iter()
+        .position(|argument| argument == "--format")
+        .expect("args include --format");
+    args[format_index + 1] = "text".to_owned();
+}
+
+/// Issue #35: `run --frontier --format text` renders `result.halt`/
+/// `result.halts` as text instead of JSON. Same fixture as
+/// `native_run_frontier_reports_needs_evidence_halt_when_nothing_is_dispatchable`
+/// — `needs_evidence` is the halt member with a non-empty `next_operations`
+/// (exactly one `evidence attach`, per `native_halt.rs::build_halt_report`).
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_format_text_renders_needs_evidence_halt_with_next_operations() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_operate_blocked_fixture(
+        &directory,
+        "text-evidence",
+        "requires_evidence",
+        "goal:operate-blocked-text-evidence-missing",
+        "goal",
+    );
+
+    let mut args = native_frontier_args(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+        true,
+    );
+    set_format_text(&mut args);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(&args)
+        .output()
+        .expect("run casegraphen run --frontier --format text");
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let rendered = stdout(&output);
+
+    assert!(rendered.contains("Halt: needs_evidence"), "{rendered}");
+    assert!(
+        rendered.contains(&format!(
+            "Completed through: {}",
+            fixture.accepted_revision_id
+        )),
+        "{rendered}"
+    );
+    // The unsatisfied requirement id `evidence attach --satisfies` takes.
+    assert!(
+        rendered.contains("goal:operate-blocked-text-evidence-missing"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("evidence attach"), "{rendered}");
+    assert!(
+        rendered.contains(&format!("case_space_id: {}", native_case_space_id())),
+        "{rendered}"
+    );
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// Issue #35: `operate --format text`. Same fixture as
+/// `operate_executes_two_independent_steps_then_halts_on_nothing_eligible`
+/// — `nothing_eligible` is the halt member with empty `target_ids` and
+/// empty `next_operations` (`native_halt.rs::build_halt_report`), so this
+/// is the "no next_operations" counterpart to the `needs_evidence` test
+/// above.
+#[cfg(unix)]
+#[test]
+fn native_operate_format_text_renders_nothing_eligible_halt_without_next_operations() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture = setup_native_frontier(
+        &directory,
+        "text-nothing-eligible",
+        &[
+            ("work:text-nothing-eligible-a", "printf 'a\\n'"),
+            ("work:text-nothing-eligible-b", "printf 'b\\n'"),
+        ],
+    );
+
+    let mut args = native_operate_args(
+        &directory,
+        &fixture,
+        &fixture.accepted_revision_id,
+        2,
+        2,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[],
+    );
+    set_format_text(&mut args);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(&args)
+        .output()
+        .expect("run casegraphen operate --format text");
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let rendered = stdout(&output);
+
+    assert!(rendered.contains("Halt: nothing_eligible"), "{rendered}");
+    assert!(rendered.contains("Targets: (none)"), "{rendered}");
+    assert!(rendered.contains("Next operations: (none)"), "{rendered}");
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// Issue #34's positive counterpart to `two_holder_evidence_missing_fixture`:
+/// the same `work:w1` -> `evidence:a` -> `evidence:x`, `work:w2` -> `evidence:x`
+/// shape, but now *every* holder of `evidence:x` is covered — `evidence:a`
+/// through trusted `evidence:y` (as before) and `work:w2` directly through a
+/// second trusted `evidence:z`. `docs/specs/requirement-satisfaction.fsl`'s
+/// `satisfied_for_all()` requires every holder, not just one, so this fixture
+/// is what proves the every-holder rule is not simply "always false now" —
+/// it reads `true` exactly when it should.
+fn two_holder_evidence_fully_covered_fixture() -> Value {
+    let space_id = "space:two-holder-evidence-fully-covered";
+    let source_boundary = json!({
+        "id": "source_boundary:two-holder-evidence-fully-covered",
+        "included_sources": ["source:test"],
+        "excluded_sources": [],
+        "adapters": ["test.fixture.v1"],
+        "accepted_fact_policy": "fixture facts are accepted test input",
+        "inference_policy": "fixture declares its own coverage claims",
+        "information_loss": []
+    });
+    json!({
+        "schema": "highergraphen.case.space.v1",
+        "schema_version": 1,
+        "case_space_id": "case_space:two-holder-evidence-fully-covered",
+        "space_id": space_id,
+        "case_cells": [
+            {
+                "id": "work:w1", "cell_type": "work", "lifecycle": "active",
+                "space_id": space_id, "title": "W1",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "work:w2", "cell_type": "work", "lifecycle": "active",
+                "space_id": space_id, "title": "W2",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:a", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "A (intermediate evidence)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "inferred"},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:x", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "X (shared sub-evidence)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "inferred"},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:y", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "Y (trusted, covers A only)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "source_backed"},
+                "provenance": {"confidence": 0.9, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "t"}}
+            },
+            {
+                "id": "evidence:z", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "Z (trusted, covers X directly)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "source_backed"},
+                "provenance": {"confidence": 0.9, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "t"}}
+            },
+            {
+                "id": "capability:test-mutation", "cell_type": "custom:capability", "lifecycle": "accepted",
+                "space_id": space_id, "title": "Authorize test mutations",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {
+                    "actor_ids": ["actor:test-mutation-cli"],
+                    "operations": ["evidence-attach", "review", "cell-transition"]
+                },
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "document", "title": "t"}}
+            }
+        ],
+        "case_relations": [
+            {
+                "id": "relation:w1-requires-a", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "work:w1", "to_id": "evidence:a",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:a-requires-x", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "evidence:a", "to_id": "evidence:x",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:w2-requires-x", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "work:w2", "to_id": "evidence:x",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:y-satisfies-a", "relation_type": "satisfies_evidence_requirement",
+                "relation_strength": "diagnostic", "from_id": "evidence:y", "to_id": "evidence:a",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:z-satisfies-x", "relation_type": "satisfies_evidence_requirement",
+                "relation_strength": "diagnostic", "from_id": "evidence:z", "to_id": "evidence:x",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            }
+        ],
+        "morphism_log": [
+            {
+                "schema": "highergraphen.case.morphism_log_entry.v1", "schema_version": 1,
+                "case_space_id": "case_space:two-holder-evidence-fully-covered", "sequence": 1,
+                "entry_id": "morphism_log_entry:genesis", "morphism_id": "morphism:genesis",
+                "target_revision_id": "revision:two-holder-evidence-fully-covered-base",
+                "morphism": {
+                    "morphism_id": "morphism:genesis", "morphism_type": "create",
+                    "target_revision_id": "revision:two-holder-evidence-fully-covered-base",
+                    "added_ids": [], "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+                    "violated_invariant_ids": [], "review_status": "accepted",
+                    "evidence_ids": [], "source_ids": ["source:test"],
+                    "metadata": {
+                        "lift_semantics": "test_fixture_to_case_space",
+                        "source_boundary_id": "source_boundary:two-holder-evidence-fully-covered",
+                        "source_boundary": source_boundary
+                    }
+                },
+                "actor_id": "actor:test-author", "recorded_at": "2026-08-02T00:00:00Z",
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}},
+                "source_ids": ["source:test"], "replay_checksum": ""
+            }
+        ],
+        "projections": [],
+        "revision": {
+            "revision_id": "revision:two-holder-evidence-fully-covered-base",
+            "case_space_id": "case_space:two-holder-evidence-fully-covered",
+            "applied_entry_ids": ["morphism_log_entry:genesis"],
+            "applied_morphism_ids": ["morphism:genesis"],
+            "checksum": "", "created_at": "2026-08-02T00:00:00Z",
+            "source_ids": ["source:test"], "metadata": {}
+        },
+        "close_policy_id": null,
+        "metadata": {"source_boundary": source_boundary}
+    })
+}
+
+/// Issue #34's every-holder rule end to end through the real binary: unlike
+/// `space_reason_text_never_annotates_an_evidence_missing_finding_even_at_a_shared_requirement`,
+/// every holder of `evidence:x` is covered here, so `requirement_satisfied`
+/// must read `true` and no obstruction may still name `evidence:x` — the
+/// positive case the negative one alone cannot rule out.
+#[test]
+fn space_reason_reports_requirement_satisfied_true_once_every_holder_is_covered() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture_path = directory.join("two-holder-evidence-fully-covered-fixture.case.space.json");
+    write_json_value(&fixture_path, &two_holder_evidence_fully_covered_fixture());
+    import_native_case_space_from_input(
+        &directory,
+        &fixture_path,
+        "revision:two-holder-evidence-fully-covered-base",
+    );
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:two-holder-evidence-fully-covered";
+
+    let json_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(
+        json_report.status.success(),
+        "stderr: {}",
+        stderr(&json_report)
+    );
+    let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
+    let x_gap = evaluation["review_gaps"]
+        .as_array()
+        .expect("review gaps")
+        .iter()
+        .find(|gap| gap["target_id"] == json!("evidence:x"))
+        .expect("evidence:x review gap");
+    assert_eq!(x_gap["requirement_satisfied"], json!(true));
+    assert!(
+        !evaluation["obstructions"]
+            .as_array()
+            .expect("obstructions")
+            .iter()
+            .any(|obstruction| obstruction["witness_ids"] == json!(["evidence:x"])),
+        "no holder of evidence:x should still be blocked once every holder is covered: {:?}",
+        evaluation["obstructions"]
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+/// Issue #33 / ADR 0018 end to end through the real binary: a step fails, is
+/// retried with `--retry-step`, and succeeds — the retry-originated trace
+/// must name the failed trace it retried in `metadata.retried_trace_ids`.
+/// The worker script fails exactly once (a marker file records that the
+/// first attempt happened) and succeeds on any later invocation, so the
+/// retry is a real second dispatch, not a refusal.
+#[cfg(unix)]
+#[test]
+fn native_run_frontier_retry_names_the_failed_trace_it_retried() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let attempted_marker = directory.join("retry-lineage-attempted");
+    let script = format!(
+        "if [ -f '{marker}' ]; then printf 'succeeded-on-retry\\n'; else touch '{marker}'; \
+         printf 'failed-on-first-attempt\\n' >&2; exit 1; fi",
+        marker = attempted_marker.display()
+    );
+    let fixture = setup_native_frontier(
+        &directory,
+        "retry-lineage",
+        &[("work:retry-lineage", script.as_str())],
+    );
+
+    let failed = run_native_frontier(&directory, &fixture, 1);
+    assert!(failed.status.success(), "stderr: {}", stderr(&failed));
+    let failed_json = stdout_json(&failed);
+    assert_eq!(failed_json["result"]["status"], json!("round_executed"));
+    let failed_trace = &failed_json["result"]["traces"][0];
+    assert_eq!(failed_trace["dispatch_state"], json!("failed"));
+    assert!(
+        failed_trace["metadata"].get("retried_trace_ids").is_none(),
+        "the first-ever attempt of a step must record no retry lineage: {failed_trace}"
+    );
+    let failed_trace_id = failed_trace["trace_id"]
+        .as_str()
+        .expect("failed trace id")
+        .to_owned();
+    let revision_after_failure = failed_json["result"]["result_revision_id"]
+        .as_str()
+        .expect("revision after the failed attempt")
+        .to_owned();
+
+    let retried = run_native_frontier_with(
+        &directory,
+        &fixture,
+        &revision_after_failure,
+        1,
+        &["capability:dispatch", "capability:native-run-worker"],
+        &[&fixture.step_ids[0]],
+    );
+    assert!(retried.status.success(), "stderr: {}", stderr(&retried));
+    let retried_json = stdout_json(&retried);
+    assert_eq!(retried_json["result"]["status"], json!("round_executed"));
+    let retried_trace = &retried_json["result"]["traces"][0];
+    assert_eq!(retried_trace["dispatch_state"], json!("completed"));
+    assert_eq!(
+        retried_trace["metadata"]["retried_trace_ids"],
+        json!([failed_trace_id]),
+        "the retry-originated trace must name exactly the failed trace it retried: {retried_trace}"
+    );
+
+    // The anchored trace file on disk carries the same fact, not only the
+    // command's own JSON report of it. Two runs now exist (the failure and
+    // the retry), so the retried one is picked out by its trace_id rather
+    // than assuming there is only one.
+    let retried_trace_id = retried_trace["trace_id"]
+        .as_str()
+        .expect("retried trace id");
+    let anchored_trace = run_files(&directory, "execution.trace.json")
+        .into_iter()
+        .map(json_file)
+        .find(|trace| trace["trace_id"] == json!(retried_trace_id))
+        .expect("the retried trace's own run directory carries an anchored trace file");
+    assert_eq!(
+        anchored_trace["metadata"]["retried_trace_ids"],
+        json!([failed_trace_id])
+    );
+
+    assert_native_store_valid_and_rebuilds(&directory);
+    fs::remove_dir_all(directory).expect("remove temp directory");
 }

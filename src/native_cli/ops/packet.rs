@@ -9,8 +9,8 @@
 //! enforced here too, not re-decided.
 
 use super::{
-    existing_case_space_ids, prepare_claim, require_current_revision, validated_mutation_gate,
-    ClaimPreparationState, NativeMutationGateOptions,
+    existing_case_space_ids, halt_fields_from_value, prepare_claim, require_current_revision,
+    validated_mutation_gate, ClaimPreparationState, NativeMutationGateOptions,
 };
 use crate::{
     native_eval::latest_evidence_review_status,
@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::super::NativeCliError;
+use super::super::{NativeCliError, NativeCommandResult};
 use super::mutations::{append_cell_transition_morphism, append_evidence_attach_morphism};
 
 pub const EVIDENCE_PACKET_SCHEMA: &str = "highergraphen.case.evidence_packet.v1";
@@ -364,6 +364,60 @@ pub(in crate::native_cli) fn packet_resume(
         object.insert("status".to_owned(), json!("completed"));
     }
     Ok(result)
+}
+
+/// `packet apply --format text` (issue #35). Calls `packet_apply` exactly
+/// once — it attaches evidence and always pauses for review, a durable
+/// mutation a second call would repeat rather than merely re-view — and
+/// projects `result.halt`/`result.halts` from the same `Value` the JSON
+/// path already built. `packet apply` always sets both to its one
+/// `needs_review` pause, so this never renders `(none)` in practice, but the
+/// renderer does not assume that; it prints whatever the JSON actually has.
+pub(in crate::native_cli) fn packet_apply_text(
+    store: &Path,
+    case_space_id: &Id,
+    base_revision_id: &Id,
+    packet_path: &Path,
+    gate_options: &NativeMutationGateOptions,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let value = packet_apply(
+        store,
+        case_space_id,
+        base_revision_id,
+        packet_path,
+        gate_options,
+    )?;
+    let (halt, halts) = halt_fields_from_value(&value);
+    let rendered = super::super::text::render_halt_section(halt.as_ref(), &halts);
+    Ok(NativeCommandResult::success(rendered))
+}
+
+/// `packet resume --format text`. See `packet_apply_text`: same discipline,
+/// one call. Unlike `packet apply`, `packet resume` can only succeed
+/// outright or hard-refuse (`Err`, never a report) — it never sets
+/// `result.halt`/`result.halts` at all, so this renders "Halt: (none)"
+/// every time. That is an honest projection of an absent halt, not a
+/// renderer deciding packet resume never halts; if that ever changes, this
+/// keeps working unmodified because it still only reads what is there.
+pub(in crate::native_cli) fn packet_resume_text(
+    store: &Path,
+    case_space_id: &Id,
+    base_revision_id: &Id,
+    packet_path: &Path,
+    completed_through: &Id,
+    gate_options: &NativeMutationGateOptions,
+) -> Result<NativeCommandResult<String>, NativeCliError> {
+    let value = packet_resume(
+        store,
+        case_space_id,
+        base_revision_id,
+        packet_path,
+        completed_through,
+        gate_options,
+    )?;
+    let (halt, halts) = halt_fields_from_value(&value);
+    let rendered = super::super::text::render_halt_section(halt.as_ref(), &halts);
+    Ok(NativeCommandResult::success(rendered))
 }
 
 fn packet_refusal(packet_path: &Path, error: impl std::fmt::Display) -> NativeCliError {

@@ -262,6 +262,18 @@ A dispatch made by `--supersede-trace` also records the asserted ids in
 dispatch operation gate; no caller-supplied actor metadata is accepted. The
 anchored trace content hash covers the assertion record.
 
+A dispatch authorized past one or more failed traces of its step (ADR 0018)
+records their ids in `metadata.retried_trace_ids`, a set. The value is
+computed by the tool from the log at selection time — exactly the failed
+traces of that `(plan_id, step_id)` the eligibility gate consulted before
+`--retry-step` waived them — and never accepted from any caller-supplied
+input. `retried_trace_ids` and `superseded_trace_ids` name different facts and
+must not be conflated: the former means a dispatch failed and an operator
+consented to another attempt of the same step; the latter means an operator
+asserted a started dispatch was dead. A trace written before this key existed
+has no `retried_trace_ids` entry, and absence must not be read as "not a
+retry" — it means the tool did not yet record the fact.
+
 ## Core Dependencies
 
 `casegraphen` must reuse core primitives:

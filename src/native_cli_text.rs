@@ -5,6 +5,7 @@ use crate::native_eval::{
     NativeEvidenceFindings, NativeObstruction, NativeProgress, NativeReviewGap,
     NativeReviewGapType,
 };
+use crate::native_halt::{Halt, HaltReport, NextOperation};
 use crate::native_model::{CaseMorphismType, MorphismLogEntry};
 use higher_graphen_core::Id;
 use std::{collections::BTreeMap, fmt::Write, str::FromStr};
@@ -148,13 +149,33 @@ fn push_evidence_finding(
     // `record_review_promotion` set `evidence_ids: vec![evidence.id]`).
     // `EvidenceMissing` is not: `sections.rs` sets its `evidence_ids` to
     // `obstruction.witness_ids`, the *(holder, requirement)* pair's
-    // requirement half, while `requirement_satisfied`
-    // (`compute_satisfied_requirement_ids`) is a union over every holder of
-    // that requirement — so a finding about one still-blocked holder could
-    // join onto a gap another, unrelated holder already satisfied. This is
-    // a positive allowlist, not a filter on `EvidenceMissing`, so a finding
-    // type added later defaults to unannotated rather than silently joining
-    // on a key nobody checked for it.
+    // requirement half. Before issue #34, `requirement_satisfied`
+    // (`compute_satisfied_requirement_ids`) was a union over every holder of
+    // that requirement, so a finding about one still-blocked holder could
+    // join onto a gap another, unrelated holder already satisfied — this
+    // exclusion is what kept that join out. #34 scoped
+    // `compute_satisfied_requirement_ids` to require every holder
+    // (`docs/specs/requirement-satisfaction.fsl`'s `satisfied_for_all()`),
+    // and `INV-EVID-001` there — proved by k-induction — makes a
+    // `MissingEvidence` finding on a holder and `requirement_satisfied: true`
+    // for its requirement mutually exclusive. So the contradiction this
+    // exclusion was written to stop can no longer be produced, and the
+    // exclusion is now redundant with respect to the evaluator's strictness.
+    //
+    // It stays, and the reason is not caution. The exclusion was never about
+    // how strict the flag is: an `EvidenceMissing` finding's subject is a
+    // *(holder, requirement)* pair while `requirement_satisfied` names the
+    // requirement alone, and joining across a subject mismatch is wrong
+    // however strict the flag happens to be. Strictness is a fact about
+    // today's evaluator; the subject mismatch is a property of the two types.
+    // A reader who observes that this branch can no longer fire must not
+    // conclude it can be deleted — `native_halt.rs::is_clearable_by_review`
+    // keeps its own constant comparison after its second producer was deleted,
+    // for exactly this reason.
+    //
+    // This is a positive allowlist, not a filter on `EvidenceMissing`, so a
+    // finding type added later defaults to unannotated rather than silently
+    // joining on a key nobody checked for it.
     let requirement_satisfied = matches!(
         finding.finding_type,
         NativeEvidenceFindingType::InferenceSeparated
@@ -420,6 +441,95 @@ pub(super) fn render_case_history(
     }
     output.pop();
     output
+}
+
+/// `run --step`/`run --frontier`/`operate`/`packet apply`/`packet resume`
+/// `--format text` (issue #35): a pure projection of the `HaltReport`
+/// value(s) those commands already computed and put in the JSON report
+/// (`result.halt`/`result.halts`) — nothing here decides anything about
+/// *why* the ledger stopped, only how to print what `derive_halts`
+/// (`native_halt.rs`, the single implementation of that decision) already
+/// answered. `halt` is the head `derive_halt` reports and `halts` is the
+/// full ranked list (ADR 0016 decision 2); both are rendered in full so a
+/// reader never has to re-derive one from the other.
+pub(super) fn render_halt_section(halt: Option<&HaltReport>, halts: &[HaltReport]) -> String {
+    let mut output = String::new();
+    writeln!(
+        output,
+        "Halt: {}",
+        halt.map_or("(none)", |report| halt_name(report.halt))
+    )
+    .expect("writing to String cannot fail");
+    if let Some(report) = halt {
+        writeln!(output, "Completed through: {}", report.completed_through)
+            .expect("writing to String cannot fail");
+    }
+    push_halt_list(&mut output, halts);
+    output.pop();
+    output
+}
+
+fn halt_name(halt: Halt) -> &'static str {
+    match halt {
+        Halt::RoundBudgetExhausted => "round_budget_exhausted",
+        Halt::NeedsReview => "needs_review",
+        Halt::NeedsRetryDecision => "needs_retry_decision",
+        Halt::NeedsPlanReview => "needs_plan_review",
+        Halt::NeedsEvidence => "needs_evidence",
+        Halt::NeedsExternal => "needs_external",
+        Halt::DispatchInProgress => "dispatch_in_progress",
+        Halt::NothingEligible => "nothing_eligible",
+    }
+}
+
+fn push_halt_list(output: &mut String, halts: &[HaltReport]) {
+    writeln!(output, "\nAll halts:").expect("writing to String cannot fail");
+    if halts.is_empty() {
+        writeln!(output, "  (none)").expect("writing to String cannot fail");
+        return;
+    }
+    for report in halts {
+        writeln!(output, "  - {}", halt_name(report.halt)).expect("writing to String cannot fail");
+        writeln!(
+            output,
+            "    Completed through: {}",
+            report.completed_through
+        )
+        .expect("writing to String cannot fail");
+        let mut target_ids = report.target_ids.iter().collect::<Vec<_>>();
+        target_ids.sort();
+        if target_ids.is_empty() {
+            writeln!(output, "    Targets: (none)").expect("writing to String cannot fail");
+        } else {
+            writeln!(output, "    Targets:").expect("writing to String cannot fail");
+            for id in target_ids {
+                writeln!(output, "      - {id}").expect("writing to String cannot fail");
+            }
+        }
+        push_next_operations(output, &report.next_operations);
+    }
+}
+
+/// Structured, never assembled into a runnable command string — the same
+/// discipline `NextOperation`'s own doc comment requires of every consumer
+/// (issue #19's rule, generalised by ADR 0016 decision 2). Each argument is
+/// printed as its own `key: value` line so a reader can see every field a
+/// command string would have otherwise hidden inside concatenation.
+fn push_next_operations(output: &mut String, next_operations: &[NextOperation]) {
+    if next_operations.is_empty() {
+        writeln!(output, "    Next operations: (none)").expect("writing to String cannot fail");
+        return;
+    }
+    writeln!(output, "    Next operations:").expect("writing to String cannot fail");
+    for operation in next_operations {
+        writeln!(output, "      - {}", operation.command).expect("writing to String cannot fail");
+        for (key, value) in &operation.arguments {
+            writeln!(output, "          {key}: {value}").expect("writing to String cannot fail");
+        }
+        if let Some(note) = &operation.note {
+            writeln!(output, "        note: {note}").expect("writing to String cannot fail");
+        }
+    }
 }
 
 /// The trace ids this trace's own file names as superseded, plus itself
@@ -736,14 +846,20 @@ mod tests {
     /// C4 (#24 review): an `EvidenceMissing` finding's `evidence_ids` names
     /// the *requirement* half of a (holder, requirement) pair
     /// (`sections.rs` sets it to `obstruction.witness_ids`), not the
-    /// evidence the finding is about. `requirement_satisfied` is a union
-    /// over every holder of that requirement, so a finding about one
-    /// still-blocked holder can share a `target_id` with a gap another,
-    /// unrelated holder already satisfied. Annotating it anyway would
-    /// assert "none is available" and "requirement_satisfied=true" in the
-    /// same line — exactly the contradiction #24 exists to stop. The
-    /// allowlist in `push_evidence_finding` must never annotate this type,
-    /// even when a same-`target_id` gap marked `true` exists.
+    /// evidence the finding is about. Before issue #34, `requirement_satisfied`
+    /// was a union over every holder of that requirement, so a finding about
+    /// one still-blocked holder could share a `target_id` with a gap another,
+    /// unrelated holder already satisfied — annotating it anyway would have
+    /// asserted "none is available" and "requirement_satisfied=true" in the
+    /// same line, exactly the contradiction #24 exists to stop. #34 scoped
+    /// `compute_satisfied_requirement_ids` to require every holder, which
+    /// makes the shared-`target_id`, satisfied-via-an-unrelated-holder gap
+    /// this test constructs by hand no longer reachable from a real
+    /// evaluation — the fixture below stays a hand-built worst case, kept as
+    /// a belt-and-suspenders test of the allowlist itself rather than a
+    /// reproduction of a still-live defect. The allowlist in
+    /// `push_evidence_finding` must never annotate this type, even when a
+    /// same-`target_id` gap marked `true` exists.
     #[test]
     fn an_evidence_missing_finding_is_never_annotated_even_when_a_same_target_gap_is_satisfied() {
         let requirement_id = "evidence:shared-requirement";
@@ -798,5 +914,183 @@ mod tests {
             "  - finding:work-w2-evidence-missing: work:w2 requires source-backed or accepted \
              evidence {requirement_id}, but none is available. [review_status=unreviewed]\n"
         )));
+    }
+
+    /// `halt_name`'s hand-rolled match must never drift from `Halt`'s own
+    /// `#[serde(rename_all = "snake_case")]` encoding — the same encoding
+    /// `native-cli.report.schema.json`'s `halt_report.halt` enum lists and
+    /// every JSON report actually emits. This pins the two together so a new
+    /// `Halt` variant that only updates one of them fails here rather than
+    /// silently rendering the wrong word.
+    #[test]
+    fn halt_names_match_their_serde_encoding() {
+        for halt in ALL_HALTS {
+            let expected = serde_json::to_value(halt)
+                .expect("Halt serializes")
+                .as_str()
+                .expect("Halt serializes to a string")
+                .to_owned();
+            assert_eq!(halt_name(halt), expected);
+        }
+    }
+
+    #[test]
+    fn render_halt_section_shows_none_when_there_is_no_halt() {
+        let rendered = render_halt_section(None, &[]);
+        assert!(rendered.contains("Halt: (none)"));
+        assert!(rendered.contains("All halts:\n  (none)"));
+        assert!(!rendered.contains("Completed through"));
+    }
+
+    #[test]
+    fn render_halt_section_shows_the_primary_halt_and_its_next_operations() {
+        let report: HaltReport = serde_json::from_value(json!({
+            "halt": "needs_evidence",
+            "completed_through": "revision:one",
+            "target_ids": ["evidence:required"],
+            "next_operations": [{
+                "command": "evidence attach",
+                "arguments": {
+                    "store": "/tmp/store",
+                    "case_space_id": "case_space:x"
+                },
+                "note": "attach source-backed evidence"
+            }]
+        }))
+        .expect("halt report");
+        let halts = vec![report.clone()];
+
+        let rendered = render_halt_section(Some(&report), &halts);
+
+        assert!(rendered.contains("Halt: needs_evidence"));
+        assert!(rendered.contains("Completed through: revision:one"));
+        assert!(rendered.contains("evidence:required"));
+        assert!(rendered.contains("evidence attach"));
+        assert!(rendered.contains("store: /tmp/store"));
+        assert!(rendered.contains("case_space_id: case_space:x"));
+        assert!(rendered.contains("attach source-backed evidence"));
+    }
+
+    #[test]
+    fn render_halt_section_shows_no_next_operations_as_none() {
+        let report: HaltReport = serde_json::from_value(json!({
+            "halt": "nothing_eligible",
+            "completed_through": "revision:one",
+            "target_ids": [],
+            "next_operations": []
+        }))
+        .expect("halt report");
+        let halts = vec![report.clone()];
+
+        let rendered = render_halt_section(Some(&report), &halts);
+
+        assert!(rendered.contains("Targets: (none)"));
+        assert!(rendered.contains("Next operations: (none)"));
+    }
+
+    const ALL_HALTS: [Halt; 8] = [
+        Halt::RoundBudgetExhausted,
+        Halt::NeedsReview,
+        Halt::NeedsRetryDecision,
+        Halt::NeedsPlanReview,
+        Halt::NeedsEvidence,
+        Halt::NeedsExternal,
+        Halt::DispatchInProgress,
+        Halt::NothingEligible,
+    ];
+
+    /// The render-only property issue #35 asks for: every halt member and
+    /// every `next_operation` present in the report appears in the text
+    /// rendering, and the text rendering names no halt member the report did
+    /// not have. This is what would fail if `render_halt_section` decided
+    /// something (summarised, filtered, or renamed a halt) instead of
+    /// projecting exactly what `derive_halts` already computed.
+    #[test]
+    fn text_rendering_shows_exactly_the_halts_and_next_operations_the_report_has() {
+        arbtest::arbtest(
+            |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
+                let halt_count = u.int_in_range(0_usize..=3)?;
+                let mut halts = Vec::new();
+                for index in 0..halt_count {
+                    let halt = *u.choose(&ALL_HALTS)?;
+                    let target_count = u.int_in_range(0_usize..=2)?;
+                    let target_ids = (0..target_count)
+                        .map(|target_index| format!("target:property-{index}-{target_index}"))
+                        .collect::<Vec<_>>();
+                    let operation_count = u.int_in_range(0_usize..=2)?;
+                    let mut next_operations = Vec::new();
+                    for operation_index in 0..operation_count {
+                        let has_note: bool = u.arbitrary()?;
+                        next_operations.push(json!({
+                            "command": format!("command-property-{index}-{operation_index}"),
+                            "arguments": {
+                                format!("arg-{index}-{operation_index}"):
+                                    format!("value-{index}-{operation_index}")
+                            },
+                            "note": if has_note {
+                                json!(format!("note-property-{index}-{operation_index}"))
+                            } else {
+                                json!(null)
+                            }
+                        }));
+                    }
+                    let report: HaltReport = serde_json::from_value(json!({
+                        "halt": serde_json::to_value(halt).expect("halt serializes"),
+                        "completed_through": format!("revision:property-{index}"),
+                        "target_ids": target_ids,
+                        "next_operations": next_operations,
+                    }))
+                    .expect("property halt report");
+                    halts.push(report);
+                }
+                let halt_head = halts.first().cloned();
+
+                let rendered = render_halt_section(halt_head.as_ref(), &halts);
+
+                for report in &halts {
+                    let name = serde_json::to_value(report.halt)
+                        .expect("halt serializes")
+                        .as_str()
+                        .expect("halt serializes to a string")
+                        .to_owned();
+                    assert!(
+                        rendered.contains(&name),
+                        "missing halt member {name}: {rendered}"
+                    );
+                    assert!(rendered.contains(report.completed_through.as_str()));
+                    for target_id in &report.target_ids {
+                        assert!(rendered.contains(target_id.as_str()));
+                    }
+                    for operation in &report.next_operations {
+                        assert!(rendered.contains(&operation.command));
+                        for (key, value) in &operation.arguments {
+                            assert!(rendered.contains(key.as_str()));
+                            assert!(rendered.contains(value.as_str()));
+                        }
+                        if let Some(note) = &operation.note {
+                            assert!(rendered.contains(note.as_str()));
+                        }
+                    }
+                }
+
+                // The other direction: no halt member appears in the
+                // rendering that this report list does not actually have.
+                for candidate in ALL_HALTS {
+                    let name = serde_json::to_value(candidate)
+                        .expect("halt serializes")
+                        .as_str()
+                        .expect("halt serializes to a string")
+                        .to_owned();
+                    let present_in_data = halts.iter().any(|report| report.halt == candidate);
+                    let present_in_text = rendered.contains(&name);
+                    assert_eq!(
+                        present_in_text, present_in_data,
+                        "halt member {name} presence mismatch: {rendered}"
+                    );
+                }
+
+                Ok(())
+            },
+        );
     }
 }

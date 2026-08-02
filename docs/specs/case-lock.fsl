@@ -1,0 +1,365 @@
+// Design-layer spec for CaseGraphen issue #30 — the case-space exclusive lock.
+//
+// What this formalizes: `CaseLockGuard::acquire` in `src/native_store/support.rs`,
+// which serializes every durable write to one case space. The store's whole
+// integrity story rests on it — the morphism log is append-only and hash-chained,
+// so two concurrent appenders is not a lost update, it is a broken chain.
+//
+// Why it exists: the shipped implementation decided a lock was abandoned from
+// **file mtime age alone** (`LOCK_STALE_AFTER = 60s`), with no heartbeat while a
+// lock is held and no liveness check on the pid the token already carries. Age
+// therefore did not mean "the holder died"; it meant "the holder is slow, or the
+// holder died", and the code read one of those two as the other. The
+// compare-and-delete that follows (`remove_lock_if_owned`) proves the lock was
+// not *replaced* since it was observed — which is true precisely when the holder
+// is alive and still working.
+//
+// This file specifies the design that was chosen: the tool refuses rather than
+// infers. It does not carry the rejected design as a live action, because an
+// action that can never fire makes `fslc` report the spec as possibly vacuous,
+// and a spec that ships with a warning teaches its readers to ignore warnings.
+// The rejected design is recorded instead as a counterexample that was actually
+// produced, below, together with the exact text to paste back.
+//
+// THE DEFECT, AS `fslc verify --depth 10` PRODUCED IT (2026-08-02).
+//
+// Add this action and INV-LOCK-001 is violated at step 4:
+//
+//   state { observed: Map<Proc, Option<Proc>> }        // init: none
+//   fair action observe_lock(p: Proc) {
+//     requires st[p] == Idle
+//     requires lock != none
+//     observed[p] = lock
+//   }
+//   fair action steal_stale_lock(p: Proc) {
+//     requires st[p] == Idle
+//     requires aged
+//     requires lock != none
+//     requires observed[p] == lock                     // = remove_lock_if_owned
+//     forall q: Proc { displaced[q] = displaced[q] or (lock == some(q) and st[q] == Holding) }
+//     lock = some(p)
+//     st[p] = Holding
+//   }
+//
+//   step 1  time_passes()        aged: false -> true
+//   step 2  acquire_free(2)      lock: none -> 2, st[2]: Idle -> Holding
+//   step 3  observe_lock(0)      observed[0]: none -> 2
+//   step 4  steal_stale_lock(0)  lock: 2 -> 0, st[0]: Idle -> Holding,
+//                                displaced[2]: false -> true
+//           => st[0] == Holding and st[2] == Holding, operator_intervened false
+//
+// Read step 4 against the code: the compare-and-delete succeeded *because*
+// process 2 was alive and had not touched its own lock file. Nothing in the
+// trace involves a dead process at all.
+//
+// Modelling bound (representation only, no behavioural content): three
+// processes, which is the smallest number that lets a third party observe two
+// holders.
+
+spec CaseGraphenCaseLock {
+  // Three contending processes. `type` rather than `entity` because init needs
+  // to distinguish them by index.
+  type Proc = 0..2
+
+  enum ProcState {
+    // Has not asked for the lock yet.
+    Idle,
+    // Believes it holds the lock and is writing.
+    Holding,
+    // Gave up: `LockUnavailable`. The store is untouched and the caller was told.
+    Refused,
+    // Died holding the lock. Nothing releases it; the file survives.
+    Crashed,
+    // Completed its write and released.
+    Finished
+  }
+
+  state {
+    st: Map<Proc, ProcState>,
+    // The `.lock` file: whose ownership token it currently carries, if it exists.
+    lock: Option<Proc>,
+    // Wall-clock age has crossed `LOCK_STALE_AFTER`. Deliberately settable
+    // while the holder is `Holding`: the independence of age from liveness is
+    // the defect, so the model must not couple them.
+    aged: Bool,
+    // Was this process's lock removed while it still believed it held it? The
+    // shipped code cannot answer this at runtime — `remove_lock_if_owned`
+    // returns `Ok(false)` on release and the operation reports success — which
+    // is the half of the defect that makes it silent.
+    displaced: Map<Proc, Bool>,
+    // Has this process performed its durable append? Modelled because the
+    // question that matters is not who holds the lock but who *writes* — two
+    // concurrent appends to a hash-chained log is the damage, and holding a
+    // lock nobody writes under is harmless.
+    committed: Map<Proc, Bool>,
+    // An operator asserted the lock is abandoned and removed it by hand. Outside
+    // the tool, and recorded so the properties can distinguish what the *tool*
+    // did from what a human asserted.
+    operator_intervened: Bool
+  }
+
+  init {
+    forall p: Proc {
+      st[p] = Idle
+      displaced[p] = false
+      committed[p] = false
+    }
+    lock = none
+    aged = false
+    operator_intervened = false
+  }
+
+  // ------------------------------------------------------------ the protocol
+
+  @requirement("REQ-LOCK-001", "an absent lock file is claimed by exactly one process")
+  fair action acquire_free(p: Proc) {
+    requires st[p] == Idle
+    requires lock == none
+    lock = some(p)
+    st[p] = Holding
+  }
+
+  // Time passing. Uncoupled from liveness on purpose: `LOCK_STALE_AFTER` is
+  // reached by a holder that is merely slow just as surely as by one that died.
+  // Nothing refreshes the file's mtime while a lock is held, so a 3.0 s gated
+  // write on a 4,000-cell space (the number `LOCK_WAIT_BUDGET`'s comment already
+  // records) is one contended order of magnitude away from crossing it.
+  @requirement("MODEL-LOCK-002", "the lock file ages whether or not its holder died")
+  fair action time_passes() {
+    requires not aged
+    aged = true
+  }
+
+  @requirement("MODEL-LOCK-003", "a holder may die without releasing")
+  fair action crash(p: Proc) {
+    requires st[p] == Holding
+    st[p] = Crashed
+  }
+
+  // The durable append, and the guard that makes the whole design work. The
+  // `lock == some(p)` precondition is `CaseLockGuard::still_owned` — a re-read
+  // of the lock file immediately before writing. It is emphatically *not* a
+  // liveness inference about anyone else: it is this process establishing that
+  // *it* still holds what it acquired, which is a question it can answer.
+  //
+  // ASSUME-LOCK-001: modelled as atomic with the append. The implementation
+  // re-reads the file and then writes, so a real TOCTOU window remains between
+  // the two. That window is microseconds instead of the whole operation (3.0 s
+  // measured on a 4,000-cell space), which is a reduction and not a closure,
+  // and no property below may be read as claiming otherwise.
+  @requirement("REQ-LOCK-005", "a process appends only while it still holds the lock")
+  fair action commit(p: Proc) {
+    requires st[p] == Holding
+    requires not committed[p]
+    requires lock == some(p)
+    committed[p] = true
+  }
+
+  // The displaced holder discovers it lost the lock and refuses, rather than
+  // writing. Before issue #30's review this action did not exist: the code
+  // path was `release_after_displacement`, where `remove_lock_if_owned` found a
+  // token that was no longer its own, returned `Ok(false)`, and **the operation
+  // reported success**. That is what made the damage silent.
+  @requirement("REQ-LOCK-006", "a displaced holder refuses instead of writing")
+  fair action detect_displacement(p: Proc) {
+    requires st[p] == Holding
+    requires lock != some(p)
+    st[p] = Refused
+  }
+
+  @requirement("REQ-LOCK-002", "a holder releases the lock it still owns")
+  fair action release(p: Proc) {
+    requires st[p] == Holding
+    requires lock == some(p)
+    lock = none
+    st[p] = Finished
+  }
+
+  // ------------------------------------------------------- the decision
+
+  // THE DECISION (issue #30, chosen 2026-08-02): the tool does not infer that
+  // another process is dead. It refuses, names the lock, and the caller — or an
+  // operator — decides. This is the same stance ADR 0014 takes on a started
+  // dispatch: `--supersede-trace` is an assertion an operator makes after
+  // externally establishing the dispatch is dead, never an inference the tool
+  // draws from elapsed time.
+  @requirement("REQ-LOCK-003", "a waiter that cannot get the lock refuses rather than breaking it")
+  fair action refuse_and_leave_lock(p: Proc) {
+    requires st[p] == Idle
+    requires lock != none
+    st[p] = Refused
+  }
+
+  // The cost of REQ-LOCK-003, modelled rather than argued: a crashed holder's
+  // lock is not reclaimed by anything inside the tool, so recovery becomes a
+  // human act. The operator may be wrong — nothing here checks the holder is
+  // dead, exactly as nothing checks it for `--supersede-trace` — so the
+  // properties below must distinguish this from what the tool did on its own.
+  @requirement("REQ-LOCK-004", "lock recovery is an operator act, and may be mistaken")
+  fair action operator_clears_lock() {
+    requires lock != none
+    operator_intervened = true
+    // Marks only a holder that has not yet written. A holder displaced *after*
+    // its append lost nothing — its write was legitimate and already serialized
+    // — so folding both cases into one flag would make the property below say
+    // less than it can.
+    forall q: Proc {
+      displaced[q] =
+        displaced[q] or (lock == some(q) and st[q] == Holding and not committed[q])
+    }
+    lock = none
+  }
+
+  // ------------------------------------------------------------- properties
+
+  // The property the store's integrity rests on. Two `Holding` processes is two
+  // concurrent appends to one hash-chained log.
+  //
+  // It is conditioned on `not operator_intervened` deliberately, and the
+  // condition is the honest part: with `operator_clears_lock` in the model, no
+  // unconditional mutual exclusion is provable, because a human who asserts a
+  // live lock is abandoned can always break it. What this crate can promise is
+  // narrower and checkable — *the tool* never breaks a live lock. Stating the
+  // unconditional version would be a spec that proves something the design does
+  // not deliver.
+  @requirement("INV-LOCK-001", "the tool alone never produces two simultaneous holders")
+  invariant MutualExclusionUnlessAsserted {
+    (not operator_intervened) =>
+      forall p: Proc {
+        forall q: Proc {
+          (st[p] == Holding and st[q] == Holding) => p == q
+        }
+      }
+  }
+
+  // The second half of the defect, and the reason it is worse than a race: the
+  // loser is never told. A process that reports success must have held its lock
+  // for the whole write.
+  //
+  // **This invariant used to be gated on `not operator_intervened`, and that was
+  // wrong.** An adversarial review of ADR 0017 reproduced the consequence: one
+  // `rm` on a live lock — the act ADR 0017 newly prescribes as *the* recovery
+  // procedure — put two writers into one 4,000-cell store, both exited 0 with
+  // empty stderr, both reported the same `current_revision_id`, and the log
+  // gained two entries at the same sequence with the same `entry_id`. Every
+  // subsequent `space validate` / `rebuild` / `history` / `inspect` refuses with
+  // `store_integrity`, and there is no in-tool repair.
+  //
+  // Gating the invariant on `operator_intervened` looked like honesty about a
+  // human's power to break things. It was not: the design *requires* that human
+  // act on the normal recovery path, so the exemption covered the ordinary case
+  // rather than an exotic one. An invariant excused on the path the design tells
+  // people to take is not an invariant.
+  //
+  // It now holds unconditionally, and `commit`'s `lock == some(p)` guard —
+  // `still_owned` — is what makes that true: a displaced holder cannot write, so
+  // it reaches `Refused` through `detect_displacement` rather than `Finished`.
+  @requirement("INV-LOCK-002", "no process reports success after losing its lock")
+  invariant NoSilentDisplacement {
+    forall p: Proc {
+      st[p] == Finished => not displaced[p]
+    }
+  }
+
+  // The integrity property itself, stated over writers rather than holders,
+  // which is where it belongs: two processes holding a lock harms nothing if
+  // only one of them writes. Unconditional, including across an operator's
+  // mistaken removal — that is exactly what F1 showed the design did not have
+  // and what `still_owned` buys.
+  // Stated as a two-state rule rather than an invariant, and the distinction is
+  // the content: owning the lock is a property of the *instant of writing*, not
+  // a state that must persist afterwards. Written as an invariant it is simply
+  // false, and `fslc` said so — a process that committed legitimately and then
+  // had its lock removed by an operator satisfies "has written" and "does not
+  // hold the lock" at the same time, with nothing wrong having happened.
+  @requirement("INV-LOCK-005", "a write happens only in a step where the writer held the lock")
+  trans EveryWriteWasOwned {
+    forall p: Proc {
+      (committed[p] and not old(committed[p])) => old(lock) == some(p)
+    }
+  }
+
+  // A displaced holder must have somewhere to go that is not "report success".
+  @requirement("MODEL-LOCK-011", "a displaced holder can discover it and refuse")
+  reachable DisplacedHolderRefuses {
+    exists p: Proc { st[p] == Refused and displaced[p] }
+  }
+
+  // And it must not be able to write after that point.
+  @requirement("INV-LOCK-006", "a displaced holder never writes")
+  invariant DisplacedNeverWrites {
+    forall p: Proc { displaced[p] => not committed[p] }
+  }
+
+  // Auxiliary for the induction proof of DisplacedNeverWrites, and the reason
+  // that invariant is true rather than merely observed: displacement clears the
+  // lock in the same step, and nothing can ever put this process's token back —
+  // `acquire_free` needs `Idle`, and a displaced process is past that. So
+  // `commit`'s `lock == some(p)` guard is permanently unsatisfiable for it.
+  @requirement("MODEL-LOCK-012", "auxiliary: a displaced process can never hold the lock again")
+  invariant DisplacedNeverHoldsTheLockAgain {
+    forall p: Proc {
+      displaced[p] => (st[p] != Idle and lock != some(p))
+    }
+  }
+
+  // Auxiliary, and needed for the k-induction proof of NoSilentDisplacement:
+  // that invariant alone says nothing about where `displaced` may be true, so
+  // induction cannot rule out a start state that already has a displaced
+  // `Finished` process. This says where displacement comes from, and with
+  // the rejected inference removed there is exactly one source left —
+  // `operator_clears_lock`, which sets `operator_intervened` in the same step.
+  //
+  // Stated on its own it is the sharper claim of the two, and the one worth
+  // reading as the design's promise: inside this tool, nothing takes a lock
+  // away from a process that holds it.
+  @requirement("MODEL-LOCK-009", "auxiliary: a holder is displaced only by an operator's assertion")
+  invariant DisplacementImpliesAssertion {
+    forall p: Proc { displaced[p] => operator_intervened }
+  }
+
+  // The other half of what induction needs: two `Holding` processes that both
+  // still own their lock must be the same process, because there is only one
+  // lock file. Together with DisplacementImpliesAssertion this is exactly
+  // INV-LOCK-001, which is the useful way to read the pair — mutual exclusion
+  // holds because a holder is never quietly separated from its file.
+  @requirement("MODEL-LOCK-010", "auxiliary: an undisplaced holder is the one named in the lock file")
+  invariant HolderOwnsTheLock {
+    forall p: Proc {
+      st[p] == Holding => (lock == some(p) or operator_intervened)
+    }
+  }
+
+  // A refusal is a legitimate outcome and must stay reachable — otherwise
+  // REQ-LOCK-003 has been written as an unreachable branch.
+  @requirement("MODEL-LOCK-006", "refusing is reachable")
+  reachable RefusalIsReachable { exists p: Proc { st[p] == Refused } }
+
+  // The trade REQ-LOCK-003 accepts, made reachable so it is on the record: a
+  // crashed holder leaves a lock the tool will not reclaim, and every other
+  // process refuses until a human acts.
+  @requirement("MODEL-LOCK-007", "a crashed holder strands the lock until an operator acts")
+  reachable CrashStrandsTheLock {
+    exists p: Proc { st[p] == Crashed and lock == some(p) }
+  }
+
+  // Ordinary operation still completes: refusing is not a way to never finish.
+  @requirement("MODEL-LOCK-008", "a contended lock is still handed on")
+  reachable SequentialHandoffCompletes {
+    exists p: Proc {
+      exists q: Proc { p != q and st[p] == Finished and st[q] == Finished }
+    }
+  }
+
+  // A stop is legitimate when nothing can move: everyone finished or refused, or
+  // a crashed holder is stranding the lock and the exit is a human act outside
+  // this model.
+  terminal {
+    forall p: Proc {
+      st[p] == Finished or st[p] == Refused or st[p] == Crashed
+    }
+  }
+}
+
+verify {
+}

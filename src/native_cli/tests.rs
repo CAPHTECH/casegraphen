@@ -551,6 +551,105 @@ fn run_gate_actor_alias_must_equal_the_log_actor() {
     ));
 }
 
+/// Issue #35's structural note, checked rather than repeated: `run`/
+/// `operate` switching from `NativeOptions::parse_with_strict` to
+/// `parse_reason` (to gain `--format text`) must not reopen
+/// `--since-revision` for them. `--since-revision` is not recognized
+/// anywhere in the shared options parser (`NativeOptions::consume_arg` has
+/// no arm for it) — the only place it is ever read at all is
+/// `parser.rs::parse_space`'s `"reason"` arm's own
+/// `Self::extract_since_revision` pre-scan of argv, which `parse_run`/
+/// `parse_operate` never call. So this must still fall through to
+/// `consume_arg`'s generic "unsupported native argument" refusal, exactly
+/// as it did before `--format text` existed for these commands.
+#[test]
+fn run_and_operate_since_revision_is_still_refused() {
+    for (namespace, extra_args) in [
+        ("run", vec!["--step", "--plan-id", "plan:demo"]),
+        (
+            "operate",
+            vec!["--plan-id", "plan:demo", "--max-rounds", "1"],
+        ),
+    ] {
+        let mut full_args = extra_args;
+        full_args.extend([
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--base-revision-id",
+            "revision:demo",
+            "--since-revision",
+            "revision:one",
+            "--actor-id",
+            "actor:demo",
+            "--capability-id",
+            "capability:dispatch",
+            "--operation-scope-id",
+            "case_space:demo",
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:demo",
+            "--format",
+            "json",
+        ]);
+        let error = NativeCliCommand::parse(namespace, args(&full_args))
+            .expect_err(&format!("{namespace} must still refuse --since-revision"));
+        assert!(
+            matches!(
+                &error,
+                NativeCliError::Usage(message)
+                    if message.contains("unsupported native argument")
+                        && message.contains("--since-revision")
+            ),
+            "{namespace} --since-revision produced an unexpected error: {error:?}"
+        );
+    }
+}
+
+/// Issue #35: `run --step`/`run --frontier`/`operate` accept `--format
+/// text` now that they parse with `NativeOptions::parse_reason`, and the
+/// command carries that format through to `.format()` for `run_rendered`
+/// (`cli.rs`) to dispatch on — this is the parser-level half of the
+/// rendering change; `tests/command.rs` covers the rendered text itself
+/// through the real binary.
+#[test]
+fn run_and_operate_accept_format_text() {
+    for (namespace, extra_args) in [
+        ("run", vec!["--step", "--plan-id", "plan:demo"]),
+        (
+            "operate",
+            vec!["--plan-id", "plan:demo", "--max-rounds", "1"],
+        ),
+    ] {
+        let mut full_args = extra_args;
+        full_args.extend([
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--base-revision-id",
+            "revision:demo",
+            "--actor-id",
+            "actor:demo",
+            "--capability-id",
+            "capability:dispatch",
+            "--operation-scope-id",
+            "case_space:demo",
+            "--audience",
+            "audit",
+            "--source-boundary-id",
+            "source_boundary:demo",
+            "--format",
+            "text",
+        ]);
+        let command = NativeCliCommand::parse(namespace, args(&full_args))
+            .unwrap_or_else(|error| panic!("{namespace} --format text must parse: {error}"));
+        assert_eq!(command.format(), NativeOutputFormat::Text);
+    }
+}
+
 /// One instance per `NativeCliError` shape the `error_code`/`refusal_data`
 /// match distinguishes, including every `NativeStoreError` sub-variant.
 /// `Worker(_)` is not built here: `exec::worker::WorkerError` has no public

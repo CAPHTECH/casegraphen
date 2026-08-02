@@ -564,18 +564,32 @@ An obstruction is a domain finding explaining why a cell, relation, morphism,
 projection, or close attempt cannot proceed under the selected rules. It is not
 a tool failure.
 
-Obstruction types:
+Obstruction types, as `NativeObstructionType` implements them:
 
 - `unresolved_dependency`
 - `external_wait`
 - `missing_evidence`
 - `missing_proof`
-- `invalid_morphism`
 - `contradiction`
-- `impossible_closure`
-- `projection_loss`
-- `correspondence_mismatch`
 - `review_required`
+
+Four names this section originally listed have never had a producer, and are
+kept here as the record of a specified-but-unbuilt intention rather than as a
+description of the tool:
+
+- `invalid_morphism`, `impossible_closure`, `correspondence_mismatch` — never
+  implemented at all.
+- `projection_loss` — was a variant of the enum until issue #29 deleted it,
+  never constructed anywhere. A projection's declared information loss is
+  reported as a review gap (`NativeReviewGapType::UnreviewedProjectionLoss`)
+  and as the evaluation's own `projection_loss` field, which is a different
+  thing from the identically named row in the readiness table above. #29 also
+  deleted `invalid_close`, which was in the enum but was never listed here; a
+  failed close invariant is a close-check result, not a readiness obstruction.
+
+Anything added to this list is a decision to give it a producer. An obstruction
+type with no producer is a branch a reader will reach for and a derivation can
+never exercise, which is what #29 was filed about.
 
 Each obstruction must carry stable witness IDs, source constraint IDs,
 severity, provenance, review status, and recommended completion types.

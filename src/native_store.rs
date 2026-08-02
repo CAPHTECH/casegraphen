@@ -82,17 +82,28 @@ impl NativeCaseStore {
         if !created_case_dir && !case_dir.is_dir() {
             return Err(NativeStoreError::ExistingCase { path: case_dir });
         }
-        let _lock = CaseLockGuard::acquire(&case_dir)?;
+        // Checked before acquiring the lock: this reads only whether a log
+        // already exists, nothing the lock protects, and the alternative
+        // (checking after acquiring) makes an ordinary re-import of an
+        // existing case space pay the full `LOCK_WAIT_BUDGET` before
+        // reaching a refusal it could have reached immediately.
         let log_path = self.log_path(&case_space.case_space_id);
         if !created_case_dir || log_path.exists() {
             return Err(NativeStoreError::ExistingCase { path: case_dir });
         }
+        let lock = CaseLockGuard::acquire(&case_dir)?;
 
         // Everything past the create_dir is rolled back on failure. Without
         // this, a write error (a too-long snapshot name, ENOSPC, EACCES) leaves
         // a case directory carrying no log: the case-space id is then burned —
         // reimport is refused as already existing — and `space list` fails for
         // every case space in the store.
+        //
+        // `still_owned` immediately before the write (ADR 0017's 2026-08-02
+        // amendment): the tool confirms it still holds what it acquired
+        // before writing anything durable, rather than trusting that nothing
+        // removed the lock file underneath it.
+        lock.still_owned()?;
         let written = self.write_new_case_space(case_space, &log_path);
         if written.is_err() {
             let _ = fs::remove_dir_all(&case_dir);
@@ -152,7 +163,7 @@ impl NativeCaseStore {
                 path: self.log_path(case_space_id),
             });
         }
-        let _lock = CaseLockGuard::acquire(&case_dir)?;
+        let lock = CaseLockGuard::acquire(&case_dir)?;
         let replay = self.replay_current_case_space(case_space_id)?;
         let log_path = self.log_path(case_space_id);
         require_valid_operation_gate(&log_path, &replay.case_space, &entry)?;
@@ -206,6 +217,14 @@ impl NativeCaseStore {
         )?;
         if snapshot_required(entry.sequence) {
             require_snapshot_absent(&log_path, &snapshot_path, &entry.target_revision_id)?;
+            // `still_owned` immediately before the first durable write on
+            // this branch (ADR 0017's 2026-08-02 amendment): confirms this
+            // process still holds the lock it acquired before writing,
+            // rather than trusting that nothing removed the lock file
+            // underneath it. The snapshot write below is itself durable, so
+            // the check must guard it too, not only the log append that
+            // follows — a displaced holder must never write either one.
+            lock.still_owned()?;
             if let Err(error) = write_json_create_new(&snapshot_path, &next) {
                 if matches!(
                     &error,
@@ -243,6 +262,8 @@ impl NativeCaseStore {
                         self.relative_snapshot_path(&next.case_space_id, &next.revision.revision_id)
                     })
             };
+            // Same check, same reason, on this branch's own append.
+            lock.still_owned()?;
             let previous_log_len = append_verified_log_entry(&log_path, &entry)?;
             if let Err(error) = write_log_head(&self.head_path(case_space_id), &entry) {
                 truncate_after_failed_append(&log_path, previous_log_len, &error)?;
@@ -411,7 +432,7 @@ impl NativeCaseStore {
                 path: self.log_path(case_space_id),
             });
         }
-        let _lock = CaseLockGuard::acquire(&case_dir)?;
+        let lock = CaseLockGuard::acquire(&case_dir)?;
         let entries = if adopt_existing_log {
             self.read_history_entries(case_space_id)?
         } else {
@@ -504,6 +525,10 @@ impl NativeCaseStore {
                         self.relative_snapshot_path(case_space_id, &entry.target_revision_id);
                     let snapshot_path =
                         self.resolve_snapshot_path(&relative_snapshot_path, &log_path)?;
+                    // `still_owned` immediately before this durable write
+                    // (ADR 0017's 2026-08-02 amendment): rebuild's writes
+                    // are guarded the same as `append_morphism`'s.
+                    lock.still_owned()?;
                     write_json_create_new(&snapshot_path, case_space)?;
                 }
                 Ok(())
@@ -512,8 +537,17 @@ impl NativeCaseStore {
 
         if adopt_log_head {
             if repair_lagging_head {
+                // The dangerous one: this *overwrites* the head with
+                // `latest`, computed from a log read taken under a lock
+                // this process may no longer hold. A displaced rebuild
+                // racing a concurrent append could otherwise write a head
+                // naming an earlier entry than the log now contains — the
+                // untraceable rollback residual risk 2 already names as the
+                // thing this store must not produce.
+                lock.still_owned()?;
                 write_log_head(&head_path, latest)?;
             } else {
+                lock.still_owned()?;
                 write_log_head_create_new(&head_path, latest)?;
             }
         }

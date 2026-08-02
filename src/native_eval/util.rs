@@ -23,8 +23,6 @@ pub(super) fn obstruction_type_stem(obstruction_type: NativeObstructionType) -> 
         NativeObstructionType::MissingProof => "missing-proof",
         NativeObstructionType::Contradiction => "contradiction",
         NativeObstructionType::ReviewRequired => "review-required",
-        NativeObstructionType::ProjectionLoss => "projection-loss",
-        NativeObstructionType::InvalidClose => "invalid-close",
     }
 }
 

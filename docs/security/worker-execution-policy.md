@@ -509,18 +509,49 @@ symlink, or lexically rejected) is refused rather than recorded as given.
    migrating), which is deliberate: revocation is a source-boundary decision,
    not a runtime one.
 8. An operator who can write to the store can hold or repeatedly recreate a
-   case lock and deny writes. Lock contention is not only adversarial: the
-   lock is held across the evaluator's contract check, the snapshot, the
-   append and the head write, so hold time scales with the case space — 3.0 s
-   measured for one gated `cell transition` on a 4,000-cell space. The wait
-   budget is a 30 s deadline, chosen to outlast an ordinary append and to stay
-   well under the 60 s staleness threshold; a case space large enough to make
-   a single append exceed it will contend with itself, and the fixed budget is
+   case lock and deny writes, and **removing a lock file while its holder is
+   still live is an integrity risk, not merely an availability one** — this
+   was reproduced, not merely argued: before the 2026-08-02 fix described
+   below, one `rm` on a live lock — the act ADR 0017 documents as the
+   recovery procedure — let a second writer's acquire succeed while the
+   first still believed it held the lock. Both wrote, both exited 0, and the
+   hash-chained log gained two entries at the same sequence with the same
+   `entry_id`; every later `space validate`/`rebuild`/`history`/`inspect`
+   then refused with `store_integrity`, with no in-tool repair.
+   `CaseLockGuard::still_owned` closes this: every durable write re-confirms
+   the lock immediately beforehand, so the same `rm` now produces a
+   `LockUnavailable` refusal instead of a corrupted store. The check is not
+   atomic with the write it guards — a TOCTOU window remains, shrunk from
+   the whole operation (3.0 s measured, below) to microseconds rather than
+   closed; see ADR 0017's 2026-08-02 amendment and
+   `docs/specs/case-lock.fsl`'s `ASSUME-LOCK-001`.
+
+   Waiting still never wins: **the tool never infers that a live lock is
+   abandoned** (ADR 0017). A waiter that reaches the 30 s wait budget
+   refuses with `LockUnavailable`. On the ordinary contended path — the lock
+   file already existed when this attempt began — the refusal leaves that
+   file exactly as it found it. The rarer ownership-changed path
+   (`support.rs`'s post-`create_new` read-back finding different content
+   than it just wrote) is not the same shape: this attempt began with *no*
+   lock file, created one, and the refusal still leaves a file behind —
+   either this attempt's own contested write or whatever replaced it —
+   which is worth stating precisely rather than folding into "exactly as it
+   found it." Either way there is no staleness threshold left to eventually
+   reclaim a held lock, so an attacker who can create or hold the lock file
+   holds the case space until a human confirms the holder is gone and
+   removes the file by hand; the same is true of an ordinary crash while a
+   lock is held.
+   Lock contention is not only adversarial, though: the lock is held across
+   the evaluator's contract check, the snapshot, the append and the head
+   write, so hold time scales with the case space — 3.0 s measured for one
+   gated `cell transition` on a 4,000-cell space. The 30 s wait budget is
+   chosen to outlast an ordinary append; a case space large enough to make a
+   single append exceed it will contend with itself, and the fixed budget is
    a limit rather than a guarantee. An empty pre-created run directory is not skipped:
    it hard-errors that step's reservation. `run --frontier` records and reports
    that per-step failure while continuing the round when it can reserve a
-   separate failure trace; `run --step` returns the reservation error. These are
-   availability, not integrity, risks and are bounded by store filesystem
+   separate failure trace; `run --step` returns the reservation error. The
+   round-trip through denial and repair is bounded by store filesystem
    permissions.
 9. **A worker chooses how much a store keeps, and pruning it is one-way.**
    The 4 MiB cap bounds what is retained *in memory* and in the evidence cell;

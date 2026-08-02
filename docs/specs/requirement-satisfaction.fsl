@@ -1,0 +1,275 @@
+// Design-layer spec for CaseGraphen issue #34 — what "this requirement is
+// satisfied" is allowed to mean.
+//
+// What this formalizes: `NativeEvaluationContext::compute_satisfied_requirement_ids`
+// in `src/native_eval.rs` and the `requirement_satisfied` flag it stamps on a
+// `NativeReviewGap` (`src/native_eval/sections.rs`). That flag is read by the
+// Assurance axis, the close check, `native_halt`'s `needs_review`, and the text
+// renderer — four consumers of one boolean.
+//
+// The defect: a hard `requires_evidence` edge belongs to a *holder*. Whether it
+// is discharged is decided per holder — `evidence_requirement_satisfied(holder,
+// requirement)`, whose third disjunct tests coverage of the *holder's* id. The
+// shipped derivation asks that question of every holder and then keeps the
+// union, so one holder's satisfaction marked the requirement satisfied for all
+// of them. Reproduced end to end in issue #34: `evidence:x`'s gap reported
+// `requirement_satisfied: true` by way of holder `evidence:a`, while `work:w2`,
+// which also hard-requires `evidence:x`, was correctly still blocked.
+//
+// Two candidate meanings are modelled side by side and compared, because the
+// interesting content of this decision is in the comparison:
+//
+//   satisfied_for_some()  the shipped union      — "discharged for someone"
+//   satisfied_for_all()   the decision taken     — "discharged for every holder"
+//
+// Both stay live in this file on purpose. `SingleHolderAgreement` proves they
+// are the same answer whenever a requirement has exactly one holder, which is
+// the compatibility claim the change has to make and the reason no existing
+// single-holder fixture moves.
+//
+// REVISION HISTORY, because the correction is the most useful thing here.
+//
+//   1. The first version had no `is_subject` — every `Holder` was implicitly a
+//      cell readiness evaluates. That is not the system: `readiness_subject`
+//      excludes evidence/review/projection/revision/morphism/external-ref
+//      cells and every lifecycle in Resolved/Accepted/Retired/Rejected/
+//      Superseded, so those cells never produce a `missing_evidence`
+//      obstruction however unsatisfied their edge is. Meanwhile the shipped
+//      `compute_satisfied_requirement_ids` ranged over *all* cells.
+//
+//      Under the union that asymmetry was harmless in the safe direction — an
+//      extra holder could only add satisfaction. The every-holder rule this
+//      file specifies inverted it: an extra holder could only subtract it. So
+//      `cell transition --to resolved` on one holder, the ordinary way work
+//      finishes, made the case space refuse to close with **no obstruction
+//      anywhere naming why** — `space reason` clean, `close check` refusing,
+//      `assurance` reading `review_required`, and `needs_review` pointing at a
+//      cell nothing explains. Found by an invariant-duplication audit,
+//      reproduced, and fixed by giving `compute_satisfied_requirement_ids` the
+//      same `readiness_subject` filter obstruction production already uses.
+//
+//      This spec returned `proved` throughout. It proved a true property of a
+//      model in which every holder is evaluated, and shipped a machine in which
+//      they are not — the same failure `operate-halt.fsl`'s revision history
+//      records three times. A proof over a model simpler than the system gives
+//      assurance it has not earned, which is worse than silence, and the reason
+//      it keeps happening is that the omission is invisible from inside the
+//      model: nothing in `INV-EVID-001` hints that `Holder` is missing a case.
+//
+// Modelling bound (representation only, no behavioural content): one
+// requirement and three candidate holders, the smallest shape in which a
+// requirement can be discharged for one holder and not another.
+
+spec CaseGraphenRequirementSatisfaction {
+  // Cells that might hold a hard `requires_evidence` edge into the one
+  // requirement this model is about.
+  type Holder = 0..2
+
+  state {
+    // Does this cell hold a hard `requires_evidence` edge into the requirement?
+    // Authored structure, so it can appear and disappear as the graph evolves.
+    holds_edge: Map<Holder, Bool>,
+    // A review promoted evidence naming the requirement itself. Holder-
+    // independent: this is `trusted_evidence_ids` / `trusted_coverage_targets`
+    // matching the requirement id.
+    trusted_for_requirement: Bool,
+    // A review promoted evidence recorded as covering this *holder*. This is
+    // `trusted_coverage_targets.contains(cell_id)` — the disjunct that makes
+    // satisfaction holder-dependent, and therefore the whole reason a union
+    // over holders loses information.
+    trusted_for_holder: Map<Holder, Bool>,
+    // Does readiness evaluate this cell at all? `readiness_subject`
+    // (`src/native_eval.rs`) excludes evidence/review/projection/revision/
+    // morphism/external-ref cells, and every cell whose lifecycle is
+    // Resolved/Accepted/Retired/Rejected/Superseded. A cell it excludes never
+    // produces a `missing_evidence` obstruction, however unsatisfied its edge
+    // is.
+    //
+    // The first version of this spec had no such notion — every `Holder` was
+    // implicitly evaluated — and that omission is not academic: it is why
+    // `INV-EVID-001` was proved of a machine simpler than the one built, and
+    // the shipped `compute_satisfied_requirement_ids` ranged over *all* cells
+    // while obstruction production ranged only over subjects. Under the old
+    // union that asymmetry could only add satisfaction; after the every-holder
+    // rule it could only subtract it, so `cell transition --to resolved` on
+    // one holder made the case space refuse to close with no obstruction
+    // anywhere naming why. Found by an invariant-duplication audit and
+    // reproduced.
+    is_subject: Map<Holder, Bool>
+  }
+
+  init {
+    forall h: Holder {
+      holds_edge[h] = false
+      trusted_for_holder[h] = false
+      is_subject[h] = true
+    }
+    trusted_for_requirement = false
+  }
+
+  // `evidence_requirement_satisfied(holder, requirement)`, per holder. This is
+  // the one place the question is answered, and both candidate aggregates below
+  // are defined in terms of it rather than restating it.
+  def satisfied_for(h: Holder) = trusted_for_requirement or trusted_for_holder[h]
+
+  // A holder whose hard edge is not discharged. This is what readiness reports
+  // as a `missing_evidence` obstruction, and it is holder-scoped in the shipped
+  // code — the readiness layer was never wrong.
+  def blocked(h: Holder) = is_subject[h] and holds_edge[h] and not satisfied_for(h)
+
+  // The holders whose unsatisfied edge the evaluation would actually report.
+  // Both aggregates below range over exactly these, so "which holders count"
+  // is decided once — the duplication that produced the defect was two
+  // answers to this question, not two answers to `satisfied_for`.
+  def counts(h: Holder) = is_subject[h] and holds_edge[h]
+
+  // THE SHIPPED UNION. Kept live, not deleted: `FlatUnionIsNotHolderSound`
+  // below is the formal statement of issue #34's reproduction, and it needs
+  // this definition to say anything.
+  def satisfied_for_some() = exists h: Holder { counts(h) and satisfied_for(h) }
+
+  // THE DECISION (issue #34, chosen 2026-08-02). Note the left conjunct: an
+  // unguarded `forall` over holders is vacuously true for a requirement nothing
+  // requires, which would turn "no one requires this" into "everyone's
+  // requirement is discharged" — the union answered that case with `false`, so
+  // dropping the guard would be a regression introduced by the fix.
+  def satisfied_for_all() =
+    (exists h: Holder { counts(h) })
+    and (forall h: Holder { counts(h) => satisfied_for(h) })
+
+  // ------------------------------------------------------- how state moves
+
+  @requirement("MODEL-EVID-001", "a hard requires_evidence edge may be authored")
+  fair action author_requirement_edge(h: Holder) {
+    requires not holds_edge[h]
+    holds_edge[h] = true
+  }
+
+  @requirement("MODEL-EVID-002", "a hard requires_evidence edge may be retired")
+  fair action retire_requirement_edge(h: Holder) {
+    requires holds_edge[h]
+    holds_edge[h] = false
+  }
+
+  // `review accept` on evidence that names the requirement itself.
+  @requirement("MODEL-EVID-003", "a review may promote evidence covering the requirement")
+  fair action promote_for_requirement() {
+    requires not trusted_for_requirement
+    trusted_for_requirement = true
+  }
+
+  // `review accept` on evidence whose recorded coverage names one holder. This
+  // is the act that can discharge the edge for one cell and not another.
+  @requirement("MODEL-EVID-004", "a review may promote evidence covering one holder only")
+  fair action promote_for_holder(h: Holder) {
+    requires not trusted_for_holder[h]
+    trusted_for_holder[h] = true
+  }
+
+  // The ordinary way work finishes. It is a *lifecycle* act with no relation
+  // to evidence, which is exactly what made the defect surprising: nothing
+  // about resolving `work:w2` says anything about `evidence:x`, yet before the
+  // fix it changed that requirement's reported satisfaction.
+  @requirement("MODEL-EVID-009", "a holder can leave the set readiness evaluates")
+  fair action resolve_holder(h: Holder) {
+    requires is_subject[h]
+    is_subject[h] = false
+  }
+
+  // ------------------------------------------------------------ properties
+
+  // The property the decision buys, and the one every consumer of the flag
+  // assumes without checking: if the evaluation says the requirement is
+  // satisfied, no cell is still blocked on it. A consumer that joins this flag
+  // to a holder-scoped finding — which is what the #24 renderer did, producing
+  // one line asserting both halves of a contradiction — is then making a sound
+  // join rather than an unsound one.
+  @requirement("INV-EVID-001", "a satisfied requirement leaves no holder blocked on it")
+  invariant HolderSoundness {
+    satisfied_for_all() => (not exists h: Holder { blocked(h) })
+  }
+
+  // Issue #34's reproduction, as a reachable state rather than as a failing
+  // invariant, because the union is no longer what the code computes and a spec
+  // that fails is not a spec anyone keeps running. Read it as: the shipped
+  // meaning could say "satisfied" while a holder was demonstrably blocked.
+  @requirement("MODEL-EVID-005", "the union could claim satisfaction while a holder was blocked")
+  reachable FlatUnionIsNotHolderSound {
+    satisfied_for_some() and (exists h: Holder { blocked(h) })
+  }
+
+  // The guard on `satisfied_for_all`'s left conjunct, stated so it cannot be
+  // dropped by a later simplification: nothing is discharged for a requirement
+  // no cell requires.
+  @requirement("INV-EVID-002", "a requirement nobody holds is not satisfied")
+  invariant NoVacuousSatisfaction {
+    satisfied_for_all() => (exists h: Holder { holds_edge[h] })
+  }
+
+  // The compatibility claim, proved rather than asserted: where exactly one
+  // cell holds the edge, the two meanings are the same answer. This is why the
+  // change moves no existing single-holder fixture, and it is the thing to
+  // re-check if either definition is ever edited.
+  @requirement("INV-EVID-003", "with one holder, the union and the decision agree")
+  invariant SingleHolderAgreement {
+    (exists h: Holder {
+      holds_edge[h] and (forall g: Holder { holds_edge[g] => g == h })
+    })
+    => (satisfied_for_some() == satisfied_for_all())
+  }
+
+  // The property the audit's reproduction violated, and the one that makes the
+  // flag safe for the close check and the Assurance axis to consume: if the
+  // requirement reads unsatisfied while some evaluated holder requires it,
+  // then some evaluated holder is blocked — so an obstruction exists naming
+  // why. Without the `counts` guard on `satisfied_for_all` this is false, and
+  // the witness is a resolved or retired holder: zero obstructions anywhere,
+  // `close:native-review-gaps-closed` failing, and `assurance` reading
+  // `review_required` with nothing to act on.
+  @requirement("INV-EVID-004", "an unsatisfied requirement always has a blocked holder to explain it")
+  invariant NoUnexplainedUnsatisfied {
+    ((exists h: Holder { counts(h) }) and not satisfied_for_all())
+      => (exists h: Holder { blocked(h) })
+  }
+
+  // The shape that produced the defect, kept reachable so the fix is not
+  // silently reverted: a holder outside readiness has an unsatisfied edge, and
+  // the requirement still reads satisfied because that holder cannot block.
+  @requirement("MODEL-EVID-010", "a non-evaluated holder's unsatisfied edge does not veto")
+  reachable NonSubjectHolderDoesNotVeto {
+    exists h: Holder {
+      exists g: Holder {
+        h != g and counts(h) and satisfied_for(h)
+          and holds_edge[g] and not is_subject[g] and not satisfied_for(g)
+          and satisfied_for_all()
+      }
+    }
+  }
+
+  // Both answers must stay reachable, or the flag is a constant.
+  @requirement("MODEL-EVID-006", "a requirement can be satisfied for every holder")
+  reachable SatisfiedIsReachable { satisfied_for_all() }
+
+  @requirement("MODEL-EVID-007", "a requirement can be unsatisfied while held")
+  reachable UnsatisfiedIsReachable {
+    (exists h: Holder { holds_edge[h] }) and not satisfied_for_all()
+  }
+
+  // The shape that made the two meanings diverge in the real reproduction: one
+  // holder discharged through its own coverage, another still blocked.
+  @requirement("MODEL-EVID-008", "one holder can be discharged while another is not")
+  reachable HoldersCanDisagree {
+    exists h: Holder {
+      exists g: Holder {
+        h != g and holds_edge[h] and holds_edge[g] and satisfied_for(h) and blocked(g)
+      }
+    }
+  }
+
+  // Every state of this model is a legitimate resting point: it describes what
+  // an evaluation says about a graph, not a process that must make progress.
+  terminal { true }
+}
+
+verify {
+}

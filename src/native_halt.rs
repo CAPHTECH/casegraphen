@@ -506,7 +506,17 @@ fn blocked_obstructions_for_plan<'a>(
 /// operation that cannot discharge it. `blocked_obstructions_for_plan`
 /// follows them to the obstruction that can instead.
 fn needs_review(evaluation: &NativeCaseEvaluation, plan: &ExecutionPlan) -> bool {
-    if has_open_inference_gap(evaluation) {
+    // Reads `claim_review_target_ids` itself — the exact list the
+    // `NeedsReview` renderer above turns into `review accept` operations —
+    // rather than a second, separately maintained predicate. Finding 4 of the
+    // invariant-duplication audit: a since-deleted `has_open_inference_gap`
+    // computed the identical `gap_type == UnreviewedInference &&
+    // !requirement_satisfied` condition character for character, so the two
+    // agreed only because nobody had yet edited one without the other. A
+    // `NeedsReview` firing from a boolean whose target-list twin reads empty
+    // is exactly the deadlock `docs/specs/operate-halt.fsl`'s
+    // `REQ-OPERATE-009` forbids: a halt naming nothing to act on.
+    if !claim_review_target_ids(evaluation).is_empty() {
         return true;
     }
     blocked_obstructions_for_plan(evaluation, plan)
@@ -514,31 +524,49 @@ fn needs_review(evaluation: &NativeCaseEvaluation, plan: &ExecutionPlan) -> bool
         .any(|obstruction| is_clearable_by_review(obstruction))
 }
 
-/// `NativeObstructionType::ReviewRequired` has two producers in
-/// `native_eval.rs` that share the one type tag: `add_review_obstructions`,
+/// `NativeObstructionType::ReviewRequired` used to have two producers in
+/// `native_eval.rs` that shared the one type tag: `add_review_obstructions`,
 /// for an unaccepted `Accepts`/`Rejects` relation (clearable — an
 /// independent actor can `review accept` the target), and
 /// `lifecycle_obstruction`, for a `Rejected`/`Retired`/`Superseded` cell,
-/// whose own `required_resolution` text says "create or accept a
-/// replacement cell" — no review of that cell clears it. Matching the type
-/// tag alone would let the second producer emit a `needs_review` halt that
-/// nothing can clear, which is exactly the deadlock
+/// whose own `required_resolution` text said "create or accept a
+/// replacement cell" — no review of that cell cleared it. Matching the type
+/// tag alone would have let the second producer emit a `needs_review` halt
+/// that nothing can clear, which is exactly the deadlock
 /// `docs/specs/operate-halt.fsl`'s `REQ-OPERATE-009` (`NeedsReview` always
 /// has an exit) says must not happen.
 ///
-/// `lifecycle_obstruction` cannot fire today: `evaluate_cell` only runs on
-/// `readiness_subject` cells (`native_eval.rs::evaluate_cells`), and
-/// `readiness_subject` excludes every lifecycle `lifecycle_obstruction`
-/// would fire for — so this ambiguity currently has no reachable witness.
-/// Matching on the type tag alone would therefore *happen* to be correct
-/// today, but only because dead code keeps the two meanings apart; that
-/// would make a proved invariant hold by accident of a branch nobody calls,
-/// not by construction. Matching on `source_constraint_id` instead — reading
+/// `lifecycle_obstruction` could not fire even before it was deleted:
+/// `evaluate_cell` only ran on `readiness_subject` cells
+/// (`native_eval.rs::evaluate_cells`), and `readiness_subject` excluded every
+/// lifecycle `lifecycle_obstruction` fired for — so the ambiguity never had a
+/// reachable witness. Matching on the type tag alone would therefore have
+/// *happened* to be correct, but only because dead code kept the two
+/// meanings apart; that would have made a proved invariant hold by accident
+/// of a branch nobody called, not by construction. Matching on
+/// `source_constraint_id` instead — reading
 /// `native_eval::REVIEW_ACCEPTED_CONSTRAINT_ID`, the exact value the
-/// producer stamps, rather than a second literal copied here — holds it by
-/// construction, so it stays correct even if `lifecycle_obstruction` ever
-/// becomes reachable, and a future rename of the constant cannot silently
-/// desync the two sides. Do not simplify this back to a type-tag match.
+/// producer stamps, rather than a second literal copied here — held it by
+/// construction, so it would have stayed correct even if `lifecycle_obstruction`
+/// ever became reachable.
+///
+/// #27 deleted `lifecycle_obstruction` outright rather than making it
+/// reachable, so `add_review_obstructions` is now the *only* producer of
+/// `ReviewRequired`, and it always stamps `REVIEW_ACCEPTED_CONSTRAINT_ID`.
+/// That means the `ReviewRequired` arm's `source_constraint_id` comparison
+/// below can no longer observe `false` — the branch it was written to
+/// distinguish from is gone, not merely unreachable through a dead caller.
+///
+/// The comparison stays anyway, and the reason is which way the property is
+/// held rather than caution about deleting code. Reading
+/// `REVIEW_ACCEPTED_CONSTRAINT_ID` makes "this obstruction is clearable by a
+/// review" true *by construction*: a second `ReviewRequired` producer stamping
+/// some other constraint would be excluded here without anyone remembering to
+/// come back and re-add a distinction. Collapsing this to
+/// `NativeObstructionType::ReviewRequired => true` would make it true only for
+/// as long as `add_review_obstructions` remains the sole producer — a fact
+/// about today, not a property of the code, and the same shape of accident
+/// this branch was written to avoid in the first place. Do not collapse it.
 ///
 /// `UnresolvedDependency` and `Contradiction` are excluded, and that
 /// exclusion was measured rather than reasoned. `review accept` on a plain
@@ -563,12 +591,6 @@ fn is_clearable_by_review(obstruction: &NativeObstruction) -> bool {
         }
         _ => false,
     }
-}
-
-fn has_open_inference_gap(evaluation: &NativeCaseEvaluation) -> bool {
-    evaluation.review_gaps.iter().any(|gap| {
-        gap.gap_type == NativeReviewGapType::UnreviewedInference && !gap.requirement_satisfied
-    })
 }
 
 /// `docs/specs/operate-halt.fsl`'s `PendingClaimReview`: an unreviewed

@@ -723,7 +723,6 @@ fn candidate_shape(
             json!({"cell_type": "decision", "purpose": "contradiction_resolution"}),
             "A hard contradiction needs a decision or review before readiness.",
         )),
-        _ => None,
     }
 }
 

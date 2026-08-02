@@ -80,6 +80,15 @@ kind of retry makes sense:
   before retrying at all — `store_integrity` also covers a plan whose stored
   review no longer matches the operation gate it was accepted under, not
   only a store replay mismatch.
+- `"lock_unavailable"` means another process holds this case space's
+  exclusive lock and **retrying will not resolve it**. The tool never infers
+  that a live lock is abandoned (ADR 0017), so there is no staleness timeout
+  that eventually reclaims it, and each attempt costs the full 30 s wait
+  budget. Stop and escalate: someone must establish externally whether the
+  holder is still running. Removing the `.lock` file named in the refusal
+  message is the assertion that it is gone — a human act, in the same class as
+  `--supersede-trace`, and wrong if the holder is merely slow. Nothing durable
+  landed; the store is exactly where it was.
 - `"io_error"` means the command may already have completed a durable
   mutation and then failed on something unrelated (a bad `--output` path,
   a JSON re-render failure) — **do not blindly retry**, since the mutation

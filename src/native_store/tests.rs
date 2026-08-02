@@ -967,34 +967,49 @@ fn append_fails_while_case_lock_is_held_without_corrupting_history() {
 }
 
 #[test]
-fn append_breaks_stale_case_lock() {
-    let root = temp_root("stale-lock");
+fn append_refuses_rather_than_breaking_an_aged_case_lock() {
+    // ADR 0017 / issue #30: the tool never infers a live lock is abandoned
+    // from file age alone. This used to be `append_breaks_stale_case_lock`,
+    // asserting the opposite — that an aged lock was broken and the append
+    // went through — which is exactly the inference the ADR forbids; the
+    // fixture encoded the defect, not a requirement.
+    let root = temp_root("aged-lock");
     let store = NativeCaseStore::new(root.clone());
     let case_space = fixture_space();
     store
         .import_case_space(&case_space)
         .expect("import native case space");
     let lock_path = store.case_dir(&case_space.case_space_id).join(".lock");
-    fs::write(&lock_path, "stale lock\n").expect("create stale lock");
+    let lock_contents = "token=forged-aged-lock\n";
+    fs::write(&lock_path, lock_contents).expect("create aged lock");
     OpenOptions::new()
         .write(true)
         .open(&lock_path)
-        .expect("open stale lock")
+        .expect("open aged lock")
         .set_times(FileTimes::new().set_modified(UNIX_EPOCH))
-        .expect("age stale lock");
+        .expect("age lock far past the old 60s staleness threshold");
 
-    store
+    let error = store
         .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
-        .expect("append after breaking stale lock");
+        .expect_err("append must refuse rather than break an aged lock");
 
+    assert!(matches!(error, NativeStoreError::LockUnavailable { .. }));
     assert_eq!(
         store
             .history_entries(&case_space.case_space_id)
-            .expect("history after stale lock")
+            .expect("history after refused append")
             .len(),
-        2
+        1
     );
-    assert!(!lock_path.exists());
+    assert!(
+        lock_path.exists(),
+        "a refused acquire must leave the lock file in place"
+    );
+    assert_eq!(
+        fs::read_to_string(&lock_path).expect("read lock after refusal"),
+        lock_contents,
+        "a refused acquire must leave the lock file byte-identical"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1018,6 +1033,185 @@ fn lock_guard_drop_does_not_delete_a_successor_lock() {
         CaseLockGuard::acquire(&root),
         Err(NativeStoreError::LockUnavailable { .. })
     ));
+    let _ = fs::remove_dir_all(root);
+}
+
+/// ADR 0017's 2026-08-02 amendment (F1): a displaced holder refuses instead
+/// of writing. This is the scenario an adversarial review reproduced end to
+/// end on a real store — two writers, one `rm`, and a hash-chained log
+/// corrupted at the same sequence with both writers reporting success —
+/// reduced here to its essential shape: acquire the lock exactly as
+/// `append_morphism` does, simulate an operator's `rm` immediately followed
+/// by a new holder's `create_new` (a foreign token now owns the file), then
+/// run `native_store.rs`'s own call-site sequence — `still_owned()?`
+/// immediately before `append_verified_log_entry` — and confirm the write
+/// never happens: the log stays byte-identical.
+#[test]
+fn a_displaced_holder_refuses_instead_of_appending() {
+    let root = temp_root("displaced-write");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let case_dir = store.case_dir(&case_space.case_space_id);
+    let log_path = store.log_path(&case_space.case_space_id);
+    let log_before = fs::read_to_string(&log_path).expect("read log before displacement");
+
+    let guard = CaseLockGuard::acquire(&case_dir).expect("acquire the lock");
+    // The act ADR 0017 documents as the recovery procedure, aimed here at a
+    // lock that is still live: an operator's `rm` on what they believe is
+    // abandoned, immediately followed by a new holder's `create_new`.
+    fs::write(case_dir.join(".lock"), "token=foreign-displacement\n")
+        .expect("simulate a displacing rm followed by a new holder's create_new");
+
+    let entry = metadata_entry(&case_space);
+    let result: NativeStoreResult<u64> = guard
+        .still_owned()
+        .and_then(|()| append_verified_log_entry(&log_path, &entry));
+
+    let error = result.expect_err("a displaced holder must refuse before appending");
+    assert!(
+        matches!(error, NativeStoreError::LockUnavailable { .. }),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&log_path).expect("read log after refusal"),
+        log_before,
+        "a displaced holder's refusal must leave the log untouched — this is the exact write \
+         that produced two silent successes and a hash-chained log corrupted at the same \
+         sequence before this fix"
+    );
+
+    drop(guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The same F1 fix, on `rebuild_case_space_inner`'s own durable writes — the
+/// review that found the gap in `append_morphism`/`import_case_space` also
+/// found it here, on the write team-lead named the dangerous one: the
+/// repair-lagging-head path *overwrites* the head with a `latest` computed
+/// from a log read taken under a lock this process may no longer hold. A
+/// displaced rebuild racing a concurrent append could otherwise write a head
+/// naming an earlier entry than the log now contains — an untraceable
+/// rollback manufactured out of nothing, the exact shape residual risk 2
+/// forbids. Same shape as `a_displaced_holder_refuses_instead_of_appending`:
+/// acquire the guard exactly as `rebuild_case_space_inner` does, displace it,
+/// then run that call site's own sequence — `still_owned()?` immediately
+/// before `write_log_head` — and confirm the write never happens.
+#[test]
+fn a_displaced_holder_refuses_instead_of_overwriting_the_head() {
+    let root = temp_root("displaced-head-write");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let case_dir = store.case_dir(&case_space.case_space_id);
+    let head_path = store.head_path(&case_space.case_space_id);
+    let head_before = fs::read_to_string(&head_path).expect("read head before displacement");
+
+    let guard = CaseLockGuard::acquire(&case_dir).expect("acquire the lock");
+    // The act ADR 0017 documents as the recovery procedure, aimed here at a
+    // lock that is still live: an operator's `rm` on what they believe is
+    // abandoned, immediately followed by a new holder's `create_new`.
+    fs::write(case_dir.join(".lock"), "token=foreign-displacement\n")
+        .expect("simulate a displacing rm followed by a new holder's create_new");
+
+    let latest = case_space
+        .morphism_log
+        .last()
+        .expect("fixture morphism log")
+        .clone();
+    let result: NativeStoreResult<()> = guard
+        .still_owned()
+        .and_then(|()| write_log_head(&head_path, &latest));
+
+    let error = result.expect_err("a displaced holder must refuse before overwriting the head");
+    assert!(
+        matches!(error, NativeStoreError::LockUnavailable { .. }),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&head_path).expect("read head after refusal"),
+        head_before,
+        "a displaced holder's refusal must leave the head untouched"
+    );
+
+    drop(guard);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Pins the actual `append_morphism` call site the invariant-duplication
+/// audit's Finding 2 fixed, rather than the hand-assembled
+/// `guard.still_owned().and_then(...)` sequence the two tests above
+/// exercise. Those tests would stay green even if a future edit deleted the
+/// `still_owned()` call from `append_morphism` itself — neither one calls
+/// it. This test does, through
+/// `arrange_lock_displacement_before_next_still_owned_check` (a deterministic
+/// test-only seam, not a real race: a genuinely racy multi-threaded test
+/// would be exactly the load-dependent, timing-sensitive kind issue #32 is
+/// working to eliminate from this suite).
+///
+/// The bug this pins: `write_json_create_new(&snapshot_path, &next)` — a
+/// durable write — used to run before `lock.still_owned()?` on the
+/// snapshot-scheduled branch, so a displaced holder wrote the snapshot and
+/// only then refused. Build the case space up to the sequence just before
+/// one is scheduled (`snapshot_required`), arm the displacement on the next
+/// append's lock file, and confirm `append_morphism` refuses with no
+/// snapshot left behind.
+#[test]
+fn append_morphism_refuses_before_the_scheduled_snapshot_write_when_displaced() {
+    let root = temp_root("displaced-append-morphism-snapshot");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+
+    let case_space =
+        append_through_sequence(&store, &case_space.case_space_id, SNAPSHOT_INTERVAL - 1);
+    let case_dir = store.case_dir(&case_space.case_space_id);
+    let log_path = store.log_path(&case_space.case_space_id);
+    let log_before = fs::read_to_string(&log_path).expect("read log before displaced append");
+
+    let entry = next_metadata_entry(&case_space);
+    assert!(
+        snapshot_required(entry.sequence),
+        "test setup must land on a snapshot-scheduled sequence"
+    );
+    let snapshot_path = store
+        .resolve_snapshot_path(
+            &store.relative_snapshot_path(&case_space.case_space_id, &entry.target_revision_id),
+            &log_path,
+        )
+        .expect("resolve scheduled snapshot path");
+    assert!(
+        !snapshot_path.exists(),
+        "test setup must not already carry the scheduled snapshot"
+    );
+
+    arrange_lock_displacement_before_next_still_owned_check(case_dir.join(".lock"));
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("a displaced holder must refuse before its scheduled snapshot write");
+
+    assert!(
+        matches!(error, NativeStoreError::LockUnavailable { .. }),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        !snapshot_path.exists(),
+        "a displaced holder's refusal must leave no snapshot behind — this is the exact \
+         durable write Finding 2 found sitting outside the still_owned obligation"
+    );
+    assert_eq!(
+        fs::read_to_string(&log_path).expect("read log after refused append"),
+        log_before,
+        "a displaced holder's refusal must leave the log untouched"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 

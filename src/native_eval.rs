@@ -32,13 +32,19 @@ use util::*;
 /// The `source_constraint_id` `add_review_obstructions` stamps on a
 /// `ReviewRequired` obstruction sourced from an unaccepted `Accepts`/
 /// `Rejects` relation — clearable by an independent actor's `review accept`.
-/// `lifecycle_obstruction`'s `ReviewRequired` obstruction (a rejected,
-/// retired, or superseded cell) is not clearable that way and stamps
-/// `"constraint:native-cell-lifecycle"` instead.
+/// It is now the only producer of `ReviewRequired` in this file: #27 deleted
+/// `lifecycle_obstruction`, an unreachable second producer whose
+/// `ReviewRequired` obstruction (a rejected, retired, or superseded cell)
+/// was not clearable that way and stamped `"constraint:native-cell-lifecycle"`
+/// instead.
 /// `src/native_halt.rs::is_clearable_by_review` reads this exact constant
-/// (not its own copy of the string) to key `needs_review` on which producer
-/// fired — a renamed literal here that native_halt still matched by string
-/// would silently stop `needs_review` from ever firing again.
+/// (not its own copy of the string) to decide whether a `ReviewRequired`
+/// obstruction is clearable by review — a renamed literal here that
+/// native_halt still matched by string would silently stop `needs_review`
+/// from ever firing again. See that function's doc comment for why the
+/// comparison stays even though #27 leaves this file with only one
+/// `ReviewRequired` producer: the property is held by construction, not by
+/// how many producers happen to exist.
 pub(crate) const REVIEW_ACCEPTED_CONSTRAINT_ID: &str = "constraint:native-review-accepted";
 
 pub fn evaluate_native_case(case_space: &CaseSpace) -> NativeEvalResult<NativeCaseEvaluation> {
@@ -272,25 +278,46 @@ impl<'a> NativeEvaluationContext<'a> {
         context
     }
 
-    /// Every id that is both the target of a hard `requires_evidence` edge
-    /// and satisfied for the cell holding that edge — reusing
-    /// `requirement_ids` and `evidence_requirement_satisfied` exactly as
-    /// `evaluate_cell` does, over every cell in the space rather than only
-    /// readiness subjects, so a hard requirement authored anywhere still
-    /// counts.
+    /// Every id that is the target of a hard `requires_evidence` edge and
+    /// satisfied for **every** cell holding such an edge into it — issue
+    /// #34, formalized in `docs/specs/requirement-satisfaction.fsl` as
+    /// `satisfied_for_all()`. A requirement id belongs to the map below only
+    /// if at least one holder pushed an entry for it, which is exactly the
+    /// FSL's left conjunct (`exists h { holds_edge[h] }`, `INV-EVID-002`):
+    /// there is no way to construct an all-holders-satisfied answer for a
+    /// requirement nothing requires, so that case cannot silently read as
+    /// satisfied. `evidence_requirement_satisfied` remains the single
+    /// per-holder decision (`satisfied_for(h)` in the spec) — reused
+    /// unchanged, exactly as `evaluate_cell`'s own evidence-obstruction
+    /// check calls it, so this can never disagree with which obstructions
+    /// the evaluation actually reports. Runs over every cell in the space
+    /// rather than only readiness subjects, so a hard requirement authored
+    /// anywhere still counts. `INV-EVID-003` proves this reads identically
+    /// to the old union whenever a requirement has exactly one holder, which
+    /// is why no existing single-holder fixture moves.
     fn compute_satisfied_requirement_ids(&self) -> BTreeSet<String> {
-        self.case_space
+        let mut holders_by_requirement: BTreeMap<Id, Vec<Id>> = BTreeMap::new();
+        for cell in self
+            .case_space
             .case_cells
             .iter()
-            .flat_map(|cell| {
-                let holder_id = cell.id.clone();
-                self.requirement_ids(cell, CaseRelationType::RequiresEvidence)
-                    .into_iter()
-                    .filter(move |requirement_id| {
-                        self.evidence_requirement_satisfied(&holder_id, requirement_id)
-                    })
-                    .map(|requirement_id| requirement_id.to_string())
+            .filter(|cell| readiness_subject(cell))
+        {
+            for requirement_id in self.requirement_ids(cell, CaseRelationType::RequiresEvidence) {
+                holders_by_requirement
+                    .entry(requirement_id)
+                    .or_default()
+                    .push(cell.id.clone());
+            }
+        }
+        holders_by_requirement
+            .into_iter()
+            .filter(|(requirement_id, holders)| {
+                holders
+                    .iter()
+                    .all(|holder_id| self.evidence_requirement_satisfied(holder_id, requirement_id))
             })
+            .map(|(requirement_id, _)| requirement_id.to_string())
             .collect()
     }
 
@@ -310,13 +337,6 @@ impl<'a> NativeEvaluationContext<'a> {
             self.requirement_ids(cell, CaseRelationType::RequiresEvidence);
         let proof_requirement_ids = self.requirement_ids(cell, CaseRelationType::RequiresProof);
         let mut by_check = BTreeMap::<ReadinessCheck, Vec<NativeObstruction>>::new();
-
-        if let Some(obstruction) = self.lifecycle_obstruction(cell) {
-            by_check
-                .entry(ReadinessCheck::Lifecycle)
-                .or_default()
-                .push(obstruction);
-        }
         self.add_dependency_obstructions(cell, &hard_dependency_ids, &mut by_check);
         self.add_wait_obstructions(cell, &wait_ids, &mut by_check);
         self.add_evidence_obstructions(cell, &evidence_requirement_ids, &mut by_check);
@@ -503,34 +523,6 @@ impl<'a> NativeEvaluationContext<'a> {
 
     fn requirement_ids(&self, cell: &CaseCell, relation_type: CaseRelationType) -> Vec<Id> {
         self.index.direct_targets(&cell.id, relation_type)
-    }
-
-    fn lifecycle_obstruction(&self, cell: &CaseCell) -> Option<NativeObstruction> {
-        let (severity, explanation, resolution) = match cell.lifecycle {
-            CaseCellLifecycle::Rejected => (
-                Severity::High,
-                format!("{} is rejected and cannot be ready.", cell.id),
-                "Create or accept a replacement cell.",
-            ),
-            CaseCellLifecycle::Retired | CaseCellLifecycle::Superseded => (
-                Severity::Medium,
-                format!(
-                    "{} is retired or superseded and cannot be frontier work.",
-                    cell.id
-                ),
-                "Use the active replacement cell if one exists.",
-            ),
-            _ => return None,
-        };
-        Some(obstruction(
-            NativeObstructionType::ReviewRequired,
-            &cell.id,
-            &cell.id,
-            "constraint:native-cell-lifecycle",
-            explanation,
-            severity,
-            resolution,
-        ))
     }
 
     fn complete_cell(&self, cell_id: &Id) -> bool {
@@ -795,16 +787,31 @@ fn readiness_result(case_space: &CaseSpace, results: &[CellEvaluation]) -> Nativ
         .iter()
         .map(|cell| cell.cell_id.clone())
         .collect::<Vec<_>>();
-    let waiting_cell_ids = not_ready_cells
+    // Reads the typed `obstruction_type` on each blocking obstruction, not
+    // the rendered obstruction id (issue #28): the id is
+    // `generated_id("obstruction", &[obstruction_type_stem(...), cell_id,
+    // witness_id])`, so a substring match on it depended on
+    // `obstruction_type_stem(ExternalWait)` rendering as exactly
+    // `"external-wait"` and on no cell id ever containing that text — a cell
+    // id containing it could misclassify. Deliberately all-or-nothing: a
+    // cell counts as waiting only if every blocking obstruction on it is an
+    // external wait, so a cell that is also missing evidence is not purely
+    // waiting and surfaces as that other reason instead.
+    let waiting_cell_ids = results
         .iter()
-        .filter(|cell| {
-            !cell.wait_ids.is_empty()
-                && cell
-                    .obstruction_ids
-                    .iter()
-                    .all(|id| id.as_str().contains("external-wait"))
+        .filter(|result| {
+            let blocking_obstructions = result
+                .obstructions
+                .iter()
+                .filter(|obstruction| obstruction.blocking)
+                .collect::<Vec<_>>();
+            !blocking_obstructions.is_empty()
+                && !result.wait_ids.is_empty()
+                && blocking_obstructions.iter().all(|obstruction| {
+                    obstruction.obstruction_type == NativeObstructionType::ExternalWait
+                })
         })
-        .map(|cell| cell.cell_id.clone())
+        .map(|result| result.cell_id.clone())
         .collect();
     let rule_results = results
         .iter()

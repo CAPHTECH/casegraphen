@@ -523,8 +523,19 @@ impl NativeCliCommand {
         }
     }
 
+    /// `NativeOptions::parse_reason` rather than `parse_with_strict`, to
+    /// gain `--format text` for issue #35's halt rendering. This does not
+    /// reopen `--since-revision` for `run`: that flag is recognized nowhere
+    /// in the shared options parser (`NativeOptions::consume_arg` has no
+    /// arm for it at all) — the only place it is ever read is
+    /// `parse_space`'s `"reason"` arm's own `Self::extract_since_revision`
+    /// pre-scan of argv, which `parse_run` never calls. An unrecognized
+    /// `--since-revision` here still falls through to `consume_arg`'s
+    /// generic "unsupported native argument" refusal, exactly as before this
+    /// change — see `native_run_since_revision_is_still_refused` in
+    /// `tests/command.rs`.
     fn parse_run(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse_with_strict("run", args)?;
+        let options = NativeOptions::parse_reason("run", args)?;
         if options.run_step == options.run_frontier {
             return Err(NativeCliError::usage(
                 "run requires exactly one of --step or --frontier",
@@ -554,6 +565,7 @@ impl NativeCliCommand {
                 supersede_trace_ids: options.supersede_trace_ids,
                 gate_options,
                 strict: options.strict,
+                format: options.format,
                 output: options.output,
             })
         } else {
@@ -573,6 +585,7 @@ impl NativeCliCommand {
                 max_parallel,
                 gate_options,
                 strict: options.strict,
+                format: options.format,
                 output: options.output,
             })
         }
@@ -585,8 +598,11 @@ impl NativeCliCommand {
     /// makes it the thing that keeps "one gate authorizes the invocation"
     /// from meaning "unbounded work", so a caller states the bound rather
     /// than inheriting one silently.
+    /// `NativeOptions::parse_reason`, for the same reason and with the same
+    /// `--since-revision` non-reopening as `parse_run` — see its doc
+    /// comment.
     fn parse_operate(args: impl IntoIterator<Item = OsString>) -> Result<Self, NativeCliError> {
-        let options = NativeOptions::parse_with_strict("operate", args)?;
+        let options = NativeOptions::parse_reason("operate", args)?;
         let RunFamilyGate {
             actor_id,
             gate_options,
@@ -626,6 +642,7 @@ impl NativeCliCommand {
             max_rounds,
             gate_options,
             strict: options.strict,
+            format: options.format,
             output: options.output,
         })
     }
@@ -721,13 +738,18 @@ impl NativeCliCommand {
         })
     }
 
+    /// `NativeOptions::parse_text_only`, not `parse_reason`: `packet apply`/
+    /// `packet resume` have no `strict` field to carry `--strict` to (they
+    /// were never `strict_allowed`), the same reason `space history` uses
+    /// `parse_text_only` rather than `parse_reason` — see that method's own
+    /// doc comment.
     fn parse_packet(
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
         match operation.to_str() {
             Some("apply") => {
-                let options = NativeOptions::parse("packet", args)?;
+                let options = NativeOptions::parse_text_only("packet", args)?;
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "packet apply",
@@ -741,11 +763,12 @@ impl NativeCliCommand {
                     })?,
                     packet: options.require_path("--packet")?,
                     gate_options,
+                    format: options.format,
                     output: options.output,
                 })
             }
             Some("resume") => {
-                let options = NativeOptions::parse("packet", args)?;
+                let options = NativeOptions::parse_text_only("packet", args)?;
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "packet resume",
@@ -760,6 +783,7 @@ impl NativeCliCommand {
                     packet: options.require_path("--packet")?,
                     completed_through: options.require_id("--completed-through")?,
                     gate_options,
+                    format: options.format,
                     output: options.output,
                 })
             }

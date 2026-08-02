@@ -12,6 +12,7 @@ use crate::{
     },
     math_diagnostics::{native_close_temporal_diagnostics, native_morphism_temporal_diagnostics},
     native_eval::{evaluate_native_case, NativeCaseEvaluation},
+    native_halt::HaltReport,
     native_model::{
         apply_morphism, write_genesis_materialization, CaseCell, CaseCellLifecycle, CaseCellType,
         CaseMorphism, CaseMorphismType, CaseSpace, MorphismLogEntry, ProjectionAudience,
@@ -47,9 +48,11 @@ pub(super) use lift::{case_import, case_new, lift_structured_source};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
 use mutations::{existing_case_space_ids, prepare_claim, ClaimPreparationState};
 pub use packet::EVIDENCE_PACKET_SCHEMA;
-pub(super) use packet::{packet_apply, packet_resume};
+pub(super) use packet::{packet_apply, packet_apply_text, packet_resume, packet_resume_text};
 pub(super) use plan::{plan_check, plan_propose, plan_review};
-pub(super) use run::{operate, run_frontier, run_step};
+pub(super) use run::{
+    operate, operate_text, run_frontier, run_frontier_text, run_step, run_step_text,
+};
 
 pub(super) struct NativeReviewApplyOptions<'a> {
     pub(super) action: ReviewAction,
@@ -264,6 +267,26 @@ pub(super) fn case_history_text(
         ),
     };
     Ok(NativeCommandResult::success(rendered))
+}
+
+/// Reads `result.halt`/`result.halts` back out of an already-built JSON
+/// report — the same fields `native-cli.report.schema.json`'s `halt_report`
+/// describes — for a `--format text` renderer to project (issue #35).
+/// Never re-derives: every `HaltReport` here was already computed and
+/// serialized by the one call `run_step`/`run_frontier`/`operate`/
+/// `packet_apply`/`packet_resume` made to produce `value` in the first
+/// place, so decoding it back is a projection, not a second decision.
+/// Both fields are optional on the schema (`packet resume` never produces
+/// one at all, since it can only succeed or hard-refuse, never pause) —
+/// absence here means "no halt to show", not a parse failure.
+pub(super) fn halt_fields_from_value(value: &Value) -> (Option<HaltReport>, Vec<HaltReport>) {
+    let halt: Option<HaltReport> = serde_json::from_value(value["result"]["halt"].clone())
+        .expect("result.halt round-trips through its own JSON encoding");
+    let halts: Vec<HaltReport> =
+        serde_json::from_value::<Option<Vec<HaltReport>>>(value["result"]["halts"].clone())
+            .expect("result.halts round-trips through its own JSON encoding")
+            .unwrap_or_default();
+    (halt, halts)
 }
 
 pub(super) fn projection_apply(
@@ -1040,9 +1063,57 @@ fn checksum_after_append(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_halt::{Halt, NextOperation};
+    use std::collections::BTreeMap;
 
     const NATIVE_EXAMPLE: &str =
         include_str!("../../schemas/casegraphen/native.case.space.example.json");
+
+    /// `halt_fields_from_value`'s two `expect()`s assume `result.halt`/
+    /// `result.halts` round-trip through their own JSON encoding. That
+    /// holds by construction — every producer builds a `HaltReport` and
+    /// serializes it via `serde_json::to_value` or `json!`, and `HaltReport`
+    /// is a flat, all-required struct — but it was an unchecked invariant
+    /// behind a panic in production code. Pins it: every one of the eight
+    /// `Halt` members survives `to_value` -> `from_value` unchanged, both
+    /// standalone and through the exact `{"result": {"halt": ..., "halts":
+    /// [...]}}` shape `halt_fields_from_value` actually decodes.
+    #[test]
+    fn every_halt_member_round_trips_through_its_own_json_encoding() {
+        for halt in [
+            Halt::RoundBudgetExhausted,
+            Halt::NeedsReview,
+            Halt::NeedsRetryDecision,
+            Halt::NeedsPlanReview,
+            Halt::NeedsEvidence,
+            Halt::NeedsExternal,
+            Halt::DispatchInProgress,
+            Halt::NothingEligible,
+        ] {
+            let report = crate::native_halt::HaltReport {
+                halt,
+                completed_through: id_lossy("revision:halt-round-trip"),
+                target_ids: vec![id_lossy("target:halt-round-trip")],
+                next_operations: vec![NextOperation {
+                    command: "evidence attach".to_owned(),
+                    arguments: BTreeMap::from([("store".to_owned(), "/tmp/store".to_owned())]),
+                    note: Some("round-trip fixture".to_owned()),
+                }],
+            };
+            let report_value = serde_json::to_value(&report).expect("halt report serializes");
+            let value = json!({
+                "result": {
+                    "halt": report_value.clone(),
+                    "halts": [report_value],
+                }
+            });
+
+            let (decoded_halt, decoded_halts) = halt_fields_from_value(&value);
+
+            assert_eq!(decoded_halt, Some(report.clone()), "halt member {halt:?}");
+            assert_eq!(decoded_halts, vec![report], "halt member {halt:?}");
+        }
+    }
 
     #[test]
     fn non_genesis_entry_hashes_its_predecessor() {

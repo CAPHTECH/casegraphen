@@ -26,8 +26,9 @@ use ops::{
     binding_register, case_close_check, case_history_text, case_import, case_new, case_reason,
     case_reason_text, case_topology, case_topology_diff, cell_transition, evidence_attach,
     lift_structured_source, morphism_apply, morphism_check, morphism_propose, morphism_reject,
-    operate, packet_apply, packet_resume, plan_check, plan_propose, plan_review, projection_apply,
-    review_apply, run_frontier, run_step, NativeCloseGateOptions, NativeMutationGateOptions,
+    operate, operate_text, packet_apply, packet_apply_text, packet_resume, packet_resume_text,
+    plan_check, plan_propose, plan_review, projection_apply, review_apply, run_frontier,
+    run_frontier_text, run_step, run_step_text, NativeCloseGateOptions, NativeMutationGateOptions,
     NativeOperateOptions, NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
     NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
 };
@@ -259,6 +260,7 @@ pub(crate) enum NativeCliCommand {
         supersede_trace_ids: Vec<Id>,
         gate_options: NativeRunGateOptions,
         strict: bool,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     RunFrontier {
@@ -273,6 +275,7 @@ pub(crate) enum NativeCliCommand {
         max_parallel: usize,
         gate_options: NativeRunGateOptions,
         strict: bool,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     Operate {
@@ -287,6 +290,7 @@ pub(crate) enum NativeCliCommand {
         max_rounds: usize,
         gate_options: NativeRunGateOptions,
         strict: bool,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     Review {
@@ -325,6 +329,7 @@ pub(crate) enum NativeCliCommand {
         base_revision_id: Id,
         packet: PathBuf,
         gate_options: NativeMutationGateOptions,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
     PacketResume {
@@ -334,6 +339,7 @@ pub(crate) enum NativeCliCommand {
         packet: PathBuf,
         completed_through: Id,
         gate_options: NativeMutationGateOptions,
+        format: NativeOutputFormat,
         output: Option<PathBuf>,
     },
 }
@@ -412,13 +418,124 @@ impl NativeCliCommand {
                 format: NativeOutputFormat::Text,
                 ..
             } => case_history_text(store, case_space_id),
+            Self::RunStep {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                retry_step_id,
+                supersede_trace_ids,
+                gate_options,
+                format: NativeOutputFormat::Text,
+                ..
+            } => run_step_text(
+                store,
+                NativeRunStepOptions {
+                    case_space_id,
+                    plan_id,
+                    base_revision_id,
+                    actor_id,
+                    enabled_worker_kinds,
+                    retry_step_id: retry_step_id.as_ref(),
+                    supersede_trace_ids,
+                    gate_options,
+                },
+            ),
+            Self::RunFrontier {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                retry_step_ids,
+                supersede_trace_ids,
+                max_parallel,
+                gate_options,
+                format: NativeOutputFormat::Text,
+                ..
+            } => run_frontier_text(
+                store,
+                NativeRunFrontierOptions {
+                    case_space_id,
+                    plan_id,
+                    base_revision_id,
+                    actor_id,
+                    enabled_worker_kinds,
+                    retry_step_ids,
+                    supersede_trace_ids,
+                    max_parallel: *max_parallel,
+                    gate_options,
+                },
+            ),
+            Self::Operate {
+                store,
+                case_space_id,
+                plan_id,
+                base_revision_id,
+                actor_id,
+                enabled_worker_kinds,
+                supersede_trace_ids,
+                max_parallel,
+                max_rounds,
+                gate_options,
+                format: NativeOutputFormat::Text,
+                ..
+            } => operate_text(
+                store,
+                NativeOperateOptions {
+                    case_space_id,
+                    plan_id,
+                    base_revision_id,
+                    actor_id,
+                    enabled_worker_kinds,
+                    supersede_trace_ids,
+                    max_parallel: *max_parallel,
+                    max_rounds: *max_rounds,
+                    gate_options,
+                },
+            ),
+            Self::PacketApply {
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                gate_options,
+                format: NativeOutputFormat::Text,
+                ..
+            } => packet_apply_text(store, case_space_id, base_revision_id, packet, gate_options),
+            Self::PacketResume {
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                completed_through,
+                gate_options,
+                format: NativeOutputFormat::Text,
+                ..
+            } => packet_resume_text(
+                store,
+                case_space_id,
+                base_revision_id,
+                packet,
+                completed_through,
+                gate_options,
+            ),
             _ => self.run_json(),
         }
     }
 
     pub fn format(&self) -> NativeOutputFormat {
         match self {
-            Self::CaseReason { format, .. } | Self::CaseHistory { format, .. } => *format,
+            Self::CaseReason { format, .. }
+            | Self::CaseHistory { format, .. }
+            | Self::RunStep { format, .. }
+            | Self::RunFrontier { format, .. }
+            | Self::Operate { format, .. }
+            | Self::PacketApply { format, .. }
+            | Self::PacketResume { format, .. } => *format,
             _ => NativeOutputFormat::Json,
         }
     }

@@ -99,8 +99,6 @@ pub enum NativeObstructionType {
     MissingProof,
     Contradiction,
     ReviewRequired,
-    ProjectionLoss,
-    InvalidClose,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
