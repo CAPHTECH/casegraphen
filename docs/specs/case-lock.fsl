@@ -363,3 +363,133 @@ spec CaseGraphenCaseLock {
 
 verify {
 }
+
+// ------------------------------------------------------- CORRESPONDENCE
+//
+// This file proves a design-layer property by k-induction. `fslc verify`
+// returning `proved` is a claim about the model above; it is NOT evidence
+// about the shipped binary. Issue #37: four times a design-layer spec in this
+// repo returned `proved` while modelling a machine simpler than the one being
+// built, and this section is the mechanical link that closes that gap for
+// this file — it names the real tests that carry each requirement's claim
+// into the shipped code, so a renamed or deleted test is a detected failure
+// rather than a silent one. `tests/spec_correspondence.rs` parses the
+// `@carries-test` lines below and asserts every named test still exists;
+// it proves nothing about whether those tests pass, only that the claim
+// "this test carries this requirement" is not stale.
+//
+// Marker syntax: `// @carries-test <TAG> <path>::<fn>` names a real test
+// exercising the tagged requirement against the real store; a tag may have
+// more than one line if more than one test carries it. `// @carries-test
+// <TAG> NONE` is an explicit statement that nothing in the test tree carries
+// that requirement today — recorded rather than omitted, per issue #37.
+//
+// REQ-LOCK-001 (an absent lock file is claimed by exactly one process):
+// carried only up to the limit the code's own tests admit driving. There is
+// no test that races two real OS processes or threads against
+// `CaseLockGuard::acquire` concurrently — `create_new`'s atomicity is argued
+// from the OS, not exercised, and the arbtest loop below drives one thread
+// through an *interleaving* of acquire/foreign-write/release rather than
+// real concurrency (its own doc comment says so). That is exactly the gap
+// issue #39 already tracks as a real product race, so this correspondence is
+// honest about carrying the single-thread claim only.
+// @carries-test REQ-LOCK-001 PARTIAL src/native_store/support.rs::a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer
+//
+// MODEL-LOCK-002 (the lock file ages whether or not its holder died) and
+// MODEL-LOCK-003 (a holder may die without releasing): both are carried by
+// the same fixture shape — a lock file forged directly on disk and aged past
+// `LOCK_STALE_AFTER` with nothing left to release it, which stands in for a
+// holder that died without ever coming back.
+// @carries-test MODEL-LOCK-002 src/native_store/tests.rs::append_refuses_rather_than_breaking_an_aged_case_lock
+// @carries-test MODEL-LOCK-002 src/native_store/support.rs::acquire_refuses_an_aged_lock_and_leaves_it_byte_identical
+// @carries-test MODEL-LOCK-003 src/native_store/tests.rs::append_refuses_rather_than_breaking_an_aged_case_lock
+//
+// REQ-LOCK-005 (a process appends only while it still holds the lock) and
+// REQ-LOCK-006 (a displaced holder refuses instead of writing): the same
+// guard, `still_owned`, and the same counterexample proves both — a holder
+// discovers its token no longer matches the file and refuses rather than
+// appending.
+// @carries-test REQ-LOCK-005 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_appending
+// @carries-test REQ-LOCK-006 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_appending
+//
+// REQ-LOCK-002 (a holder releases the lock it still owns): the deterministic
+// test proves release never touches a lock that is no longer this guard's
+// own (the complement); the property-based test's `Release` step proves the
+// positive direction directly — dropping a guard whose token is still the
+// one on disk removes the file.
+// @carries-test REQ-LOCK-002 src/native_store/tests.rs::lock_guard_drop_does_not_delete_a_successor_lock
+// @carries-test REQ-LOCK-002 src/native_store/support.rs::a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer
+//
+// REQ-LOCK-003 (a waiter that cannot get the lock refuses rather than
+// breaking it): carried by both the ordinary contended case and the aged
+// case, because ADR 0017's decision is that age changes nothing about the
+// refusal.
+// @carries-test REQ-LOCK-003 src/native_store/tests.rs::append_fails_while_case_lock_is_held_without_corrupting_history
+// @carries-test REQ-LOCK-003 src/native_store/tests.rs::append_refuses_rather_than_breaking_an_aged_case_lock
+//
+// REQ-LOCK-004 (lock recovery is an operator act, and may be mistaken): this
+// file's own header states the tool never performs this action itself — it
+// is a human `rm` outside the tool's surface, which is exactly why
+// `operator_clears_lock` is not modelled as a fair action the tool can take
+// on its own. Nothing in the test tree exercises "an operator removed the
+// lock file by hand," because there is no code path to test: the assertion
+// is that no such path exists.
+// @carries-test REQ-LOCK-004 NONE
+//
+// INV-LOCK-001 (the tool alone never produces two simultaneous holders) and
+// MODEL-LOCK-009 (auxiliary: a holder is displaced only by an operator's
+// assertion): the same property-based test's assertions directly implement
+// this pair — its own doc comment already cites MODEL-LOCK-009/INV-LOCK-001
+// by name.
+// @carries-test INV-LOCK-001 src/native_store/support.rs::a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer
+// @carries-test MODEL-LOCK-009 src/native_store/support.rs::a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer
+//
+// MODEL-LOCK-010 (auxiliary: an undisplaced holder is the one named in the
+// lock file): NONE. This is a distinct lemma from MODEL-LOCK-009 — it says
+// a *Holding* process's own token is what the file carries, not merely that
+// displacement requires an operator — and nothing in the cited test asserts
+// that shape specifically; its own doc comment names only MODEL-LOCK-009/
+// INV-LOCK-001. Citing the same test here would be reading more into it
+// than it claims.
+// @carries-test MODEL-LOCK-010 NONE
+//
+// INV-LOCK-002 (no process reports success after losing its lock) and
+// MODEL-LOCK-011 (a displaced holder can discover it and refuse, the
+// reachability half of the same claim):
+// @carries-test INV-LOCK-002 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_appending
+// @carries-test MODEL-LOCK-011 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_appending
+//
+// MODEL-LOCK-012 (auxiliary: a displaced process can never hold the lock
+// again): this is an induction lemma introduced to make the proof of
+// DisplacedNeverWrites go through; INV-LOCK-002/006 below already state the
+// code-level claims it exists to support, and nothing in the test tree
+// exercises it as an independent claim.
+// @carries-test MODEL-LOCK-012 NONE
+//
+// INV-LOCK-005 (a write happens only in a step where the writer held the
+// lock):
+// @carries-test INV-LOCK-005 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_overwriting_the_head
+//
+// MODEL-LOCK-006 (refusing is reachable): witnessed by the same refusal
+// tests already cited above for REQ-LOCK-003/REQ-LOCK-006 — a refusal is not
+// a dead branch in any of them.
+// @carries-test MODEL-LOCK-006 src/native_store/tests.rs::append_fails_while_case_lock_is_held_without_corrupting_history
+// @carries-test MODEL-LOCK-006 src/native_store/tests.rs::a_displaced_holder_refuses_instead_of_appending
+//
+// INV-LOCK-006 (a displaced holder never writes):
+// @carries-test INV-LOCK-006 src/native_store/tests.rs::append_morphism_refuses_before_the_scheduled_snapshot_write_when_displaced
+//
+// MODEL-LOCK-007 (a crashed holder strands the lock until an operator acts):
+// the aged-lock fixture is the same stand-in used for MODEL-LOCK-002/003 —
+// a lock file with nothing left alive to release it, and the test's own
+// assertion that the file survives byte-identical is exactly "stranded."
+// @carries-test MODEL-LOCK-007 src/native_store/tests.rs::append_refuses_rather_than_breaking_an_aged_case_lock
+//
+// MODEL-LOCK-008 (a contended lock is still handed on — sequential handoff
+// completes): carried only as sequential re-acquisition by one process, not
+// as a genuine second holder — the same limitation noted under REQ-LOCK-001.
+// `append_through_sequence` acquires and releases the case lock once per
+// entry across many entries in a row, so every append after the first is a
+// successful handoff onto a lock the previous append released; no test
+// drives two distinct holders trading a contended lock.
+// @carries-test MODEL-LOCK-008 PARTIAL src/native_store/tests.rs::periodic_snapshots_replay_more_than_one_interval_to_the_full_fold

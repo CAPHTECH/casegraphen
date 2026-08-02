@@ -332,10 +332,19 @@ pub(super) fn append_json_line(path: &Path, value: &impl Serialize) -> NativeSto
     Ok(())
 }
 
+/// Takes the case lock as a parameter and checks it (ADR 0017's 2026-08-02
+/// amendment) before doing anything durable, rather than trusting a
+/// hand-placed `lock.still_owned()?` at each call site to have been added —
+/// issue #36: on the first application of that obligation, three of six
+/// call sites were missed. A caller cannot reach this write without a
+/// `CaseLockGuard` in hand; whether that guard still owns the lock is
+/// checked here, not left to be remembered.
 pub(super) fn append_verified_log_entry(
+    lock: &CaseLockGuard,
     path: &Path,
     entry: &MorphismLogEntry,
 ) -> NativeStoreResult<u64> {
+    lock.still_owned()?;
     let previous_len = fs::metadata(path)
         .map_err(|source| NativeStoreError::Io {
             path: path.to_owned(),
@@ -442,7 +451,18 @@ pub(super) fn truncate_after_failed_append(
         })
 }
 
-pub(super) fn write_json_create_new(path: &Path, value: &impl Serialize) -> NativeStoreResult<()> {
+/// The unchecked `create_new`-a-JSON-file implementation. Private: nothing
+/// outside this module may call it directly, and within this module only the
+/// two functions below do — `write_json_create_new_owned` (checked, the only
+/// path production code has) and, only under `#[cfg(test)]`,
+/// `write_json_create_new_without_lock_check` (the escape hatch a test uses
+/// to write a snapshot as a legacy or foreign writer would, one that never
+/// held this store's lock at all). Issue #36: a `pub(super)` raw function
+/// sitting next to a checked wrapper is still a call-site obligation with a
+/// longer name — a future write path could still compile a call to the raw
+/// one. Keeping it private and reaching it only through those two names
+/// means a production write path has nothing unchecked left to call.
+fn write_json_create_new_impl(path: &Path, value: &impl Serialize) -> NativeStoreResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| NativeStoreError::Io {
             path: parent.to_owned(),
@@ -470,6 +490,35 @@ pub(super) fn write_json_create_new(path: &Path, value: &impl Serialize) -> Nati
         });
     }
     Ok(())
+}
+
+/// The lock-checked variant of `write_json_create_new_impl` (ADR 0017's
+/// 2026-08-02 amendment, issue #36): every in-process durable snapshot write
+/// takes the guard it was written under and confirms it still owns the lock
+/// immediately before writing, rather than relying on a hand-placed
+/// `lock.still_owned()?` at the call site that a future write path could
+/// omit. This is the only way production code can reach the implementation.
+pub(super) fn write_json_create_new_owned(
+    lock: &CaseLockGuard,
+    path: &Path,
+    value: &impl Serialize,
+) -> NativeStoreResult<()> {
+    lock.still_owned()?;
+    write_json_create_new_impl(path, value)
+}
+
+/// Test-only escape hatch to the unchecked implementation, for fixtures that
+/// simulate a legacy or foreign snapshot writer — one that never held this
+/// store's lock at all, so it has no guard to check. `#[cfg(test)]` makes
+/// this genuinely unreachable from production code, not merely unlisted in
+/// some allowlist: the symbol does not exist in a non-test build, so a new
+/// production write path has no unchecked name left to call by mistake.
+#[cfg(test)]
+pub(super) fn write_json_create_new_without_lock_check(
+    path: &Path,
+    value: &impl Serialize,
+) -> NativeStoreResult<()> {
+    write_json_create_new_impl(path, value)
 }
 
 pub(super) fn latest_entry<'a>(

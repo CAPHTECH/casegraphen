@@ -5499,10 +5499,23 @@ fn native_run_step_does_not_rebase_after_an_intervening_append() {
     let output = child.wait_with_output().expect("wait for run --step");
 
     assert!(!output.status.success());
+    // Issue #39: this used to assert the refusal's message contained
+    // "entry sequence must be" — `store_integrity`'s message, pinned back
+    // when the sequence check ran before the source-revision check and so
+    // reported first. This is the purpose-built reproduction of that exact
+    // race (an intervening append moves current out from under a pinned
+    // base while a worker is still running), so it is also the case the
+    // reclassification is *for*: the caller's own pinned base is what went
+    // stale, which is `stale_revision`'s "re-read current_revision_id and
+    // retry", not `store_integrity`'s "stop and investigate". Assert the
+    // refusal's structured fields, not its message — `error_code` and
+    // `data` are the stable contract (`native-cli.refusal.schema.json`),
+    // `message` explicitly is not.
+    let refusal = stderr_json(&output);
+    assert_eq!(refusal["error_code"], json!("stale_revision"));
     assert!(
-        stderr(&output).contains("entry sequence must be"),
-        "stderr: {}",
-        stderr(&output)
+        refusal["data"]["current_revision_id"].is_string(),
+        "refusal: {refusal:?}"
     );
     let replay = stdout_json(&run_native_case_store_command(&directory, "replay"));
     assert_eq!(
@@ -7677,7 +7690,7 @@ fn native_run_step_retry_does_not_release_a_live_dispatch_after_revision_moves()
     // a fixed 3 s worker sleep — a wall-clock race a loaded machine can
     // lose, and did. The slow worker now waits on a marker the test creates
     // only after both invocations have finished and the "still live" check
-    // has passed, so there is no window to miss.
+    // has passed, so there is no window to miss on that axis.
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
     let slow_started = directory.join("live-slow-worker-started");
@@ -7689,13 +7702,39 @@ fn native_run_step_retry_does_not_release_a_live_dispatch_after_revision_moves()
         slow_started.display(),
         shell_wait_for_marker(&slow_proceed)
     );
-    let fixture = setup_native_frontier(
+    // Issue #39: `setup_native_frontier` (via `write_pinned_worker_binding`)
+    // pins every worker to a 5 s `timeout_ms`. That is not a race with
+    // `sibling`'s dispatch selection — `select_steps` already excludes an
+    // in-progress step by its live run directory, so `sibling` reliably
+    // lands on `work:live-sibling` — it is a race with the *test's own*
+    // wall-clock: `apply_step_result` only appends a trace's evidence/anchor
+    // once its worker resolves (success, failure, *or timeout*), so as long
+    // as `live_run`'s worker cannot resolve before `signal_rendezvous_marker`
+    // is called below, the revision the whole test builds on
+    // (`fixture.accepted_revision_id`) cannot move out from under `sibling`
+    // or the refused retry check. Under load, `sibling`'s own spawn-and-
+    // append plus the refused-retry check can together take longer than a
+    // pinned 5 s, so `work:live-slow`'s own worker timed out mid-test,
+    // appended its own (failed) evidence and anchor, and moved
+    // `current_revision_id` while `sibling`'s append was still in flight —
+    // reproducing the exact "two writers racing for the same next sequence"
+    // shape this issue is about, from the timeout rather than from
+    // dispatch-time ordering. Give only this worker a timeout well past
+    // anything the deterministic parts of this test could plausibly take
+    // (`setup_native_frontier_with_timeouts` rather than mutating the
+    // registered binding after the fact: the plan captures the binding's
+    // content hash at proposal time, so a post-registration rewrite is
+    // correctly refused as tampering, not a shortcut worth taking), so the
+    // *only* way it resolves is the explicit `signal_rendezvous_marker` call
+    // below — a real event, not a race against a fixed budget.
+    let fixture = setup_native_frontier_with_timeouts(
         &directory,
         "live-dispatch-retry",
         &[
             ("work:live-slow", slow_script.as_str()),
             ("work:live-sibling", "printf 'sibling-output\\n'"),
         ],
+        &[30_000, 5_000],
     );
     let live_run = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
         .args(native_frontier_step_args(
@@ -12677,7 +12716,29 @@ fn setup_native_frontier(
     suffix: &str,
     workers: &[(&str, &str)],
 ) -> NativeFrontierFixture {
+    setup_native_frontier_with_timeouts(directory, suffix, workers, &vec![5_000; workers.len()])
+}
+
+/// The general form `setup_native_frontier` above delegates to with every
+/// worker pinned to the ordinary 5 s `timeout_ms`: lets one test give a
+/// specific worker a different budget (issue #39 — a worker deliberately
+/// held "live" by a test-controlled marker must not also be racing a
+/// pinned timeout meant for workers that are expected to resolve quickly on
+/// their own) without touching `setup_native_frontier`'s signature or its
+/// other 21 call sites in this file.
+#[cfg(unix)]
+fn setup_native_frontier_with_timeouts(
+    directory: &Path,
+    suffix: &str,
+    workers: &[(&str, &str)],
+    worker_timeouts_ms: &[u64],
+) -> NativeFrontierFixture {
     use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        worker_timeouts_ms.len(),
+        workers.len(),
+        "one timeout per worker"
+    );
 
     let input_path = directory.join(format!("{suffix}.frontier.native.input.json"));
     let mut input = json_file(native_case_fixture());
@@ -12728,7 +12789,13 @@ fn setup_native_frontier(
 
         let binding_id = format!("worker_binding:frontier-{suffix}-{number}");
         let binding_input = directory.join(format!("{suffix}-worker-{number}.binding.input.json"));
-        write_pinned_worker_binding(&binding_input, &binding_id, directory, &script_path);
+        write_pinned_worker_binding_with_timeout(
+            &binding_input,
+            &binding_id,
+            directory,
+            &script_path,
+            worker_timeouts_ms[index],
+        );
         let register = run_cli(&[
             "binding",
             "register",
@@ -12844,6 +12911,17 @@ fn write_pinned_worker_binding(
     working_directory: &Path,
     command: &Path,
 ) {
+    write_pinned_worker_binding_with_timeout(path, binding_id, working_directory, command, 5_000);
+}
+
+#[cfg(unix)]
+fn write_pinned_worker_binding_with_timeout(
+    path: &Path,
+    binding_id: &str,
+    working_directory: &Path,
+    command: &Path,
+    timeout_ms: u64,
+) {
     let binding = json!({
         "schema": "highergraphen.case.workflow.worker_binding.v1",
         "schema_version": 1,
@@ -12856,7 +12934,7 @@ fn write_pinned_worker_binding(
         "resolved_working_directory": "/caller/value/is/overwritten",
         "command_content_hash": "0000000000000000000000000000000000000000000000000000000000000000",
         "env_allowlist": [],
-        "timeout_ms": 5000,
+        "timeout_ms": timeout_ms,
         "capability_ids": ["capability:native-run-worker"],
         "metadata": {}
     });

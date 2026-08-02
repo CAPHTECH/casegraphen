@@ -1320,6 +1320,19 @@ impl NativeCliError {
             Self::Store(NativeStoreError::MissingCase { case_space_id, .. }) => Some(json!({
                 "case_space_id": case_space_id,
             })),
+            // Issue #39: `stale_revision` documents "re-read
+            // `data.current_revision_id` and retry" as its recovery
+            // (`skills/casegraphen-operate/SKILL.md`), so that field must be
+            // present here for the store-layer variant, the same as it is
+            // for the CLI-layer `StaleRevision` above.
+            Self::Store(NativeStoreError::StaleSourceRevision {
+                source_revision_id,
+                current_revision_id,
+                ..
+            }) => Some(json!({
+                "source_revision_id": source_revision_id,
+                "current_revision_id": current_revision_id,
+            })),
             _ => None,
         }
     }

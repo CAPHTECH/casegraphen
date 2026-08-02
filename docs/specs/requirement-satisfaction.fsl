@@ -273,3 +273,103 @@ spec CaseGraphenRequirementSatisfaction {
 
 verify {
 }
+
+// ------------------------------------------------------- CORRESPONDENCE
+//
+// This file proves a design-layer property by k-induction. `fslc verify`
+// returning `proved` is a claim about the model above; it is NOT evidence
+// about the shipped binary — this file's own REVISION HISTORY records that
+// exact failure once already (issue #37): the first version proved
+// `INV-EVID-001` of a machine in which every `Holder` was implicitly a
+// readiness subject, while the shipped code excluded most of them, and the
+// case space could refuse to close with no obstruction naming why. This
+// section names the real tests that carry each requirement's claim into the
+// shipped code, mechanically checked by `tests/spec_correspondence.rs`,
+// which parses the `@carries-test` lines below and asserts every named test
+// still exists. It proves nothing about whether those tests pass, only that
+// the claim "this test carries this requirement" is not stale.
+//
+// Marker syntax: a line `// @carries-test <TAG> <path>::<fn>` names a real
+// test exercising the tagged requirement; a tag may have more than one such
+// line. A line `// @carries-test <TAG> NONE` states explicitly that nothing
+// in the test tree carries that requirement today.
+//
+// MODEL-EVID-001 (a hard requires_evidence edge may be authored): every
+// holder-based test authors such an edge as fixture setup, but the cited
+// test is the one that also asserts the read result changes because the
+// edge exists — authoring is not merely scaffolding there, it is part of
+// what is checked.
+// @carries-test MODEL-EVID-001 src/native_eval/tests.rs::a_single_holder_requirement_reads_identically_satisfied_or_not
+//
+// MODEL-EVID-002 (a hard requires_evidence edge may be retired): NONE. Every
+// test that removes a holder from consideration does so by changing the
+// *holder cell's* lifecycle (`resolve_holder`, MODEL-EVID-009 below); no
+// test retires the `requires_evidence` *relation* itself and observes the
+// requirement's read change as a result.
+// @carries-test MODEL-EVID-002 NONE
+//
+// MODEL-EVID-003 (a review may promote evidence covering the requirement
+// itself) and MODEL-EVID-004 (a review may promote evidence covering one
+// holder only): the same property test's generator drives both — case `1`
+// records coverage against the requirement id directly
+// (`trusted_for_requirement`), case `2` against a specific holder id
+// (`trusted_for_holder`) — over arbitrary holder counts and shapes. The
+// CLI-level mechanism both compile down to (`review accept` promoting
+// `--satisfies` targets) is exercised end to end, without decomposing which
+// disjunct fired, by the second test cited.
+// @carries-test MODEL-EVID-003 src/native_eval/tests.rs::satisfied_requirement_ids_never_names_a_requirement_with_a_blocking_missing_evidence_obstruction
+// @carries-test MODEL-EVID-004 src/native_eval/tests.rs::satisfied_requirement_ids_never_names_a_requirement_with_a_blocking_missing_evidence_obstruction
+// @carries-test MODEL-EVID-004 tests/command.rs::review_accept_reports_the_coverage_it_activates
+//
+// MODEL-EVID-009 (a holder can leave the set readiness evaluates): this is
+// `resolve_holder`, and the cited test is issue #34's exact regression case —
+// parametrized over the second holder staying `Active`, going `Retired`, or
+// going `Resolved`, and asserting how the read and the close check change.
+// @carries-test MODEL-EVID-009 src/native_eval/tests.rs::second_holder_leaving_the_readiness_subject_set_changes_whether_the_shared_requirement_reads_satisfied
+//
+// INV-EVID-001 (HolderSoundness — a satisfied requirement leaves no holder
+// blocked on it):
+// @carries-test INV-EVID-001 src/native_eval/tests.rs::satisfied_requirement_ids_never_names_a_requirement_with_a_blocking_missing_evidence_obstruction
+//
+// MODEL-EVID-005 (FlatUnionIsNotHolderSound — the union could claim
+// satisfaction while a holder was blocked): kept live in the model as the
+// formal statement of issue #34's reproduction, not as something the shipped
+// code still does. The cited test is the regression proof that the CURRENT
+// code does NOT do this — issue #34's exact fixture, asserting the
+// once-wrongly-satisfied gap now reads `!requirement_satisfied`.
+// @carries-test MODEL-EVID-005 src/native_eval/tests.rs::compute_satisfied_requirement_ids_requires_every_holder
+//
+// INV-EVID-002 (NoVacuousSatisfaction — a requirement nobody holds is not
+// satisfied):
+// @carries-test INV-EVID-002 src/native_eval/tests.rs::a_requirement_nobody_holds_is_not_satisfied
+//
+// INV-EVID-003 (SingleHolderAgreement — with one holder, the union and the
+// decision agree):
+// @carries-test INV-EVID-003 src/native_eval/tests.rs::a_single_holder_requirement_reads_identically_satisfied_or_not
+//
+// INV-EVID-004 (NoUnexplainedUnsatisfied — an unsatisfied requirement always
+// has a blocked holder to explain it): the same property test cited under
+// INV-EVID-001 asserts both invariants in the same run; the deterministic
+// regression test additionally isolates the exact defect shape (a resolved
+// or retired second holder leaving zero obstructions anywhere).
+// @carries-test INV-EVID-004 src/native_eval/tests.rs::satisfied_requirement_ids_never_names_a_requirement_with_a_blocking_missing_evidence_obstruction
+// @carries-test INV-EVID-004 src/native_eval/tests.rs::second_holder_leaving_the_readiness_subject_set_changes_whether_the_shared_requirement_reads_satisfied
+//
+// MODEL-EVID-010 (NonSubjectHolderDoesNotVeto — a non-evaluated holder's
+// unsatisfied edge does not veto): the same regression test's `Retired`/
+// `Resolved` branches are exactly this shape — a holder outside readiness
+// whose edge is unsatisfied, alongside a satisfied evaluated holder, with
+// the requirement still reading satisfied overall.
+// @carries-test MODEL-EVID-010 src/native_eval/tests.rs::second_holder_leaving_the_readiness_subject_set_changes_whether_the_shared_requirement_reads_satisfied
+//
+// MODEL-EVID-006 (SatisfiedIsReachable) and MODEL-EVID-007
+// (UnsatisfiedIsReachable): the cited test's two halves (`satisfied`/
+// `unsatisfied` fixtures) witness both reachability claims directly.
+// @carries-test MODEL-EVID-006 src/native_eval/tests.rs::a_single_holder_requirement_reads_identically_satisfied_or_not
+// @carries-test MODEL-EVID-007 src/native_eval/tests.rs::a_single_holder_requirement_reads_identically_satisfied_or_not
+//
+// MODEL-EVID-008 (HoldersCanDisagree — one holder discharged while another is
+// not): issue #34's exact reproduction has this shape — holder `evidence:a`
+// is discharged via its own coverage while holder `work:w2` is genuinely
+// blocked on the same requirement.
+// @carries-test MODEL-EVID-008 src/native_eval/tests.rs::compute_satisfied_requirement_ids_requires_every_holder

@@ -247,8 +247,46 @@ spec CaseGraphenOperate {
     }
   }
 
-  // ADR 0015 and ADR 0016 decision 4. The tool cannot check that two minds were
-  // involved; it can check that two actor ids were, and this is that check.
+  // ADR 0015 and ADR 0016 decision 4.
+  //
+  // **This comment used to say "the tool cannot check that two minds were
+  // involved; it can check that two actor ids were, and this is that check."
+  // That was false, and it is the kind of false that matters: it claimed a
+  // guard the code does not provide.** Nothing in the crate compares a
+  // reviewing actor against the actor that produced the claim — not
+  // `native_review.rs`, not `review_apply`, not `packet resume`, which checks
+  // only that a canonical accepted review exists in the log. `packet apply`
+  // emits a `next_operation` note saying the review "must run under a
+  // different actor's gate", but a note in a report is advice to a reader, not
+  // a refusal.
+  //
+  // What the system actually enforces is separation **by invocation and by
+  // capability**: one invocation carries one gate, `operate` never appends a
+  // review morphism at all (which is what the carried test checks), and a
+  // review is therefore always a second, separately gated act whose gate must
+  // resolve a capability listing the `review` operation.
+  //
+  // In practice that refuses most self-reviews, and
+  // `packet_apply_pauses_for_review_then_resume_transitions_after_acceptance`
+  // shows one being refused — but read its refusal carefully: it is
+  // `does not authorize operation review`, the ordinary capability check,
+  // because that fixture's applying actor simply holds no review capability.
+  // Nothing there compares the two actor ids. An actor whose capability lists
+  // both `dispatch` and `review` reviews its own claim unrefused, and whether
+  // such a grant may exist is a lift-time question — capability grants are a
+  // source-boundary decision (ADR 0007).
+  //
+  // The distinction matters because the two protections fail differently: a
+  // capability check is a statement about what an actor may do at all, and an
+  // identity check would be a statement about this particular claim. Only the
+  // first exists.
+  //
+  // So this invariant is proved of a model stricter than the system, and is
+  // labelled as such rather than repaired: making the model match would mean
+  // dropping `reviewed_by[s] != dispatched_by[s]`, which would delete the
+  // property worth wanting. Filed as its own decision — enforce it, or state
+  // in the security policy that identity separation is granted rather than
+  // checked.
   @requirement("INV-OPERATE-002", "no actor accepts the claim it dispatched")
   invariant NoSelfReview {
     forall s: Step {
@@ -362,3 +400,186 @@ spec CaseGraphenOperate {
 
 verify {
 }
+
+// ------------------------------------------------------- CORRESPONDENCE
+//
+// This file proves a design-layer property by k-induction. `fslc verify`
+// returning `proved` is a claim about the model above; it is NOT evidence
+// about the shipped binary — this file's own REVISION HISTORY is the record
+// of three times that distinction was not honored and a "proved" spec turned
+// out to model a machine simpler than the one built (issue #37). This
+// section names the real tests that carry each requirement's claim into the
+// shipped code, mechanically checked by `tests/spec_correspondence.rs`,
+// which parses the `@carries-test` lines below and asserts every named test
+// still exists. It proves nothing about whether those tests pass, only that
+// the claim "this test carries this requirement" is not stale.
+//
+// Marker syntax: a line `// @carries-test <TAG> <path>::<fn>` names a real
+// test exercising the tagged requirement; a tag may have more than one such
+// line. A line `// @carries-test <TAG> NONE` states explicitly that nothing
+// in the test tree carries that requirement today.
+//
+// A recurring gap below is worth naming once instead of per-tag: several
+// `fair action`s in this model (`plan_review`, `evidence_attached`,
+// `external_event`, `accept_gate_cell`) describe a *clearing* act, and this
+// repo's tests prove the *halt* those acts clear is reported correctly, but
+// none of them then performs the clearing act and re-runs `operate`/`run
+// --frontier` to observe the halt disappear. The halt-reporting half and the
+// clearing half are different code paths, and only the first is exercised
+// end-to-end today. That gap is called out explicitly at each affected tag
+// rather than silently citing only the half that exists.
+//
+// REQ-OPERATE-001 (a round advances one dispatchable step and produces a
+// claim): carried only in the weak sense that a round advances dispatchable
+// work and reports a trace — every `operate_*`/`native_run_frontier_*` test
+// does that. Nothing isolates the FSL's specific "claim" abstraction (an
+// unreviewed inference gap on the produced evidence) as the direct result of
+// one round; the claim-seam mechanism itself is what REQ-OPERATE-013's test
+// carries instead.
+// @carries-test REQ-OPERATE-001 PARTIAL tests/command.rs::operate_executes_two_independent_steps_then_halts_on_nothing_eligible
+//
+// REQ-OPERATE-002 (a failed dispatch ends the step's round without retrying
+// it):
+// @carries-test REQ-OPERATE-002 src/native_halt/tests.rs::a_worker_execution_failure_halts_on_needs_retry_decision
+// @carries-test REQ-OPERATE-002 tests/command.rs::operate_halts_on_needs_retry_decision_after_a_worker_failure_and_stops_the_loop
+//
+// REQ-OPERATE-003 (a transition outside the accepted plan is kept as a
+// proposal): the integration test's own name states this requirement almost
+// verbatim, and checks the actual persisted `proposed.morphism.json` stays
+// `unreviewed` with `transition_applied: false`.
+// @carries-test REQ-OPERATE-003 tests/command.rs::native_run_step_preserves_unauthorized_transition_as_unreviewed_proposal
+// @carries-test REQ-OPERATE-003 src/native_halt/tests.rs::a_transition_outside_the_accepted_plan_halts_on_needs_plan_review
+//
+// REQ-OPERATE-004 (an accepted review by a different actor clears a produced
+// claim): not carried through `operate`/`run --frontier` itself — no test
+// there drives a real claim to a halt, then runs `review accept`, then
+// re-runs the loop to observe `Done`. It IS carried end to end through the
+// sibling command that produces the same halt object: `packet apply` pauses
+// with `halt: needs_review` naming the claim cell (the cited test's own
+// comment states "packet apply's pause is a producer of the shared ADR 0016
+// halt object"); the same actor's self-review is refused because its own
+// capability profile does not authorize the `review` operation
+// (`does not authorize operation review`) — actor-distinctness enforced by
+// the capability/gate system, not a bare `dispatched_by`/`actor_id`
+// comparison, which is why `grep -rn "dispatched_by\|actor_id.*!="
+// src/native_review.rs` alone finds nothing; a distinct actor with review
+// capability then accepts, and `packet resume` completes. This is the real
+// exit REQ-OPERATE-004 describes, on the halt/review seam `operate` shares.
+// @carries-test REQ-OPERATE-004 tests/command.rs::packet_apply_pauses_for_review_then_resume_transitions_after_acceptance
+//
+// REQ-OPERATE-011 (a blocking review cell is cleared by its own lifecycle,
+// not by a review morphism): only the negative half is carried — that
+// `review accept` does NOT clear this obstruction, and that `operate` itself
+// never appends one (the guard is `is_clearable_by_review` in
+// `src/native_halt.rs`, not itself a test). Nothing transitions the gating
+// review cell's own lifecycle to `accepted` and observes the obstruction
+// clear, which is the requirement's positive claim.
+// @carries-test REQ-OPERATE-011 PARTIAL tests/command.rs::operate_halts_on_needs_review_and_appends_no_review_morphism
+//
+// REQ-OPERATE-005 (retry is an explicit act, never something the loop
+// decides): this is exactly ASSUME-OPERATE-001's resolution — the CLI
+// refuses `--retry-step` on `operate` outright — and the cited test's name
+// states that refusal directly.
+// @carries-test REQ-OPERATE-005 tests/command.rs::operate_refuses_retry_step_with_a_usage_error_and_spawns_no_worker
+//
+// REQ-OPERATE-006 (a plan reviewer clears NeedsPlanReview): only the halt
+// half is carried — the cited test proves the halt appears. NONE carries
+// the clearing act (a plan review widening `allowed_transition_classes`,
+// re-run to `Dispatchable`) end to end.
+// @carries-test REQ-OPERATE-006 PARTIAL tests/command.rs::native_run_step_reports_needs_plan_review_halt_for_an_unauthorized_transition
+//
+// REQ-OPERATE-007 (attaching evidence clears NeedsEvidence): only the halt
+// half is carried. NONE carries `evidence attach --satisfies` clearing the
+// obstruction and a subsequent round dispatching the step.
+// @carries-test REQ-OPERATE-007 PARTIAL tests/command.rs::native_run_frontier_reports_needs_evidence_halt_when_nothing_is_dispatchable
+//
+// REQ-OPERATE-008 (an event outside the system clears NeedsExternal): only
+// the halt half is carried. NONE carries the external-event transition
+// clearing `AwaitingExternal` and a subsequent round dispatching the step.
+// @carries-test REQ-OPERATE-008 PARTIAL tests/command.rs::native_run_frontier_reports_needs_external_halt_when_nothing_is_dispatchable
+//
+// MODEL-OPERATE-008 (another process may hold a started dispatch):
+// @carries-test MODEL-OPERATE-008 src/native_halt/tests.rs::an_in_flight_dispatch_halts_on_dispatch_in_progress_instead_of_nothing_eligible
+// @carries-test MODEL-OPERATE-008 tests/command.rs::native_run_frontier_supersedes_a_killed_dispatcher_trace
+//
+// MODEL-OPERATE-009 (that dispatch may finish on its own): the cited test
+// kills the dispatching CLI process mid-round and waits for its worker
+// script to write its own completion marker afterward — the dispatch
+// finishing with no dispatcher left to observe it.
+// @carries-test MODEL-OPERATE-009 tests/command.rs::native_run_frontier_supersedes_a_killed_dispatcher_trace
+//
+// REQ-OPERATE-012 (a started dispatch is released only by an explicit
+// assertion): the same test drives `--supersede-trace` end to end; the
+// second test is the refusal half — an invalid assertion is rejected rather
+// than accepted.
+// @carries-test REQ-OPERATE-012 tests/command.rs::native_run_frontier_supersedes_a_killed_dispatcher_trace
+// @carries-test REQ-OPERATE-012 tests/command.rs::native_run_step_refuses_invalid_supersede_trace_assertions
+//
+// INV-OPERATE-001 (the loop advances dispatchable work and resolves no
+// halt):
+// @carries-test INV-OPERATE-001 src/native_cli/ops/run.rs::select_steps_eligibility_matches_its_own_blocking_conditions
+//
+// INV-OPERATE-002 (no actor accepts the claim it dispatched): as this test's
+// own doc comment states, it is an outcome check through the real binary —
+// drive `operate` to a `needs_review` halt, then read the persisted
+// morphism log back and confirm it contains no `review` morphism at all —
+// rather than a source-reading argument that would not survive a refactor.
+// @carries-test INV-OPERATE-002 tests/command.rs::operate_halts_on_needs_review_and_appends_no_review_morphism
+//
+// MODEL-OPERATE-011 (auxiliary: a dispatched step is pending its own review
+// until reviewed): an induction lemma introduced only to make the k-induction
+// proof of `NoSelfReview` go through; INV-OPERATE-002 above already states
+// the code-level claim it supports, and nothing in the test tree exercises
+// it as an independent claim.
+// @carries-test MODEL-OPERATE-011 NONE
+//
+// INV-OPERATE-003 (the ledger stops only for a reason it recorded) and
+// INV-OPERATE-004 (advancing work is never reported as a halt): the same
+// test proves both directions of `derive_halt`'s relationship to
+// `select_steps`'s eligibility.
+// @carries-test INV-OPERATE-003 src/native_halt/tests.rs::derive_halt_is_stopped_iff_named_property
+// @carries-test INV-OPERATE-004 src/native_halt/tests.rs::derive_halt_is_stopped_iff_named_property
+//
+// MODEL-OPERATE-001 (NeedsReview is reachable):
+// @carries-test MODEL-OPERATE-001 tests/command.rs::operate_halts_on_needs_review_and_appends_no_review_morphism
+//
+// MODEL-OPERATE-002 (NeedsRetryDecision is reachable):
+// @carries-test MODEL-OPERATE-002 tests/command.rs::operate_halts_on_needs_retry_decision_after_a_worker_failure_and_stops_the_loop
+//
+// MODEL-OPERATE-003 (NeedsPlanReview is reachable):
+// @carries-test MODEL-OPERATE-003 tests/command.rs::native_run_step_reports_needs_plan_review_halt_for_an_unauthorized_transition
+//
+// MODEL-OPERATE-004 (NeedsEvidence is reachable):
+// @carries-test MODEL-OPERATE-004 tests/command.rs::native_run_frontier_reports_needs_evidence_halt_when_nothing_is_dispatchable
+//
+// MODEL-OPERATE-005 (NeedsExternal is reachable):
+// @carries-test MODEL-OPERATE-005 tests/command.rs::native_run_frontier_reports_needs_external_halt_when_nothing_is_dispatchable
+//
+// MODEL-OPERATE-006 (the round budget is a halt reason, not a silent stop):
+// @carries-test MODEL-OPERATE-006 tests/command.rs::operate_halts_on_round_budget_exhausted_when_dispatchable_work_remains
+//
+// MODEL-OPERATE-007 (the case can finish with everything reviewed):
+// @carries-test MODEL-OPERATE-007 tests/command.rs::operate_executes_two_independent_steps_then_halts_on_nothing_eligible
+//
+// MODEL-OPERATE-010 (another process's dispatch is a named stop, not
+// nothing_eligible):
+// @carries-test MODEL-OPERATE-010 src/native_halt/tests.rs::an_in_flight_dispatch_halts_on_dispatch_in_progress_instead_of_nothing_eligible
+//
+// REQ-OPERATE-009 (the gate-review seam has an exit, and it is not a review
+// morphism): only the "not a review morphism" half is carried — the same gap
+// noted under REQ-OPERATE-011, which is the same seam.
+// @carries-test REQ-OPERATE-009 PARTIAL src/native_halt/tests.rs::an_unresolved_dependency_alone_is_not_reported_as_a_review_that_would_clear_it
+// @carries-test REQ-OPERATE-009 PARTIAL tests/command.rs::operate_halts_on_needs_review_and_appends_no_review_morphism
+//
+// REQ-OPERATE-013 (the claim-review seam has an exit): shows `derive_halt`
+// stop reporting `NeedsReview` once the underlying gap's own
+// `requirement_satisfied` flips true, and continue reporting it while false
+// — the seam's exit, exercised in both directions.
+// @carries-test REQ-OPERATE-013 src/native_halt/tests.rs::a_satisfied_requirement_placeholder_gap_does_not_halt_on_needs_review
+//
+// REQ-OPERATE-010 (a failed step can be retried out of its halt):
+// @carries-test REQ-OPERATE-010 src/native_halt/tests.rs::needs_retry_decision_has_an_exit
+// @carries-test REQ-OPERATE-010 tests/command.rs::native_run_frontier_retry_names_the_failed_trace_it_retried
+//
+// REQ-OPERATE-014 (a started dispatch has an asserted exit):
+// @carries-test REQ-OPERATE-014 src/native_halt/tests.rs::dispatch_in_progress_names_the_started_trace_as_its_exit

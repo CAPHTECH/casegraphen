@@ -98,13 +98,7 @@ impl NativeCaseStore {
         // a case directory carrying no log: the case-space id is then burned —
         // reimport is refused as already existing — and `space list` fails for
         // every case space in the store.
-        //
-        // `still_owned` immediately before the write (ADR 0017's 2026-08-02
-        // amendment): the tool confirms it still holds what it acquired
-        // before writing anything durable, rather than trusting that nothing
-        // removed the lock file underneath it.
-        lock.still_owned()?;
-        let written = self.write_new_case_space(case_space, &log_path);
+        let written = self.write_new_case_space(&lock, case_space, &log_path);
         if written.is_err() {
             let _ = fs::remove_dir_all(&case_dir);
         }
@@ -113,11 +107,24 @@ impl NativeCaseStore {
         self.inspect_case_space(&case_space.case_space_id)
     }
 
+    /// Takes the case lock as a parameter and checks it (ADR 0017's
+    /// 2026-08-02 amendment) once at the top, immediately before its first
+    /// durable write — the log-file writes below are a single batch on a
+    /// case directory nothing else can be racing (this is the only path that
+    /// creates it), so they stay covered by this one entry check rather than
+    /// re-checking for each one. The snapshot and head writes route through
+    /// `write_json_create_new_owned` / `write_log_head_owned` instead of
+    /// calling their raw implementations directly (issue #36): those two
+    /// functions' unchecked implementations are private, reachable only
+    /// through the checked wrapper or a `#[cfg(test)]`-only escape hatch, so
+    /// this is the only way any production code can reach them at all.
     fn write_new_case_space(
         &self,
+        lock: &CaseLockGuard,
         case_space: &CaseSpace,
         log_path: &Path,
     ) -> NativeStoreResult<()> {
+        lock.still_owned()?;
         let snapshots_dir = self.case_dir(&case_space.case_space_id).join("snapshots");
         fs::create_dir_all(&snapshots_dir).map_err(|source| NativeStoreError::Io {
             path: snapshots_dir.clone(),
@@ -126,7 +133,8 @@ impl NativeCaseStore {
 
         let mut snapshot = case_space.clone();
         snapshot.morphism_log = case_space.morphism_log.clone();
-        write_json_create_new(
+        write_json_create_new_owned(
+            lock,
             &self.resolve_snapshot_path(
                 &self.relative_snapshot_path(
                     &case_space.case_space_id,
@@ -144,7 +152,8 @@ impl NativeCaseStore {
         for entry in &case_space.morphism_log {
             append_json_line(log_path, entry)?;
         }
-        write_log_head(
+        write_log_head_owned(
+            lock,
             &self.head_path(&case_space.case_space_id),
             latest_entry(&case_space.morphism_log, log_path)?,
         )?;
@@ -217,15 +226,12 @@ impl NativeCaseStore {
         )?;
         if snapshot_required(entry.sequence) {
             require_snapshot_absent(&log_path, &snapshot_path, &entry.target_revision_id)?;
-            // `still_owned` immediately before the first durable write on
-            // this branch (ADR 0017's 2026-08-02 amendment): confirms this
-            // process still holds the lock it acquired before writing,
-            // rather than trusting that nothing removed the lock file
-            // underneath it. The snapshot write below is itself durable, so
-            // the check must guard it too, not only the log append that
-            // follows — a displaced holder must never write either one.
-            lock.still_owned()?;
-            if let Err(error) = write_json_create_new(&snapshot_path, &next) {
+            // Each durable write below takes `lock` itself and checks
+            // `still_owned()` immediately before writing (ADR 0017's
+            // 2026-08-02 amendment, issue #36) — a displaced holder must
+            // never write any of the three, so each checks on its own rather
+            // than trusting one earlier check to still hold.
+            if let Err(error) = write_json_create_new_owned(&lock, &snapshot_path, &next) {
                 if matches!(
                     &error,
                     NativeStoreError::Io { source, .. }
@@ -239,14 +245,15 @@ impl NativeCaseStore {
                 }
                 return Err(error);
             }
-            let previous_log_len = match append_verified_log_entry(&log_path, &entry) {
+            let previous_log_len = match append_verified_log_entry(&lock, &log_path, &entry) {
                 Ok(previous_log_len) => previous_log_len,
                 Err(error) => {
                     remove_snapshot_after_failed_append(&log_path, &snapshot_path, &error)?;
                     return Err(error);
                 }
             };
-            if let Err(error) = write_log_head(&self.head_path(case_space_id), &entry) {
+            if let Err(error) = write_log_head_owned(&lock, &self.head_path(case_space_id), &entry)
+            {
                 truncate_after_failed_append(&log_path, previous_log_len, &error)?;
                 remove_snapshot_after_failed_append(&log_path, &snapshot_path, &error)?;
                 return Err(error);
@@ -262,10 +269,9 @@ impl NativeCaseStore {
                         self.relative_snapshot_path(&next.case_space_id, &next.revision.revision_id)
                     })
             };
-            // Same check, same reason, on this branch's own append.
-            lock.still_owned()?;
-            let previous_log_len = append_verified_log_entry(&log_path, &entry)?;
-            if let Err(error) = write_log_head(&self.head_path(case_space_id), &entry) {
+            let previous_log_len = append_verified_log_entry(&lock, &log_path, &entry)?;
+            if let Err(error) = write_log_head_owned(&lock, &self.head_path(case_space_id), &entry)
+            {
                 truncate_after_failed_append(&log_path, previous_log_len, &error)?;
                 return Err(error);
             }
@@ -525,11 +531,10 @@ impl NativeCaseStore {
                         self.relative_snapshot_path(case_space_id, &entry.target_revision_id);
                     let snapshot_path =
                         self.resolve_snapshot_path(&relative_snapshot_path, &log_path)?;
-                    // `still_owned` immediately before this durable write
-                    // (ADR 0017's 2026-08-02 amendment): rebuild's writes
-                    // are guarded the same as `append_morphism`'s.
-                    lock.still_owned()?;
-                    write_json_create_new(&snapshot_path, case_space)?;
+                    // Checked by `write_json_create_new_owned` itself (ADR
+                    // 0017's 2026-08-02 amendment, issue #36): rebuild's
+                    // writes are guarded the same as `append_morphism`'s.
+                    write_json_create_new_owned(&lock, &snapshot_path, case_space)?;
                 }
                 Ok(())
             })?;
@@ -543,12 +548,11 @@ impl NativeCaseStore {
                 // racing a concurrent append could otherwise write a head
                 // naming an earlier entry than the log now contains — the
                 // untraceable rollback residual risk 2 already names as the
-                // thing this store must not produce.
-                lock.still_owned()?;
-                write_log_head(&head_path, latest)?;
+                // thing this store must not produce. Checked by
+                // `write_log_head_owned` itself (issue #36).
+                write_log_head_owned(&lock, &head_path, latest)?;
             } else {
-                lock.still_owned()?;
-                write_log_head_create_new(&head_path, latest)?;
+                write_log_head_create_new(&lock, &head_path, latest)?;
             }
         }
         Ok(NativeCaseSpaceRebuild {
@@ -613,7 +617,18 @@ fn snapshot_required(sequence: u64) -> bool {
     sequence == 1 || sequence % SNAPSHOT_INTERVAL == 0
 }
 
-fn write_log_head(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult<()> {
+/// The unchecked atomic head-rewrite implementation. Private: nothing outside
+/// this module may call it directly, and within this module only the two
+/// functions below do — `write_log_head_owned` (checked, the only path
+/// production code has) and, only under `#[cfg(test)]`,
+/// `write_log_head_without_lock_check` (the escape hatch `rewrite_history`
+/// uses to forge history state directly, bypassing the store's lock
+/// entirely). Issue #36: a `pub`-visible raw function sitting next to a
+/// checked wrapper is still a call-site obligation with a longer name — a
+/// future write path could still compile a call to the raw one. Keeping it
+/// private and reaching it only through those two names means a production
+/// write path has nothing unchecked left to call.
+fn write_log_head_impl(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult<()> {
     let head = morphism_log_head(path, entry)?;
     let text = serde_json::to_string_pretty(&head).map_err(|source| NativeStoreError::Json {
         path: path.to_owned(),
@@ -638,9 +653,51 @@ fn write_log_head(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult<()
     Ok(())
 }
 
-fn write_log_head_create_new(path: &Path, entry: &MorphismLogEntry) -> NativeStoreResult<()> {
+/// The lock-checked variant of `write_log_head_impl` (ADR 0017's 2026-08-02
+/// amendment, issue #36): confirms the guard still owns the lock immediately
+/// before overwriting the head, rather than relying on a hand-placed
+/// `lock.still_owned()?` at the call site that a future write path could
+/// omit. This is the one team-lead named the dangerous miss: overwriting the
+/// head with a `latest` computed under a lock the process may no longer hold
+/// is the untraceable-rollback shape residual risk 2 forbids. This is the
+/// only way production code can reach the implementation.
+fn write_log_head_owned(
+    lock: &CaseLockGuard,
+    path: &Path,
+    entry: &MorphismLogEntry,
+) -> NativeStoreResult<()> {
+    lock.still_owned()?;
+    write_log_head_impl(path, entry)
+}
+
+/// Test-only escape hatch to the unchecked implementation, for
+/// `rewrite_history` — a test fixture that forges history state directly,
+/// bypassing the store's lock entirely (it never acquired one). `#[cfg(test)]`
+/// makes this genuinely unreachable from production code, not merely
+/// unlisted in some allowlist: the symbol does not exist in a non-test
+/// build, so a new production write path has no unchecked name left to call
+/// by mistake.
+#[cfg(test)]
+fn write_log_head_without_lock_check(
+    path: &Path,
+    entry: &MorphismLogEntry,
+) -> NativeStoreResult<()> {
+    write_log_head_impl(path, entry)
+}
+
+/// Every real caller of this one already holds the lock
+/// (`rebuild_case_space_inner` adopting a log with no head yet), so — unlike
+/// `write_log_head_impl` above — there is no unlocked caller to preserve an
+/// escape hatch for. The guard is threaded straight into the signature, and
+/// its one durable write routes through `write_json_create_new_owned`
+/// (issue #36) rather than the private, unchecked implementation.
+fn write_log_head_create_new(
+    lock: &CaseLockGuard,
+    path: &Path,
+    entry: &MorphismLogEntry,
+) -> NativeStoreResult<()> {
     let head = morphism_log_head(path, entry)?;
-    match write_json_create_new(path, &head) {
+    match write_json_create_new_owned(lock, path, &head) {
         Err(NativeStoreError::Io { source, .. })
             if source.kind() == std::io::ErrorKind::AlreadyExists =>
         {
@@ -979,6 +1036,27 @@ fn validate_append(
             ),
         ));
     }
+    // Issue #39: the caller's own assertion about the world — which
+    // revision this entry was built against — is checked before the
+    // sequence and `previous_entry_hash` checks below. Under a benign lost
+    // race between two concurrent appenders (both read the log at the same
+    // length, one wins the lock, the other's precomputed entry is now
+    // stale), `source_revision_id`, `sequence`, and `previous_entry_hash`
+    // all go stale together — they are not three independent signals, they
+    // are the same staleness read three different ways. Checking an
+    // internal invariant (sequence) first reported the less informative
+    // answer: `store_integrity` ("stop, your store may be corrupt") when
+    // the truth was `stale_revision` ("re-read current_revision_id and
+    // retry"), a one-line recovery. Only once `source_revision_id` agrees
+    // does a sequence or hash disagreement mean anything other than this
+    // same stale read, and it keeps meaning exactly what it always meant.
+    if entry.source_revision_id.as_ref() != Some(&current.revision.revision_id) {
+        return Err(NativeStoreError::StaleSourceRevision {
+            path: path.to_owned(),
+            source_revision_id: entry.source_revision_id.clone(),
+            current_revision_id: current.revision.revision_id.clone(),
+        });
+    }
     if entry.sequence != existing_entries.len() as u64 + 1 {
         return Err(invalid_morphism(
             path,
@@ -986,15 +1064,6 @@ fn validate_append(
         ));
     }
     require_previous_entry_hash(path, entry, existing_entries.last())?;
-    if entry.source_revision_id.as_ref() != Some(&current.revision.revision_id) {
-        return Err(NativeStoreError::ReplayMismatch {
-            path: path.to_owned(),
-            reason: format!(
-                "entry source_revision_id {:?} does not match current revision {}",
-                entry.source_revision_id, current.revision.revision_id
-            ),
-        });
-    }
     if existing_entries
         .iter()
         .any(|existing| existing.target_revision_id == entry.target_revision_id)

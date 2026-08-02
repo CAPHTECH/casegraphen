@@ -51,6 +51,24 @@ pub enum NativeStoreError {
         path: PathBuf,
         reason: String,
     },
+    /// A durable-write entry's `source_revision_id` — what its caller
+    /// asserted the case space's current revision was when the entry was
+    /// built — no longer names `current_revision_id`. Issue #39: kept
+    /// distinct from `ReplayMismatch`/`InvalidMorphism` (`store_integrity`,
+    /// "stop and check your store") even though all three can fire from the
+    /// same benign lost race between two concurrent appenders — a
+    /// disagreeing `source_revision_id` means the caller's own basis for
+    /// this write moved, which is `stale_revision`'s "re-read
+    /// `current_revision_id` and retry", not a store-corruption signal.
+    /// `validate_append` (`src/native_store.rs`) checks this before the
+    /// sequence and `previous_entry_hash` checks specifically so this
+    /// classification wins the race against the internal-invariant checks
+    /// that go stale for the same underlying reason.
+    StaleSourceRevision {
+        path: PathBuf,
+        source_revision_id: Option<Id>,
+        current_revision_id: Id,
+    },
 }
 
 pub struct NativeCaseStore {
@@ -168,7 +186,13 @@ impl NativeStoreError {
     /// both mean this build cannot read the file's declared shape. `Io` and
     /// `Json` share `store_io`: a lower-level filesystem or parse failure
     /// reading or writing a store file, distinct from the higher-level
-    /// integrity and shape checks above it.
+    /// integrity and shape checks above it. `StaleSourceRevision` gets its
+    /// own `stale_revision` code (issue #39) rather than joining
+    /// `ReplayMismatch`/`InvalidMorphism`: it can fire from the same benign
+    /// lost race that would otherwise trip those two, but it means the
+    /// caller's own basis for the write moved, not that the store disagrees
+    /// with itself — the same distinction `NativeCliError::StaleRevision`
+    /// already draws one layer up, for the CLI's own `--base-revision`.
     pub(crate) fn error_code(&self) -> &'static str {
         match self {
             Self::Io { .. } | Self::Json { .. } => "store_io",
@@ -179,6 +203,7 @@ impl NativeStoreError {
             Self::ExistingCase { .. } => "existing_case_space",
             Self::LockUnavailable { .. } => "lock_unavailable",
             Self::ReplayMismatch { .. } | Self::InvalidMorphism { .. } => "store_integrity",
+            Self::StaleSourceRevision { .. } => "stale_revision",
         }
     }
 }
@@ -230,6 +255,16 @@ impl std::fmt::Display for NativeStoreError {
             Self::InvalidMorphism { path, reason } => {
                 write!(formatter, "{}: {reason}", path.display())
             }
+            Self::StaleSourceRevision {
+                path,
+                source_revision_id,
+                current_revision_id,
+            } => write!(
+                formatter,
+                "{}: entry source_revision_id {source_revision_id:?} does not match current \
+                 revision {current_revision_id}",
+                path.display()
+            ),
         }
     }
 }

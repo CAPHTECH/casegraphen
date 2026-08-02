@@ -445,7 +445,8 @@ fn legacy_snapshot_at_every_revision_remains_an_exact_replay_source() {
             &store.log_path(&case_space.case_space_id),
         )
         .expect("legacy extra snapshot path");
-    write_json_create_new(&snapshot_path, &expected).expect("write legacy extra snapshot");
+    write_json_create_new_without_lock_check(&snapshot_path, &expected)
+        .expect("write legacy extra snapshot");
 
     let replay = store
         .replay_current_case_space(&case_space.case_space_id)
@@ -810,7 +811,7 @@ fn validation_checks_a_tampered_snapshot_older_than_the_replay_source() {
             &store.log_path(&case_space.case_space_id),
         )
         .expect("legacy second snapshot path");
-    write_json_create_new(&second_snapshot_path, &second_state)
+    write_json_create_new_without_lock_check(&second_snapshot_path, &second_state)
         .expect("write legacy extra snapshot");
     store
         .append_morphism(
@@ -1043,9 +1044,14 @@ fn lock_guard_drop_does_not_delete_a_successor_lock() {
 /// reduced here to its essential shape: acquire the lock exactly as
 /// `append_morphism` does, simulate an operator's `rm` immediately followed
 /// by a new holder's `create_new` (a foreign token now owns the file), then
-/// run `native_store.rs`'s own call-site sequence — `still_owned()?`
-/// immediately before `append_verified_log_entry` — and confirm the write
-/// never happens: the log stays byte-identical.
+/// call `append_verified_log_entry` directly with that guard and confirm the
+/// write never happens: the log stays byte-identical.
+///
+/// Issue #36: `still_owned()` used to be a hand-placed call the caller made
+/// before this write; it is now checked by `append_verified_log_entry` itself
+/// as soon as it receives the guard, so there is no longer a separate
+/// call-site sequence to reproduce here — passing the displaced guard in is
+/// enough.
 #[test]
 fn a_displaced_holder_refuses_instead_of_appending() {
     let root = temp_root("displaced-write");
@@ -1066,9 +1072,7 @@ fn a_displaced_holder_refuses_instead_of_appending() {
         .expect("simulate a displacing rm followed by a new holder's create_new");
 
     let entry = metadata_entry(&case_space);
-    let result: NativeStoreResult<u64> = guard
-        .still_owned()
-        .and_then(|()| append_verified_log_entry(&log_path, &entry));
+    let result: NativeStoreResult<u64> = append_verified_log_entry(&guard, &log_path, &entry);
 
     let error = result.expect_err("a displaced holder must refuse before appending");
     assert!(
@@ -1097,8 +1101,12 @@ fn a_displaced_holder_refuses_instead_of_appending() {
 /// rollback manufactured out of nothing, the exact shape residual risk 2
 /// forbids. Same shape as `a_displaced_holder_refuses_instead_of_appending`:
 /// acquire the guard exactly as `rebuild_case_space_inner` does, displace it,
-/// then run that call site's own sequence — `still_owned()?` immediately
-/// before `write_log_head` — and confirm the write never happens.
+/// then call `write_log_head_owned` directly with that guard and confirm the
+/// write never happens.
+///
+/// Issue #36: as above, `still_owned()` moved from a hand-placed call at the
+/// call site into `write_log_head_owned` itself, so passing the displaced
+/// guard to that function is the whole reproduction.
 #[test]
 fn a_displaced_holder_refuses_instead_of_overwriting_the_head() {
     let root = temp_root("displaced-head-write");
@@ -1123,9 +1131,7 @@ fn a_displaced_holder_refuses_instead_of_overwriting_the_head() {
         .last()
         .expect("fixture morphism log")
         .clone();
-    let result: NativeStoreResult<()> = guard
-        .still_owned()
-        .and_then(|()| write_log_head(&head_path, &latest));
+    let result: NativeStoreResult<()> = write_log_head_owned(&guard, &head_path, &latest);
 
     let error = result.expect_err("a displaced holder must refuse before overwriting the head");
     assert!(
@@ -1352,6 +1358,110 @@ fn append_rejects_morphism_that_does_not_advance_revision() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Issue #39: a lost race between two concurrent appenders makes an entry's
+/// `source_revision_id` *and* its `sequence` stale together — both were
+/// computed from the same now-superseded read. `validate_append` checks
+/// `source_revision_id` first specifically so this benign case is
+/// classified `stale_revision` (re-read `current_revision_id` and retry),
+/// not `store_integrity` (stop and investigate), even though the sequence
+/// disagrees too and would have tripped the older check.
+#[test]
+fn stale_source_revision_is_reported_as_stale_revision_not_store_integrity() {
+    let root = temp_root("stale-source-revision");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    store
+        .append_morphism(&case_space.case_space_id, metadata_entry(&case_space))
+        .expect("append second revision");
+    let current = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay current case space");
+
+    // Built against the original (genesis) case space, the same way a
+    // concurrent writer that read an earlier snapshot would: its
+    // source_revision_id (genesis's revision) is stale, and because
+    // `next_metadata_entry` derives sequence from that same stale snapshot,
+    // its sequence (2) is stale too — the log is already at length 2, so
+    // the next slot is 3. Both go stale for the same reason, which is
+    // exactly the shape this fix must classify correctly.
+    let stale_entry = next_metadata_entry(&case_space);
+    assert_ne!(
+        stale_entry.source_revision_id.as_ref(),
+        Some(&current.current_revision_id),
+        "test setup must build an entry whose source_revision_id is genuinely stale"
+    );
+    assert_ne!(
+        stale_entry.sequence,
+        current.history.len() as u64 + 1,
+        "test setup must build an entry whose sequence is stale too"
+    );
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, stale_entry)
+        .expect_err("a stale source_revision_id must be refused");
+
+    assert_eq!(
+        error.error_code(),
+        "stale_revision",
+        "unexpected error: {error:?}"
+    );
+    match &error {
+        NativeStoreError::StaleSourceRevision {
+            current_revision_id,
+            ..
+        } => {
+            assert_eq!(
+                *current_revision_id, current.current_revision_id,
+                "the recovery datum must name the real current revision"
+            );
+        }
+        other => panic!("expected StaleSourceRevision, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The other half of issue #39's fix: when `source_revision_id` agrees with
+/// current but `sequence` still disagrees, that is not the benign race
+/// above — nothing legitimate produces this shape — so it must keep
+/// reporting `store_integrity` exactly as before. This is the test that
+/// stops the reordering from becoming a blanket downgrade of every append
+/// failure to `stale_revision`.
+#[test]
+fn sequence_disagreement_with_an_agreeing_source_revision_stays_store_integrity() {
+    let root = temp_root("genuine-sequence-mismatch");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+
+    // source_revision_id correctly names current (nothing has been
+    // appended yet); only sequence is wrong.
+    let mut entry = metadata_entry(&case_space);
+    assert_eq!(
+        entry.source_revision_id.as_ref(),
+        Some(&case_space.revision.revision_id),
+        "test setup must build an entry whose source_revision_id agrees with current"
+    );
+    entry.sequence = 99;
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("a genuine sequence disagreement must still be refused");
+
+    assert!(
+        matches!(error, NativeStoreError::InvalidMorphism { .. }),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(error.error_code(), "store_integrity");
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn history_rejects_a_missing_previous_entry_hash() {
     let root = temp_root("missing-entry-hash");
@@ -1517,7 +1627,7 @@ fn append_through_sequence(
 
 fn rewrite_history(store: &NativeCaseStore, case_space_id: &Id, history: &[MorphismLogEntry]) {
     rewrite_history_without_head(store, case_space_id, history);
-    write_log_head(
+    write_log_head_without_lock_check(
         &store.head_path(case_space_id),
         history.last().expect("history head"),
     )

@@ -676,6 +676,7 @@ enum ErrorShape {
     StoreLockUnavailable,
     StoreReplayMismatch,
     StoreInvalidMorphism,
+    StoreStaleSourceRevision,
     Review,
     Eval,
     Io,
@@ -700,6 +701,7 @@ const ALL_ERROR_SHAPES: &[ErrorShape] = &[
     ErrorShape::StoreLockUnavailable,
     ErrorShape::StoreReplayMismatch,
     ErrorShape::StoreInvalidMorphism,
+    ErrorShape::StoreStaleSourceRevision,
     ErrorShape::Review,
     ErrorShape::Eval,
     ErrorShape::Io,
@@ -787,6 +789,13 @@ fn build_error(shape: ErrorShape, seed: &str) -> NativeCliError {
                 reason: seed.to_owned(),
             })
         }
+        ErrorShape::StoreStaleSourceRevision => {
+            NativeCliError::Store(NativeStoreError::StaleSourceRevision {
+                path,
+                source_revision_id: Some(id_lossy(&format!("revision:source-{seed}"))),
+                current_revision_id: id_lossy("revision:current"),
+            })
+        }
         ErrorShape::Review => NativeCliError::Review(crate::native_review::NativeReviewError {
             message: format!("review error {seed}"),
         }),
@@ -861,6 +870,7 @@ fn error_code_strings_are_pinned_exactly() {
         (ErrorShape::StoreLockUnavailable, "lock_unavailable"),
         (ErrorShape::StoreReplayMismatch, "store_integrity"),
         (ErrorShape::StoreInvalidMorphism, "store_integrity"),
+        (ErrorShape::StoreStaleSourceRevision, "stale_revision"),
         (ErrorShape::Review, "invalid"),
         (ErrorShape::Eval, "evaluation_failed"),
         (ErrorShape::Io, "io_error"),
