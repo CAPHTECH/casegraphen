@@ -4060,6 +4060,14 @@ fn generic_morphisms_cannot_forge_plan_review_or_status() {
     assert!(!forged_run.status.success());
     assert!(stderr(&forged_run).contains("disagrees with log-derived status unreviewed"));
     assert!(stderr(&forged_run).contains("possible plan tampering"));
+    // A forged stored review_status is `verified_plan_review_status`
+    // re-verifying already-recorded state against the log, not live
+    // authorization — `store_integrity` ("stop and investigate"), not
+    // `invalid` ("fix the call and retry").
+    assert_eq!(
+        stderr_json(&forged_run)["error_code"],
+        json!("store_integrity")
+    );
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
