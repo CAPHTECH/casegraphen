@@ -3889,6 +3889,230 @@ fn space_reason_text_shows_a_satisfied_placeholder_gap_without_reading_as_contra
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// C4 (#24 review): two holders of the same hard evidence requirement, one
+/// covered through an unrelated path, one genuinely blocked. `work:w1`
+/// requires `evidence:a`; `evidence:a` itself requires `evidence:x`;
+/// `work:w2` requires `evidence:x` directly. `evidence:y` (source-backed,
+/// trusted) covers `evidence:a` only — never `evidence:x`. That makes
+/// `evidence:a` a valid coverage target, so
+/// `compute_satisfied_requirement_ids`'s per-holder union marks `evidence:x`
+/// "satisfied" via holder `evidence:a`, even though `work:w2`'s own
+/// requirement of `evidence:x` remains genuinely uncovered — reproduced
+/// against the live evaluator during review, before the allowlist fix.
+fn two_holder_evidence_missing_fixture() -> Value {
+    let space_id = "space:two-holder-evidence-missing";
+    let source_boundary = json!({
+        "id": "source_boundary:two-holder-evidence-missing",
+        "included_sources": ["source:test"],
+        "excluded_sources": [],
+        "adapters": ["test.fixture.v1"],
+        "accepted_fact_policy": "fixture facts are accepted test input",
+        "inference_policy": "fixture declares its own coverage claims",
+        "information_loss": []
+    });
+    json!({
+        "schema": "highergraphen.case.space.v1",
+        "schema_version": 1,
+        "case_space_id": "case_space:two-holder-evidence-missing",
+        "space_id": space_id,
+        "case_cells": [
+            {
+                "id": "work:w1", "cell_type": "work", "lifecycle": "active",
+                "space_id": space_id, "title": "W1",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "work:w2", "cell_type": "work", "lifecycle": "active",
+                "space_id": space_id, "title": "W2",
+                "source_ids": ["source:test"], "structure_ids": [], "metadata": {},
+                "provenance": {"confidence": 0.9, "review_status": "reviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:a", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "A (intermediate evidence)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "inferred"},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:x", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "X (shared sub-evidence)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "inferred"},
+                "provenance": {"confidence": 0.5, "review_status": "unreviewed",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "evidence:y", "cell_type": "evidence", "lifecycle": "active",
+                "space_id": space_id, "title": "Y (trusted, covers A only)",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {"evidence_boundary": "source_backed"},
+                "provenance": {"confidence": 0.9, "review_status": "unreviewed",
+                               "source": {"kind": "document", "title": "t"}}
+            },
+            {
+                "id": "capability:test-mutation", "cell_type": "custom:capability", "lifecycle": "accepted",
+                "space_id": space_id, "title": "Authorize test mutations",
+                "source_ids": ["source:test"], "structure_ids": [],
+                "metadata": {
+                    "actor_ids": ["actor:test-mutation-cli"],
+                    "operations": ["evidence-attach", "review", "cell-transition"]
+                },
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "document", "title": "t"}}
+            }
+        ],
+        "case_relations": [
+            {
+                "id": "relation:w1-requires-a", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "work:w1", "to_id": "evidence:a",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:a-requires-x", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "evidence:a", "to_id": "evidence:x",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:w2-requires-x", "relation_type": "requires_evidence",
+                "relation_strength": "hard", "from_id": "work:w2", "to_id": "evidence:x",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            },
+            {
+                "id": "relation:y-satisfies-a", "relation_type": "satisfies_evidence_requirement",
+                "relation_strength": "diagnostic", "from_id": "evidence:y", "to_id": "evidence:a",
+                "evidence_ids": [], "source_ids": ["source:test"], "metadata": {},
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}}
+            }
+        ],
+        "morphism_log": [
+            {
+                "schema": "highergraphen.case.morphism_log_entry.v1", "schema_version": 1,
+                "case_space_id": "case_space:two-holder-evidence-missing", "sequence": 1,
+                "entry_id": "morphism_log_entry:genesis", "morphism_id": "morphism:genesis",
+                "target_revision_id": "revision:two-holder-evidence-missing-base",
+                "morphism": {
+                    "morphism_id": "morphism:genesis", "morphism_type": "create",
+                    "target_revision_id": "revision:two-holder-evidence-missing-base",
+                    "added_ids": [], "updated_ids": [], "retired_ids": [], "preserved_ids": [],
+                    "violated_invariant_ids": [], "review_status": "accepted",
+                    "evidence_ids": [], "source_ids": ["source:test"],
+                    "metadata": {
+                        "lift_semantics": "test_fixture_to_case_space",
+                        "source_boundary_id": "source_boundary:two-holder-evidence-missing",
+                        "source_boundary": source_boundary
+                    }
+                },
+                "actor_id": "actor:test-author", "recorded_at": "2026-08-02T00:00:00Z",
+                "provenance": {"confidence": 1.0, "review_status": "accepted",
+                               "source": {"kind": "human", "title": "t"}},
+                "source_ids": ["source:test"], "replay_checksum": ""
+            }
+        ],
+        "projections": [],
+        "revision": {
+            "revision_id": "revision:two-holder-evidence-missing-base",
+            "case_space_id": "case_space:two-holder-evidence-missing",
+            "applied_entry_ids": ["morphism_log_entry:genesis"],
+            "applied_morphism_ids": ["morphism:genesis"],
+            "checksum": "", "created_at": "2026-08-02T00:00:00Z",
+            "source_ids": ["source:test"], "metadata": {}
+        },
+        "close_policy_id": null,
+        "metadata": {"source_boundary": source_boundary}
+    })
+}
+
+#[test]
+fn space_reason_text_never_annotates_an_evidence_missing_finding_even_at_a_shared_requirement() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let fixture_path = directory.join("two-holder-evidence-missing-fixture.case.space.json");
+    write_json_value(&fixture_path, &two_holder_evidence_missing_fixture());
+    import_native_case_space_from_input(
+        &directory,
+        &fixture_path,
+        "revision:two-holder-evidence-missing-base",
+    );
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:two-holder-evidence-missing";
+
+    let json_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "json",
+    ]);
+    assert!(
+        json_report.status.success(),
+        "stderr: {}",
+        stderr(&json_report)
+    );
+    let evaluation = &stdout_json(&json_report)["result"]["evaluation"];
+    // Confirms the fixture reproduces the coarse union this review found:
+    // `evidence:x`'s own gap reads satisfied even though `work:w2`'s
+    // requirement of it is still blocking.
+    let x_gap = evaluation["review_gaps"]
+        .as_array()
+        .expect("review gaps")
+        .iter()
+        .find(|gap| gap["target_id"] == json!("evidence:x"))
+        .expect("evidence:x review gap");
+    assert_eq!(x_gap["requirement_satisfied"], json!(true));
+    assert!(evaluation["obstructions"]
+        .as_array()
+        .expect("obstructions")
+        .iter()
+        .any(|obstruction| obstruction["witness_ids"] == json!(["evidence:x"])));
+
+    let text_report = run_cli(&[
+        "space",
+        "reason",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--format",
+        "text",
+    ]);
+    assert!(
+        text_report.status.success(),
+        "stderr: {}",
+        stderr(&text_report)
+    );
+    let text = stdout(&text_report);
+    // The `evidence_missing` finding for work:w2 must state the obstruction
+    // plainly, with no `requirement_satisfied` annotation at all — asserting
+    // both "none is available" and "requirement_satisfied=true" in the same
+    // line is exactly the contradiction #24 exists to stop.
+    assert!(text.contains(
+        "work:w2 requires source-backed or accepted evidence evidence:x, but none is available. \
+         [review_status=unreviewed]\n"
+    ));
+    // The gap itself still reports its own (coarse, upstream, tracked
+    // separately as #33) `requirement_satisfied` — that fact is not hidden,
+    // only kept off a finding it does not describe.
+    assert!(text.contains("[target=evidence:x]"));
+    assert!(text.contains("[requirement_satisfied=true]"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
 #[test]
 fn assurance_axis_does_not_launder_an_unreviewed_claim_through_an_unrelated_satisfies_target() {
     // The exclusion #20 added must key on an actually-satisfied
