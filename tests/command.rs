@@ -1680,10 +1680,19 @@ fn packet_apply_pauses_for_review_then_resume_transitions_after_acceptance() {
         json!([apply_json["result"]["halt"]])
     );
 
-    // Gate seam, confirmed the hard way: the implementer's own gate lacks
-    // `review`, so accepting its own claim under that gate must be refused.
-    // This is the enforcement that makes the pause meaningful rather than a
-    // convention an implementer could route around.
+    // Gate seam, confirmed the hard way — but read this refusal carefully
+    // (issue #40): this fixture's implementer actor holds only
+    // `capability:packet-implementer`, which does not list the `review`
+    // operation, so this is the ordinary capability check refusing —
+    // `does not authorize operation review` — not an identity check. Nothing
+    // in the crate compares the reviewing actor to the actor that produced
+    // the claim being reviewed; an actor whose own capability separately
+    // listed `review` would accept its own claim unrefused. What this test
+    // proves is `review accept`'s ordinary gate resolution making the pause
+    // meaningful for *this* fixture's actor, not self-review prevention in
+    // general — see `docs/security/worker-execution-policy.md`'s residual
+    // risk on self-review and `docs/specs/operate-halt.fsl`'s
+    // `INV-OPERATE-002`.
     let self_review = run_cli(&[
         "review",
         "accept",

@@ -62,6 +62,27 @@ pub struct NextOperation {
     pub note: Option<String>,
 }
 
+/// The one wording for a `review accept` next-operation's note (issue #40).
+/// Both this module's own `NeedsReview` reporting and `packet apply`'s pause
+/// (`native_cli/ops/packet.rs`) used to independently claim, in slightly
+/// different words, that the review "must run under a different actor" —
+/// a requirement the tool does not impose. `review accept`'s gate is
+/// checked for a capability authorizing the `review` operation; nothing
+/// compares the reviewing actor to the actor recorded on the morphism that
+/// introduced the evidence being reviewed. Running it under a different
+/// actor is the intent behind pointing at this operation, not something the
+/// tool enforces — see `docs/security/worker-execution-policy.md`'s
+/// residual risk on self-review and `docs/specs/operate-halt.fsl`'s
+/// `INV-OPERATE-002`. One wording, called from both producers, so a future
+/// correction cannot fix one and miss the other the way this one did.
+pub(crate) fn review_accept_capability_note() -> String {
+    "a separately gated act: its gate must resolve a capability authorizing the review \
+     operation. Running it under a different actor than whichever one produced the claim \
+     being reviewed is the intent behind pointing at this operation, but the tool does not \
+     check that the reviewing actor differs from that one"
+        .to_owned()
+}
+
 /// The resumable object a halt is. `completed_through` is the revision the
 /// ledger got to before stopping; `target_ids` names what is blocked;
 /// `next_operations` names what would clear it.
@@ -223,11 +244,7 @@ pub fn build_halt_report(
                 next_operations.push(NextOperation {
                     command: "review accept".to_owned(),
                     arguments: review_arguments,
-                    note: Some(
-                        "must run under a different actor's gate holding the review \
-                         operation, not the actor that dispatched the work being reviewed"
-                            .to_owned(),
-                    ),
+                    note: Some(review_accept_capability_note()),
                 });
             }
             for target_id in &gate_target_ids {

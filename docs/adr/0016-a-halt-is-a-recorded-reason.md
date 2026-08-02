@@ -50,7 +50,7 @@ waiting is preserved (a recorded reason always stops).
    | `nothing_eligible` | nothing right now | — |
    | `dispatch_in_progress` | another process's started dispatch to finish, or an explicit `--supersede-trace` assertion that it is dead (ADR 0014) | outside this invocation |
    | `round_budget_exhausted` | another invocation | the operator |
-   | `needs_review` | an accepted review of a named target | **a different actor**, holding `review` |
+   | `needs_review` | an accepted review of a named target | an actor holding `review` (the tool does not check that this actor differs from the one whose dispatch produced the claim — see the 2026-08-02 amendment) |
    | `needs_evidence` | evidence satisfying a named requirement | any actor holding `evidence-attach` |
    | `needs_external` | an external event a `waits_for` names | outside the system |
    | `needs_retry_decision` | a decision to retry a failed step | an operator, explicitly |
@@ -206,3 +206,34 @@ content-addressed (`artifact:sha256-<hex>`) and reachable from a claim by
 data channel added. If that works it is strictly better than typed handoff; if it
 does not, typed handoff is a contract-change proposal on its own merits, not a
 hook bolted onto this one.
+
+## Amendment, 2026-08-02: the enforcement claim above was wrong
+
+Issue #40 found, by grep across the crate, that the Consequences bullet above —
+**"The tool enforces that two different actor ids were used"** — does not
+describe the code. Nothing compares a reviewing actor to the actor recorded on
+the morphism that introduced the evidence being reviewed: not
+`native_review.rs`'s gate resolution, not `packet resume`. What is enforced is
+separation by invocation and by capability — one invocation carries one gate,
+`operate` never appends a review morphism itself, and a review is therefore
+always a second, separately gated act — but that act's gate is checked against
+`metadata.actor_ids`/`metadata.operations`, never against the actor that
+produced the claim. An actor whose capability lists both `dispatch` and
+`review` reviews its own claim unrefused, with no distinct actor id required at
+all.
+
+The bullet's own hedge — "it cannot enforce that two different *minds* were" —
+correctly named the limit one layer up, but the layer below that hedge was
+itself asserted more strongly than the code provides. `INV-OPERATE-002` is not
+"the strongest form of the check that exists"; `docs/specs/operate-halt.fsl`
+now proves it of a model stricter than the system and says so, precisely
+because the model's `reviewed_by[s] != dispatched_by[s]` guard has no code-side
+counterpart.
+
+**Decided, not silently fixed** (issue #40): identity separation is *granted*,
+not *checked*. Capability grants are a lift-time, source-boundary decision
+(ADR 0007); an actor holding both operations is a decision the source boundary
+made, and the tool honours it rather than second-guessing it. This is recorded
+in `docs/security/worker-execution-policy.md`'s residual risks, and
+`native_cli/ops/packet.rs`'s `next_operation` note for `review accept` no
+longer claims a check the tool does not perform.

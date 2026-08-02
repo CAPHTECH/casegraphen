@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     native_eval::latest_evidence_review_status,
-    native_halt::{Halt, HaltReport, NextOperation},
+    native_halt::{review_accept_capability_note, Halt, HaltReport, NextOperation},
     native_model::{CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphismType},
     native_store::NativeCaseStore,
 };
@@ -206,11 +206,12 @@ pub(in crate::native_cli) fn packet_apply(
     let review_accept = NextOperation {
         command: "review accept".to_owned(),
         arguments: review_arguments,
-        note: Some(
-            "must run under a different actor's gate holding the review operation, not this \
-             apply's actor or capability"
-                .to_owned(),
-        ),
+        // Issue #40: this used to read "must run under a different actor's
+        // gate holding the review operation, not this apply's actor or
+        // capability" — a requirement the tool does not impose. Shared with
+        // `native_halt`'s own `NeedsReview` reporting, which made the same
+        // false claim independently; see that function's doc comment.
+        note: Some(review_accept_capability_note()),
     };
     let mut resume_arguments = BTreeMap::new();
     resume_arguments.insert("store".to_owned(), store.display().to_string());

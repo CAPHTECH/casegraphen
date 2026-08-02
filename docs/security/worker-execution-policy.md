@@ -587,6 +587,32 @@ symlink, or lexically rejected) is refused rather than recorded as given.
     recorded here as an accepted hypothesis, not a fixed defect. Packet
     directories, like store and working directories elsewhere in this
     document, must be writable only by the operating user.
+12. **Self-review is refused by capability, never by identity.** Nothing in
+    the crate compares the actor recorded on a reviewing gate against the
+    actor recorded on the morphism that introduced the evidence being
+    reviewed — not `native_review.rs`'s gate resolution (which checks only
+    that the capability is accepted and active, names this actor, and lists
+    the `review` operation), not `packet resume`, which checks that a
+    canonical accepted review exists in the log without checking who made
+    it. What is enforced is separation **by invocation and by capability**:
+    one invocation carries one gate, `operate` never appends a review
+    morphism at all, and a review is therefore always a second, separately
+    gated act whose gate must resolve a capability listing `review`. In the
+    usual configuration that refuses most self-review, because the
+    capability that authorized dispatch and the one that would authorize
+    review are granted to different actors — the two coincide often enough
+    that this reads as an identity check when it is not one. An actor whose
+    capability lists both `dispatch` and `review` may review the claim its
+    own dispatch produced, and nothing refuses it. The two protections fail
+    differently: a capability check is a statement about what an actor may
+    do at all; an identity check would be a statement about this particular
+    claim. Only the first exists. Whether one actor may hold both operations
+    is a lift-time, source-boundary decision (ADR 0007) — the same reasoning
+    that leaves capability grants unrevocable through the CLI (residual risk
+    7): the tool honours the grant the source boundary made rather than
+    second-guessing it. `docs/specs/operate-halt.fsl`'s `INV-OPERATE-002` is
+    proved of a model stricter than the system for exactly this reason, and
+    says so rather than being weakened to match.
 
 ## 5. Review provenance
 
