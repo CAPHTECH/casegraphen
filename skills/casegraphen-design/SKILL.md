@@ -5,6 +5,13 @@ description: Turn a problem statement into an unreviewed, linted CaseGraphen exe
 
 # Design an execution topology proposal
 
+When preparing a proposal for independent review, emit a
+`deployment_policy_manifest.v0` that binds every declared verification,
+budget, and expansion policy to its canonical content hash. A topology review
+must use both `--input <topology.json>` and
+`--policy-manifest <manifest.json>`; changing any bound policy content requires
+a new review.
+
 Design the graph before selecting a runtime. Keep CaseGraphen's acceptance
 ledger separate from the runtime topology and from the runtime's later reports.
 

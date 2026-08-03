@@ -19,3 +19,7 @@ experimental v0 evaluation; it is not an accepted CaseGraphen ledger entry.
 Re-run into a temporary directory to verify behavior. Do not compare measured
 latency byte-for-byte, because it is a runtime observation. Proposal IDs and
 topology/output content addresses are deterministic for the same sources.
+
+This directory preserves the original two-family Issue #58 observation. The
+expanded four-family run, content-addressed retention manifest, and resource
+reconciliation evidence are retained under `docs/pilots/issue-76`.

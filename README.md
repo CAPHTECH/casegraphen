@@ -90,6 +90,12 @@ library owners. Its persistence/authentication boundary is described in
 [operational walkthrough](docs/guides/graph-engineering-product-surface.md)
 shows the review-seamed end-to-end path.
 
+Operational resource reservations are atomic, durable, and derived from a
+host-canonical append-only allocator journal. Resource-bearing runtime runs use
+a versioned expectation bundle bound to the exact topology hash and observed
+case revision before they can reach the review seam; neither path auto-accepts
+runtime output. See [ADR 0022](docs/adr/0022-atomic-resource-allocation-and-runtime-expectations.md).
+
 ## Execution control
 
 `run --step` advances exactly one work item per invocation. `run --frontier`

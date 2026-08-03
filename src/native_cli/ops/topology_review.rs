@@ -2,6 +2,7 @@ use super::{
     append_validated_morphism, io::timestamp, require_current_revision, NativeTopologyReviewOptions,
 };
 use crate::{
+    deployment_policy::{deployment_policy_manifest_content_hash, DeploymentPolicyManifest},
     execution_topology::{execution_topology_content_hash, ExecutionTopology},
     native_model::ReviewAction,
     native_review::{
@@ -31,12 +32,20 @@ pub(in crate::native_cli) fn topology_review_apply(
         source,
     })?;
     let topology: ExecutionTopology = serde_json::from_slice(&bytes)?;
+    let policy_manifest_bytes =
+        std::fs::read(options.policy_manifest_input).map_err(|source| NativeCliError::Io {
+            path: options.policy_manifest_input.to_path_buf(),
+            source,
+        })?;
+    let policy_manifest: DeploymentPolicyManifest = serde_json::from_slice(&policy_manifest_bytes)?;
     if topology.case_space_id != case_space_id.as_str() {
         return Err(NativeCliError::invalid(
             "execution topology input belongs to a different case space",
         ));
     }
     let topology_content_hash = execution_topology_content_hash(&topology)
+        .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+    let policy_manifest_content_hash = deployment_policy_manifest_content_hash(&policy_manifest)
         .map_err(|error| NativeCliError::invalid(error.to_string()))?;
     let artifact_hash = crate::native_hash::sha256_hex(&bytes);
     let artifact_id = Id::new(format!("artifact:sha256-{artifact_hash}"))?;
@@ -59,6 +68,7 @@ pub(in crate::native_cli) fn topology_review_apply(
         observed_base_revision_id: options.base_revision_id.clone(),
         claim_cell_id: options.claim_cell_id.clone(),
         artifact_id,
+        policy_manifest_content_hash,
         expansion_proposal_id,
     };
     let gate = NativeOperationGate {
@@ -103,6 +113,7 @@ pub(in crate::native_cli) fn topology_review_apply(
             target_revision_id,
         },
         &bytes,
+        &policy_manifest_bytes,
     )?;
     morphism
         .metadata

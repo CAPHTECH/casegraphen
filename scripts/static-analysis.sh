@@ -59,6 +59,7 @@ python3 scripts/skill-conformance.py --check
 
 say 'Graph Engineering product-surface conformance'
 python3 scripts/product-surface-conformance.py
+python3 scripts/fresh-agent-workflow-conformance.py
 
 say 'lints (warnings are failures)'
 cargo clippy --all-targets --locked -- -D warnings

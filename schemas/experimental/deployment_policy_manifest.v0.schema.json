@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.deployment_policy_manifest.v0",
+  "title": "Deployment policy manifest v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "topology_id", "topology_content_hash", "verification_policies", "budget_policies", "expansion_policies"],
+  "properties": {
+    "schema": { "const": "casegraphen.experimental.deployment_policy_manifest.v0" },
+    "schema_version": { "const": 0 },
+    "topology_id": { "type": "string", "minLength": 1 },
+    "topology_content_hash": { "$ref": "#/$defs/hash" },
+    "verification_policies": { "$ref": "#/$defs/bindings" },
+    "budget_policies": { "$ref": "#/$defs/bindings" },
+    "expansion_policies": { "$ref": "#/$defs/bindings" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "content_hash"],
+      "properties": {
+        "policy_id": { "type": "string", "minLength": 1 },
+        "content_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } }
+  }
+}

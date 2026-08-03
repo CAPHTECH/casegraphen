@@ -575,6 +575,9 @@ impl NativeCliCommand {
                     case_space_id: options.require_id("--case-space-id")?,
                     claim_cell_id: options.require_id("--target-id")?,
                     topology_input: options.require_path("--input")?,
+                    policy_manifest_input: options.policy_manifest.clone().ok_or_else(|| {
+                        NativeCliError::usage("--policy-manifest <path> is required")
+                    })?,
                     reviewer_id: options.require_id("--reviewer-id")?,
                     reason: options.require_string("--reason")?,
                     base_revision_id: options.base_revision_id.clone().ok_or_else(|| {

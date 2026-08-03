@@ -27,7 +27,7 @@ struct ToolArguments {
     #[serde(default)]
     base_revision_id: Option<String>,
     #[serde(default)]
-    operation_gate: Option<crate::control_plane::OperationGateInput>,
+    caller_declared_audit_context: Option<crate::control_plane::CallerDeclaredAuditContext>,
     payload: Value,
 }
 
@@ -133,7 +133,7 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
                     "protocolVersion": negotiated,
                     "capabilities": {"resources": {"listChanged": false}, "tools": {"listChanged": false}},
                     "serverInfo": {"name": "casegraphen-mcp", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": "Resources are projections and tool results remain subject to CaseGraphen gates and review."
+                    "instructions": "Bearer authentication authorizes host-tool access. Caller-declared audit context is attribution only and never a CaseGraphen operation gate. Acceptance-ledger mutations remain subject to canonical CaseGraphen gates and review."
                 }),
             ));
         }
@@ -232,7 +232,7 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
             idempotency_key: arguments.idempotency_key,
             tool,
             base_revision_id: arguments.base_revision_id,
-            operation_gate: arguments.operation_gate,
+            caller_declared_audit_context: arguments.caller_declared_audit_context,
             payload: arguments.payload,
         };
         let response = if let Some(path) = &self.state_path {
@@ -246,6 +246,12 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
         Ok(json!({
             "content": [{"type": "text", "text": serde_json::to_string(&structured).expect("response JSON serializes")}],
             "structuredContent": structured,
+            "transport_authentication": {
+                "mechanism": if self.authorization_token.is_some() { "bearer_token" } else { "none" },
+                "authenticated": self.authorization_token.is_some(),
+                "authorizes_host_tool_access": self.authorization_token.is_some(),
+                "canonical_casegraphen_authorization": "not_evaluated"
+            },
             "isError": is_error
         }))
     }
@@ -316,11 +322,11 @@ fn tool_definition(tool: &ControlPlaneTool) -> Value {
         required.push("base_revision_id");
     }
     if tool.changes_managed_state() {
-        required.push("operation_gate");
+        required.push("caller_declared_audit_context");
     }
     json!({
         "name": name,
-        "description": "Delegates this operation to the existing CaseGraphen decision owner.",
+        "description": "Delegates this operation to the existing decision owner. Bearer authentication controls host access; caller_declared_audit_context is attribution only.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": false,
@@ -328,7 +334,7 @@ fn tool_definition(tool: &ControlPlaneTool) -> Value {
                 "request_id": {"type": "string", "minLength": 1},
                 "idempotency_key": {"type": "string", "minLength": 1},
                 "base_revision_id": {"type": "string", "minLength": 1},
-                "operation_gate": {"type": "object"},
+                "caller_declared_audit_context": {"type": "object"},
                 "payload": {}
             },
             "required": required

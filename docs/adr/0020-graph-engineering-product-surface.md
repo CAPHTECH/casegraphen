@@ -11,7 +11,7 @@ The machine-readable source of truth is [`docs/product-surface.v0.json`](../prod
 | compile | `compile_deployment_bundle` | `graph_compiler` | content-addressed deployment bundle; proposal mode; never accepted |
 | integrate/reconcile | `reconcile_run` | `runtime_integration` | untrusted runtime integration report and reviewable proposals |
 | simulate | `simulate_execution_topology` | `graph_simulation` | deterministic simulation report and unreviewed routing proposal |
-| resource reserve | `reserve_resources` | `resource_protocol` | topology-bound reservation; revision and operation gate required |
+| resource reserve/release | `reserve_resources`, `release_resources` | `resource_allocator` delegating to `resource_protocol` | atomic durable reservation/disposition; revision and caller-declared audit context required; caller allocator state is rejected |
 | resource reconcile | `reconcile_resources` | `resource_protocol` | untrusted allocation reconciliation; incomplete on mismatch |
 | expansion | `evaluate_expansion_round` | `dynamic_expansion` | bounded, typed, unreviewed topology proposals only |
 | streaming | `reconcile_streaming_run` | `streaming_reconciliation` | exact current case revision, canonical readiness and resource permits |
@@ -26,7 +26,7 @@ Without custom Rust code, an MCP client can:
 1. call `propose_execution_topology`, then `lint_execution_topology`;
 2. call `compile_deployment_bundle` with an explicit topology hash and observed base revision;
 3. call `attach_runtime_report` for content-addressed JSONL bytes;
-4. call `reconcile_run` with the same topology and revision;
+4. for a resource-bearing run, reserve through the host and call `reconcile_run` with an exact `runtime.resource_expectation_bundle.v0`; otherwise call it with the same topology and revision;
 5. observe `accepted: false`, completeness findings, and content-addressed proposals;
 6. stop at the independent CaseGraphen `topology-review` / evidence review seam.
 

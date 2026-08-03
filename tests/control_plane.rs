@@ -2,10 +2,10 @@
 
 use casegraphen::{
     control_plane::{
-        ControlPlaneNotification, ControlPlaneRefusal, ControlPlaneRequest, ControlPlaneState,
-        ControlPlaneTool, DecisionDelegate, NotificationKind, OperationGateInput,
-        CONTROL_PLANE_NOTIFICATION_SCHEMA, CONTROL_PLANE_REQUEST_SCHEMA, NOTIFICATIONS,
-        RESOURCE_TEMPLATES, TOOLS,
+        CallerDeclaredAuditContext, ControlPlaneNotification, ControlPlaneRefusal,
+        ControlPlaneRequest, ControlPlaneState, ControlPlaneTool, DecisionDelegate,
+        NotificationKind, CONTROL_PLANE_NOTIFICATION_SCHEMA, CONTROL_PLANE_REQUEST_SCHEMA,
+        NOTIFICATIONS, RESOURCE_TEMPLATES, TOOLS,
     },
     execution_topology::parse_execution_topology,
     graph_lint::lint_execution_topology,
@@ -44,13 +44,13 @@ impl DecisionDelegate for CountingDelegate {
     }
 }
 
-fn gate() -> OperationGateInput {
-    OperationGateInput {
-        actor_id: "actor:test".to_owned(),
-        capability_ids: vec!["capability:test".to_owned()],
-        operation_scope_id: "scope:test".to_owned(),
-        audience: "audit".to_owned(),
-        source_boundary_id: "boundary:test".to_owned(),
+fn audit_context() -> CallerDeclaredAuditContext {
+    CallerDeclaredAuditContext {
+        declared_actor_id: "actor:test".to_owned(),
+        declared_capability_ids: vec!["capability:test-declared".to_owned()],
+        declared_operation_scope_id: "scope:test".to_owned(),
+        declared_audience: "audit".to_owned(),
+        declared_source_boundary_id: "boundary:test".to_owned(),
     }
 }
 
@@ -63,7 +63,7 @@ fn request(tool: ControlPlaneTool, id: &str) -> ControlPlaneRequest {
         base_revision_id: tool
             .requires_base_revision()
             .then(|| "revision:observed".to_owned()),
-        operation_gate: tool.changes_managed_state().then(gate),
+        caller_declared_audit_context: tool.changes_managed_state().then(audit_context),
         payload: json!({}),
     }
 }
@@ -155,11 +155,11 @@ fn wire_schema_catalog_is_exactly_compatible_with_the_rust_catalog() {
 }
 
 #[test]
-fn every_state_changing_tool_requires_explicit_revision_and_gate() {
+fn every_state_changing_tool_requires_revision_and_caller_declared_audit_context() {
     for &tool in TOOLS.iter().filter(|tool| tool.changes_managed_state()) {
         let mut request = request(tool, &format!("request:{tool:?}"));
         request.base_revision_id = None;
-        request.operation_gate = None;
+        request.caller_declared_audit_context = None;
         let mut state = ControlPlaneState::new();
         let mut delegate = CountingDelegate {
             calls: 0,
@@ -168,10 +168,57 @@ fn every_state_changing_tool_requires_explicit_revision_and_gate() {
         let response = state.execute(&request, &mut delegate);
         assert_eq!(
             response.refusal.as_ref().unwrap().code,
-            "explicit_mutation_context_required"
+            "explicit_mutation_audit_context_required"
         );
         assert_eq!(delegate.calls, 0);
     }
+}
+
+#[test]
+fn caller_declared_capabilities_are_recorded_but_never_claim_canonical_authorization() {
+    let mut state = ControlPlaneState::new();
+    let mut delegate = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    let response = state.execute(
+        &request(ControlPlaneTool::AttachRuntimeReport, "request:audit-only"),
+        &mut delegate,
+    );
+    assert_eq!(delegate.calls, 1);
+    assert!(
+        response
+            .authority_facts
+            .caller_declared_audit_context_present
+    );
+    assert_eq!(
+        serde_json::to_value(response.authority_facts.canonical_casegraphen_authorization).unwrap(),
+        json!("not_evaluated")
+    );
+}
+
+#[test]
+fn legacy_durable_responses_load_without_inventing_authority() {
+    let legacy = json!({
+        "schema": "casegraphen.experimental.control_plane.response.v0",
+        "sequence": 1,
+        "request_id": "request:legacy",
+        "idempotency_key": "idempotency:legacy",
+        "replayed": false,
+        "result": {"legacy": true},
+        "refusal": null
+    });
+    let response: casegraphen::control_plane::ControlPlaneResponse =
+        serde_json::from_value(legacy).unwrap();
+    assert!(
+        !response
+            .authority_facts
+            .caller_declared_audit_context_present
+    );
+    assert_eq!(
+        serde_json::to_value(response.authority_facts.canonical_casegraphen_authorization).unwrap(),
+        json!("not_evaluated")
+    );
 }
 
 #[test]

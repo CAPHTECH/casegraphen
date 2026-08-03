@@ -4,6 +4,10 @@
 //! not write a store, accept a review, reserve a resource, or dispatch work.
 
 use crate::{
+    deployment_policy::{
+        deployment_policy_manifest, deployment_policy_manifest_content_hash,
+        validate_deployment_policy_manifest,
+    },
     dynamic_expansion::{validate_expansion_policy, ExpansionPolicy},
     exec::{validate_execution_plan, AllowedTransitionClass, ExecutionPlan},
     execution_topology::{
@@ -45,6 +49,7 @@ pub struct ReviewedTopologyBinding {
     claim_cell_id: String,
     review_id: String,
     topology_content_hash: String,
+    policy_manifest_content_hash: String,
     case_space_id: String,
     base_revision_id: String,
     expansion_proposal_id: Option<String>,
@@ -288,6 +293,7 @@ pub fn reviewed_compilation_mode(
         claim_cell_id: claim_cell_id.to_owned(),
         review_id,
         topology_content_hash: target.topology_content_hash.clone(),
+        policy_manifest_content_hash: target.policy_manifest_content_hash.clone(),
         case_space_id: target.case_space_id.to_string(),
         // The reviewer observed the topology at `observed_base_revision_id`,
         // retained inside the canonical target. Deployment starts from the
@@ -364,6 +370,7 @@ pub fn compile_execution_topology(
     required_request_field(&request.base_revision_id, "$.base_revision_id", &mut report);
     required_request_field(&request.plan_id, "$.plan_id", &mut report);
     validate_reviewed_binding(request, &topology_hash, &mut report);
+    validate_reviewed_policy_binding(topology, request, &topology_hash, &mut report);
     validate_policy_documents(topology, request, &mut report);
     let mappings = validate_plan_mappings(topology, request, &mut report);
 
@@ -425,6 +432,40 @@ pub fn compile_execution_topology(
         manifest_bytes,
         manifest_content_hash,
     })
+}
+
+fn validate_reviewed_policy_binding(
+    topology: &ExecutionTopology,
+    request: &CompilerRequest,
+    topology_hash: &str,
+    report: &mut CompilerReport,
+) {
+    let manifest = deployment_policy_manifest(
+        topology,
+        topology_hash,
+        &request.verification_policies,
+        &request.budget_policies,
+        &request.expansion_policies,
+    );
+    for finding in validate_deployment_policy_manifest(topology, topology_hash, &manifest) {
+        report.unsupported_semantics.push(compiler_finding(
+            finding.code,
+            finding.location,
+            finding.detail,
+        ));
+    }
+    let CompilationMode::Reviewed(binding) = &request.mode else {
+        return;
+    };
+    let manifest_hash = deployment_policy_manifest_content_hash(&manifest)
+        .expect("compiler-owned policy manifest serializes deterministically");
+    if manifest_hash != binding.policy_manifest_content_hash {
+        report.unsupported_semantics.push(compiler_finding(
+            "reviewed_policy_manifest_hash_mismatch",
+            "$.mode.policy_manifest_content_hash",
+            "policy documents no longer match the manifest accepted with the topology review",
+        ));
+    }
 }
 
 fn validate_reviewed_binding(
@@ -1122,16 +1163,28 @@ mod tests {
         let mut topology = topology();
         let topology_hash = execution_topology_content_hash(&topology).unwrap();
         let mut request = request(&topology);
+        let policy_manifest_content_hash = request_policy_manifest_hash(&topology, &request);
         request.mode = CompilationMode::Reviewed(ReviewedTopologyBinding {
             claim_cell_id: "evidence:reviewed-topology".to_owned(),
             review_id: "review:accepted-topology".to_owned(),
             topology_content_hash: topology_hash,
+            policy_manifest_content_hash,
             case_space_id: request.case_space_id.clone(),
             base_revision_id: request.base_revision_id.clone(),
             expansion_proposal_id: None,
         });
         let reviewed = compile_execution_topology(&topology, &request).expect("reviewed bundle");
         assert_eq!(reviewed.manifest.mode, "reviewed");
+
+        request
+            .budget_policies
+            .get_mut("budget:small")
+            .expect("fixture budget policy")["max_cost"] = json!(999);
+        let substituted = compile_execution_topology(&topology, &request).unwrap_err();
+        assert!(substituted
+            .unsupported_semantics
+            .iter()
+            .any(|finding| finding.code == "reviewed_policy_manifest_hash_mismatch"));
 
         topology.nodes[0].purpose.push_str(" changed");
         let report = compile_execution_topology(&topology, &request).unwrap_err();
@@ -1147,10 +1200,14 @@ mod tests {
         reviewed_topology.nodes[0].purpose.push_str(" expanded");
         let topology_hash = execution_topology_content_hash(&reviewed_topology).unwrap();
         let proposal_id = "proposal:sha256-reviewed-expansion";
+        let request = request(&reviewed_topology);
+        let policy_manifest_content_hash =
+            request_policy_manifest_hash(&reviewed_topology, &request);
         let mode = CompilationMode::Reviewed(ReviewedTopologyBinding {
             claim_cell_id: "evidence:reviewed-expansion".to_owned(),
             review_id: "review:accepted-expansion".to_owned(),
             topology_content_hash: topology_hash,
+            policy_manifest_content_hash,
             case_space_id: reviewed_topology.case_space_id.clone(),
             base_revision_id: "revision:accepted-expansion".to_owned(),
             expansion_proposal_id: Some(proposal_id.to_owned()),
@@ -1167,6 +1224,21 @@ mod tests {
             &reviewed_topology,
         )
         .is_err());
+    }
+
+    fn request_policy_manifest_hash(
+        topology: &ExecutionTopology,
+        request: &CompilerRequest,
+    ) -> String {
+        let topology_hash = execution_topology_content_hash(topology).unwrap();
+        deployment_policy_manifest_content_hash(&deployment_policy_manifest(
+            topology,
+            &topology_hash,
+            &request.verification_policies,
+            &request.budget_policies,
+            &request.expansion_policies,
+        ))
+        .unwrap()
     }
 
     #[test]

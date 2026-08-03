@@ -107,6 +107,14 @@ fn catalog_and_resource_transcript_is_mcp_compatible() {
         .as_array()
         .unwrap()
         .contains(&json!("base_revision_id")));
+    assert!(review["inputSchema"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("caller_declared_audit_context")));
+    assert!(!review["inputSchema"]["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("operation_gate"));
 }
 
 #[test]
@@ -120,12 +128,12 @@ fn stale_tool_refusal_and_reconnect_are_structured_and_idempotent() {
         "request_id": "request:first",
         "idempotency_key": "semantic:review-1",
         "base_revision_id": "revision:observed",
-        "operation_gate": {
-            "actor_id": "actor:test",
-            "capability_ids": ["capability:review"],
-            "operation_scope_id": "scope:review",
-            "audience": "audit",
-            "source_boundary_id": "boundary:test"
+        "caller_declared_audit_context": {
+            "declared_actor_id": "actor:test",
+            "declared_capability_ids": ["capability:review-declared"],
+            "declared_operation_scope_id": "scope:review",
+            "declared_audience": "audit",
+            "declared_source_boundary_id": "boundary:test"
         },
         "payload": {"review_id": "review:1"}
     });
@@ -143,6 +151,15 @@ fn stale_tool_refusal_and_reconnect_are_structured_and_idempotent() {
     assert_eq!(
         first["result"]["structuredContent"]["refusal"]["current_revision_id"],
         "revision:current"
+    );
+    assert_eq!(
+        first["result"]["structuredContent"]["authority_facts"]
+            ["canonical_casegraphen_authorization"],
+        "not_evaluated"
+    );
+    assert_eq!(
+        first["result"]["transport_authentication"]["authenticated"],
+        false
     );
 
     let mut reconnect = arguments;
@@ -272,12 +289,12 @@ fn durable_authenticated_session_replays_after_restart_without_redelegating() {
         "request_id": "request:durable",
         "idempotency_key": "semantic:durable",
         "base_revision_id": "revision:observed",
-        "operation_gate": {
-            "actor_id": "actor:test",
-            "capability_ids": ["capability:review"],
-            "operation_scope_id": "scope:review",
-            "audience": "audit",
-            "source_boundary_id": "boundary:test"
+        "caller_declared_audit_context": {
+            "declared_actor_id": "actor:test",
+            "declared_capability_ids": ["capability:review-declared"],
+            "declared_operation_scope_id": "scope:review",
+            "declared_audience": "audit",
+            "declared_source_boundary_id": "boundary:test"
         },
         "payload": {"review_id": "review:1"}
     });
@@ -310,6 +327,19 @@ fn durable_authenticated_session_replays_after_restart_without_redelegating() {
         assert_eq!(
             authorized["result"]["structuredContent"]["refusal"]["code"],
             "stale_revision"
+        );
+        assert_eq!(
+            authorized["result"]["transport_authentication"]["authenticated"],
+            true
+        );
+        assert_eq!(
+            authorized["result"]["transport_authentication"]["canonical_casegraphen_authorization"],
+            "not_evaluated"
+        );
+        assert_eq!(
+            authorized["result"]["structuredContent"]["authority_facts"]
+                ["caller_declared_audit_context_present"],
+            true
         );
     }
     {

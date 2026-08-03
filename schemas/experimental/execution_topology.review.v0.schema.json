@@ -12,7 +12,8 @@
     "case_space_id",
     "observed_base_revision_id",
     "claim_cell_id",
-    "artifact_id"
+    "artifact_id",
+    "policy_manifest_content_hash"
   ],
   "properties": {
     "schema": { "const": "casegraphen.experimental.execution_topology_review.v0" },
@@ -23,6 +24,7 @@
     "observed_base_revision_id": { "$ref": "#/$defs/id" },
     "claim_cell_id": { "$ref": "#/$defs/id" },
     "artifact_id": { "type": "string", "pattern": "^artifact:sha256-[0-9a-f]{64}$" },
+    "policy_manifest_content_hash": { "$ref": "#/$defs/hash" },
     "expansion_proposal_id": { "$ref": "#/$defs/id" }
   },
   "$defs": {

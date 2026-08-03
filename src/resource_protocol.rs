@@ -67,6 +67,9 @@ pub struct ResourceReservation {
 pub enum ReservationAssertionKind {
     Release,
     Supersede,
+    /// Explicit operator/runtime-controller assertion that an externally
+    /// governed lease expired. CaseGraphen never infers this from wall time.
+    Expire,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -209,6 +212,7 @@ pub fn reservation_is_active(
                     .superseding_reservation_id
                     .as_deref()
                     .is_some_and(|id| !id.is_empty() && id != reservation.reservation_id),
+                ReservationAssertionKind::Expire => assertion.superseding_reservation_id.is_none(),
             }
     })
 }

@@ -1,0 +1,21 @@
+{
+  "accepted": false,
+  "kind": "contract_next_version",
+  "payload": {
+    "candidate_contract": "runtime.node_report.v1-proposal",
+    "changes": [
+      "Bind a deployment_content_hash separately from topology_content_hash.",
+      "Carry source adapter run identity without promoting runtime declarations to facts.",
+      "Let the operational host accept canonical resource expectations for reconciliation."
+    ],
+    "current_contract": "runtime.node_report.v0",
+    "derived_from_pilots": [
+      "generic-jsonl",
+      "file-drop",
+      "sqlite-durable-queue",
+      "async-subprocess-stream"
+    ]
+  },
+  "proposal_id": "proposal:sha256-7c7d756e44c4823f7b3cfb836dc36e42d2110bb18e06eb56253fbed37843ad1a",
+  "review_status": "unreviewed"
+}

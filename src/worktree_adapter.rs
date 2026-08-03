@@ -209,6 +209,7 @@ pub fn dispose_isolated_worktree(
     observed.state = match assertion.kind {
         ReservationAssertionKind::Release => WorktreeState::CleanupApproved,
         ReservationAssertionKind::Supersede => WorktreeState::Superseded,
+        ReservationAssertionKind::Expire => WorktreeState::CleanupApproved,
     };
     Ok(observed)
 }
@@ -331,6 +332,9 @@ fn validate_assertion(
                 .superseding_reservation_id
                 .as_deref()
                 .is_some_and(|id| !id.is_empty() && id != request.reservation_id),
+            // Expiry releases allocator capacity but never authorizes deleting
+            // a worktree whose state still requires an explicit cleanup act.
+            ReservationAssertionKind::Expire => false,
         };
     if !valid {
         return Err(error(

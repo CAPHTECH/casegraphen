@@ -51,6 +51,10 @@ Rust owner, examples, references, and inventory atomically.
   examples cover independent file review/reduction, code-changing worktree
   nodes with a shared-file collision, and the installed design fixture covers
   a bounded hierarchical reduction of 1,000 source items.
+- `deployment_policy_manifest.v0.schema.json` binds the topology hash and the
+  exact canonical content hashes of every declared verification, budget, and
+  expansion policy. The dedicated topology-review record retains this manifest
+  hash; reviewed compilation must reproduce it from the actual policy bytes.
 - `graph_lint.report.v0.schema.json` separates contract violations,
   deterministic warnings, and heuristics; suggested next operations are data,
   never assembled shell commands.
@@ -63,6 +67,11 @@ Rust owner, examples, references, and inventory atomically.
   topology claims, attempt grants, untrusted actual allocations, and their
   deterministic comparison separate. Reservation disposition and rate-limit
   capacity are explicit records; elapsed time never releases a reservation.
+- `resource.allocator_configuration.v0` and `resource.allocator_event.v0`
+  define host-canonical capacity and the durable reservation/disposition
+  journal. `runtime.resource_expectation_bundle.v0` binds allocator records and
+  runtime allocations to one topology hash and case revision before canonical
+  reconciliation.
 - `git.worktree_record.v0` is the reference isolation record. The Rust
   worktree adapter creates and removes only explicitly located isolated
   worktrees from an exact base commit; integration fixtures use disposable

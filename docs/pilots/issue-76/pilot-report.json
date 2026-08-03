@@ -1,0 +1,625 @@
+{
+  "accepted": false,
+  "adapters": [
+    {
+      "adapter": "generic-jsonl",
+      "adapter_version": "0.1.0",
+      "input_artifact_ids": [
+        "artifact:sha256-b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060",
+        "artifact:sha256-f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad"
+      ],
+      "measured_latency_ms": {
+        "inspect_a": 21,
+        "inspect_b_failed": 21,
+        "inspect_b_retry": 16,
+        "reduce": 10
+      },
+      "reported_cost": {
+        "amount": 0.0027,
+        "currency": "USD"
+      },
+      "reported_deployment_content_hash": "d9c896d8fe2ae49e7e9379a8c300d87b374d775efaf3e95b405f4c54513594d0",
+      "retry_lineage": [
+        "attempt:inspect-b:1",
+        "attempt:inspect-b:2"
+      ],
+      "runtime": "local-process-pool",
+      "runtime_version": "3.11.14",
+      "streaming_release_order": [
+        "node:inspect-a",
+        "node:inspect-b",
+        "node:reduce"
+      ],
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "trust": "runtime_declared_untrusted"
+    },
+    {
+      "adapter": "file-drop",
+      "adapter_version": "0.1.0",
+      "base_commit_sha": "dec80be2312d22ad0084e405d33761803237a66d",
+      "commit_shas": [
+        "cb79180358d8a71e19aba8b8f2a53a5407d289f2",
+        "a4b9fabb5d1885352f0259e8fb4c7264abe137d2"
+      ],
+      "measured_latency_ms": [
+        62,
+        57
+      ],
+      "native_report_count": 2,
+      "reported_cost": {
+        "amount": 0.0008,
+        "currency": "USD"
+      },
+      "reported_deployment_content_hash": "bf149db1d7e651736e02387a07eaf35ee8630ca8aed4d41f7f1a570f8d4d9b8a",
+      "runtime": "local-workspace-runner",
+      "runtime_version": "3.11.14",
+      "topology_content_hash": "15f1b70f9714080e36609118c835d40bb5d46470af6972b0b450cceaae85680d",
+      "trust": "runtime_declared_untrusted",
+      "workspace_isolation_observed": true,
+      "worktree_ids": [
+        "git-worktree:pilot-0@cb79180358d8a71e19aba8b8f2a53a5407d289f2",
+        "git-worktree:pilot-1@a4b9fabb5d1885352f0259e8fb4c7264abe137d2"
+      ]
+    },
+    {
+      "adapter": "sqlite-durable-queue",
+      "adapter_version": "0.1.0",
+      "database_content_hash": "2c546dba6ed1750103915a904dd4d2506a02ce22f80db61fdb3422bf761e498b",
+      "durable_result_observed": true,
+      "measured_latency_ms": 0,
+      "output_artifact_id": "artifact:sha256-db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54",
+      "reservation_id": "reservation:sqlite-queue:1",
+      "resource_reconciliation_complete": true,
+      "runtime": "sqlite3-transactional-worker",
+      "runtime_version": "3.50.4",
+      "topology_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9",
+      "trust": "runtime_declared_untrusted"
+    },
+    {
+      "adapter": "async-subprocess-stream",
+      "adapter_version": "0.1.0",
+      "chunk_count": 5,
+      "logical_sequence": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "measured_latency_ms": 9,
+      "output_artifact_id": "artifact:sha256-80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
+      "reservation_id": "reservation:async-stream:1",
+      "resource_reconciliation_complete": true,
+      "runtime": "asyncio-event-loop",
+      "runtime_version": "3.11.14",
+      "topology_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5",
+      "trust": "runtime_declared_untrusted"
+    }
+  ],
+  "assertions": {
+    "additional_families_resource_complete": true,
+    "all_complete_proposals_unreviewed": true,
+    "all_runtime_results_unaccepted": true,
+    "complete_halts_for_review": true,
+    "four_materially_distinct_families": true,
+    "legacy_resource_boundary_fails_closed": true,
+    "missing_report_detected": true,
+    "resource_collision_detected": true,
+    "retry_lineage_preserved": true,
+    "schema_mismatch_detected": true,
+    "workspaces_isolated": true
+  },
+  "base_revision_id": "revision:pilot-observed",
+  "execution_provenance": {
+    "git_version": "git version 2.50.1 (Apple Git-155)",
+    "harness_content_hash": "354be7f53de48667e44f91911668b308f830643443cc00804273e852a99318e1",
+    "operational_host_binary_content_hash": "6c68cb4b7744b517c7b57baf201fb2c436cdc8d1e9e2f1feeaa4c7d6b9231ac1",
+    "python_version": "3.11.14",
+    "topology_source_hashes": {
+      "fanout_reduce": "e8fb4eaf714fef1c7fc849f67398b3bbdf89c066eaff5f10bcc8478e3e9d30fe",
+      "resource_collision": "e936165ed84c8ed59ccb7dc2bb204eaf17b80dcbd3682e69f8614948279db2b5",
+      "worktree_isolation": "cedc4afbab86380365cc4c829310d2ded10e1b8bc08127ab5c66fbed6a284d73"
+    },
+    "trust": "locally_observed_not_ledger_accepted"
+  },
+  "next_version_proposal": {
+    "accepted": false,
+    "kind": "contract_next_version",
+    "payload": {
+      "candidate_contract": "runtime.node_report.v1-proposal",
+      "changes": [
+        "Bind a deployment_content_hash separately from topology_content_hash.",
+        "Carry source adapter run identity without promoting runtime declarations to facts.",
+        "Let the operational host accept canonical resource expectations for reconciliation."
+      ],
+      "current_contract": "runtime.node_report.v0",
+      "derived_from_pilots": [
+        "generic-jsonl",
+        "file-drop",
+        "sqlite-durable-queue",
+        "async-subprocess-stream"
+      ]
+    },
+    "proposal_id": "proposal:sha256-7c7d756e44c4823f7b3cfb836dc36e42d2110bb18e06eb56253fbed37843ad1a",
+    "review_status": "unreviewed"
+  },
+  "promotion_report": {
+    "accepted": false,
+    "blockers": [
+      "Real runtime integration evidence is insufficient to promote experimental v0 to stable."
+    ],
+    "candidate": "graph-engineering-plane-v0",
+    "evidence": [
+      "Four materially different local runtime adapters executed real process, file-drop, durable-queue, and event-stream boundaries.",
+      "Complete fan-out/reduce stopped at needs_review with accepted=false.",
+      "Missing report and schema mismatch failed closed.",
+      "Explicit retry lineage reconciled without relying on JSONL order.",
+      "File-drop workspaces were physically distinct and output bytes were content-addressed.",
+      "Unsafe shared writers produced a graph-lint resource conflict finding.",
+      "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation."
+    ],
+    "promotion_recommended": false,
+    "review_seam": "operator_review_required",
+    "schema": "casegraphen.experimental.runtime_pilot.promotion_report.v0",
+    "unknowns": [
+      "Runtime-reported model, context, cost, version, and latency are not independently anchored.",
+      "The pilots do not cover a remote runtime, sustained load, or binary artifacts.",
+      "A deployment hash is pilot provenance, not a runtime.node_report.v0 field."
+    ]
+  },
+  "redesign_proposal": {
+    "accepted": false,
+    "kind": "topology_redesign",
+    "payload": {
+      "proposed_changes": [
+        {
+          "change_kind": "bind_runtime_schema_validation",
+          "rationale": "The real local runtime emitted a schema mismatch; keep the graph unchanged until this proposal is reviewed.",
+          "target_node_id": "node:reduce"
+        }
+      ],
+      "runtime_claim_accepted": false,
+      "schema": "casegraphen.experimental.topology.redesign_proposal.v0",
+      "source_runtime_finding_codes": [
+        "output_schema_mismatch"
+      ],
+      "source_topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "source_topology_id": "topology:pilot-fanout-reduce"
+    },
+    "proposal_id": "proposal:sha256-b1b8d038b9259dd1376f98274a9d3089a767e726544128239650c28600b74fdf",
+    "review_status": "unreviewed"
+  },
+  "scenarios": {
+    "async_resource_reconciliation": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
+          "byte_length": 13,
+          "media_type": "text/plain",
+          "sha256": "80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 1,
+        "complete": true,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 1,
+        "failed_node_count": 0,
+        "findings": [],
+        "missing_report_count": 0,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "needs_review",
+      "ingest_findings": [],
+      "proposals": [
+        {
+          "kind": "morphism",
+          "payload": {
+            "morphism_type": "runtime_reconciliation",
+            "runtime_claim_accepted": false,
+            "runtime_graph_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5"
+          },
+          "proposal_id": "proposal:sha256-553e2b0ec0161f2fec2a10e97417cb5310e468e82ae15bad34abf75240584fd2",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "evidence",
+          "payload": {
+            "artifact_id": "artifact:sha256-80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
+            "content_hash": "80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
+            "evidence_boundary": "worker_output",
+            "runtime_claim_accepted": false
+          },
+          "proposal_id": "proposal:sha256-73e984aa0b807f00e6194aae63169d942f96b56a95b2246ae9c53c9dd8a88be9",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        }
+      ],
+      "reconciliation_complete": true,
+      "report_version": 0,
+      "resource_reconciliations": [
+        {
+          "actual_allocation_count": 1,
+          "attempt_id": "attempt:async-stream:1",
+          "complete": true,
+          "declaration_id": "declaration:async-stream",
+          "declared_claim_count": 1,
+          "findings": [],
+          "granted_resource_count": 1,
+          "reservation_id": "reservation:async-stream:1",
+          "schema": "casegraphen.experimental.resource.reconciliation.v0",
+          "schema_version": 0
+        }
+      ],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5",
+      "topology_id": "topology:pilot-async-stream"
+    },
+    "fanout_reduce_complete": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+          "byte_length": 20,
+          "media_type": "application/json",
+          "sha256": "2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2"
+        },
+        {
+          "artifact_id": "artifact:sha256-38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d",
+          "byte_length": 33,
+          "media_type": "application/json",
+          "sha256": "38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d"
+        },
+        {
+          "artifact_id": "artifact:sha256-c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+          "byte_length": 19,
+          "media_type": "application/json",
+          "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 4,
+        "complete": true,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 3,
+        "failed_node_count": 0,
+        "findings": [],
+        "missing_report_count": 0,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "needs_review",
+      "ingest_findings": [],
+      "proposals": [
+        {
+          "kind": "evidence",
+          "payload": {
+            "artifact_id": "artifact:sha256-c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+            "content_hash": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+            "evidence_boundary": "worker_output",
+            "runtime_claim_accepted": false
+          },
+          "proposal_id": "proposal:sha256-6343a52f1aa459b226a0a0421fae950ae839bae0205b4753f04a1f91a949192f",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "evidence",
+          "payload": {
+            "artifact_id": "artifact:sha256-2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+            "content_hash": "2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+            "evidence_boundary": "worker_output",
+            "runtime_claim_accepted": false
+          },
+          "proposal_id": "proposal:sha256-7aaa6d91c8764d433e2dac3b3b5a3fe9825d6142788da22d79dd05620f4e9dcb",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "morphism",
+          "payload": {
+            "morphism_type": "runtime_reconciliation",
+            "runtime_claim_accepted": false,
+            "runtime_graph_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01"
+          },
+          "proposal_id": "proposal:sha256-ad407ec7a0610f8530a8ff9554462363b55c44a5ff3501ca7cd1cfbfd83bfb7c",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "evidence",
+          "payload": {
+            "artifact_id": "artifact:sha256-38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d",
+            "content_hash": "38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d",
+            "evidence_boundary": "worker_output",
+            "runtime_claim_accepted": false
+          },
+          "proposal_id": "proposal:sha256-b50206a2809c98b47591b1503349b304c3aee01b83e3a05bdf8ada29e2fe36ad",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        }
+      ],
+      "reconciliation_complete": true,
+      "report_version": 0,
+      "resource_reconciliations": [],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "missing_report": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+          "byte_length": 20,
+          "media_type": "application/json",
+          "sha256": "2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2"
+        },
+        {
+          "artifact_id": "artifact:sha256-c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+          "byte_length": 19,
+          "media_type": "application/json",
+          "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 3,
+        "complete": false,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 3,
+        "failed_node_count": 0,
+        "findings": [
+          {
+            "attempt_id": null,
+            "code": "missing_report",
+            "detail": "expected node has no graph-matching runtime report",
+            "node_id": "node:reduce"
+          }
+        ],
+        "missing_report_count": 1,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "incomplete_runtime_reports",
+      "ingest_findings": [],
+      "proposals": [],
+      "reconciliation_complete": false,
+      "report_version": 0,
+      "resource_reconciliations": [],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "resource_collision_lint": {
+      "accepted": false,
+      "lint": {
+        "findings": [
+          {
+            "classification": "deterministic",
+            "code": "unsafe_parallel_resource_conflict",
+            "detail": "unordered nodes claim conflicting access to file:shared.txt",
+            "location": "$.nodes[0],$.nodes[1]",
+            "severity": "error",
+            "suggested_next_operation": {
+              "operation": "add_resource_exclusion",
+              "parameters": {},
+              "target_id": null
+            }
+          },
+          {
+            "classification": "heuristic",
+            "code": "authority_concentration_candidate",
+            "detail": "all verification-governed nodes were proposed by the same actor; this does not prove verifier correlation",
+            "location": "$.nodes",
+            "severity": "warning",
+            "suggested_next_operation": {
+              "operation": "review_finding",
+              "parameters": {},
+              "target_id": null
+            }
+          },
+          {
+            "classification": "heuristic",
+            "code": "verification_independence_uninspectable",
+            "detail": "policy verification:pilot-tests governs 2 node(s), but v0 does not embed verifier or world-anchor constraints",
+            "location": "$.verification_policy_ids",
+            "severity": "info",
+            "suggested_next_operation": {
+              "operation": "review_finding",
+              "parameters": {},
+              "target_id": null
+            }
+          }
+        ],
+        "metrics": {
+          "critical_path_ms": 10,
+          "edge_count": 0,
+          "longest_path_nodes": 1,
+          "maximum_fan_in": 0,
+          "maximum_fan_out": 0,
+          "node_count": 2,
+          "sink_count": 2,
+          "source_count": 2,
+          "theoretical_parallel_width": 2
+        },
+        "report_version": 0,
+        "schema": "casegraphen.experimental.graph_lint.report.v0",
+        "topology_content_hash": "769158d3aa7f443d9cc79b85d8bbbcfab5050a30a390d090d2b73d24f1252967",
+        "topology_id": "topology:pilot-resource-collision"
+      },
+      "review_status": "unreviewed",
+      "topology_content_hash": "769158d3aa7f443d9cc79b85d8bbbcfab5050a30a390d090d2b73d24f1252967",
+      "topology_id": "topology:pilot-resource-collision"
+    },
+    "schema_mismatch": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+          "byte_length": 20,
+          "media_type": "application/json",
+          "sha256": "2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2"
+        },
+        {
+          "artifact_id": "artifact:sha256-38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d",
+          "byte_length": 33,
+          "media_type": "application/json",
+          "sha256": "38549c415b7414545b344e01973927e9f64e401015b6add79c8820de45fbd22d"
+        },
+        {
+          "artifact_id": "artifact:sha256-c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+          "byte_length": 19,
+          "media_type": "application/json",
+          "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 4,
+        "complete": false,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 3,
+        "failed_node_count": 1,
+        "findings": [
+          {
+            "attempt_id": "attempt:reduce:1",
+            "code": "output_schema_mismatch",
+            "detail": "runtime success does not hide an expected/actual output schema mismatch",
+            "node_id": "node:reduce"
+          }
+        ],
+        "missing_report_count": 0,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "incomplete_runtime_reports",
+      "ingest_findings": [],
+      "proposals": [],
+      "reconciliation_complete": false,
+      "report_version": 0,
+      "resource_reconciliations": [],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "sqlite_resource_reconciliation": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54",
+          "byte_length": 14,
+          "media_type": "text/plain",
+          "sha256": "db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 1,
+        "complete": true,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 1,
+        "failed_node_count": 0,
+        "findings": [],
+        "missing_report_count": 0,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "needs_review",
+      "ingest_findings": [],
+      "proposals": [
+        {
+          "kind": "morphism",
+          "payload": {
+            "morphism_type": "runtime_reconciliation",
+            "runtime_claim_accepted": false,
+            "runtime_graph_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9"
+          },
+          "proposal_id": "proposal:sha256-2489cb551879dad73bb0dc57c5c1a9de223dce525e27cd5b1b12f1d944b78496",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "evidence",
+          "payload": {
+            "artifact_id": "artifact:sha256-db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54",
+            "content_hash": "db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54",
+            "evidence_boundary": "worker_output",
+            "runtime_claim_accepted": false
+          },
+          "proposal_id": "proposal:sha256-bd2cacca2c843909e499578c16da547cb7789b9f96d56c3d30fd0d06669cfa44",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        }
+      ],
+      "reconciliation_complete": true,
+      "report_version": 0,
+      "resource_reconciliations": [
+        {
+          "actual_allocation_count": 1,
+          "attempt_id": "attempt:sqlite-queue:1",
+          "complete": true,
+          "declaration_id": "declaration:sqlite-queue",
+          "declared_claim_count": 1,
+          "findings": [],
+          "granted_resource_count": 1,
+          "reservation_id": "reservation:sqlite-queue:1",
+          "schema": "casegraphen.experimental.resource.reconciliation.v0",
+          "schema_version": 0
+        }
+      ],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9",
+      "topology_id": "topology:pilot-sqlite-queue"
+    },
+    "worktree_isolation": {
+      "accepted": false,
+      "artifacts": [
+        {
+          "artifact_id": "artifact:sha256-4440417efb06e4d52dcfffa69ce2861f3df30a83df5e73efabf823e6d2f1d2ff",
+          "byte_length": 10,
+          "media_type": "text/plain",
+          "sha256": "4440417efb06e4d52dcfffa69ce2861f3df30a83df5e73efabf823e6d2f1d2ff"
+        },
+        {
+          "artifact_id": "artifact:sha256-906a442289fc498618f5ed44d26eb3dbd16006baabbb6c90ff7f03a07decf370",
+          "byte_length": 10,
+          "media_type": "text/plain",
+          "sha256": "906a442289fc498618f5ed44d26eb3dbd16006baabbb6c90ff7f03a07decf370"
+        }
+      ],
+      "base_revision_id": "revision:pilot-observed",
+      "completeness": {
+        "actual_report_count": 2,
+        "complete": true,
+        "duplicate_attempt_count": 0,
+        "expected_node_count": 2,
+        "failed_node_count": 0,
+        "findings": [],
+        "missing_report_count": 0,
+        "unaccounted_artifact_count": 0
+      },
+      "halt": "resource_reconciliation_incomplete",
+      "ingest_findings": [
+        {
+          "code": "missing_resource_expectation",
+          "detail": "node:edit-a declares resources but has no declaration/reservation expectation",
+          "line": null
+        },
+        {
+          "code": "missing_resource_expectation",
+          "detail": "node:edit-b declares resources but has no declaration/reservation expectation",
+          "line": null
+        }
+      ],
+      "proposals": [],
+      "reconciliation_complete": false,
+      "report_version": 0,
+      "resource_reconciliations": [],
+      "schema": "casegraphen.experimental.runtime.integration_report.v0",
+      "topology_content_hash": "15f1b70f9714080e36609118c835d40bb5d46470af6972b0b450cceaae85680d",
+      "topology_id": "topology:pilot-worktree-isolation"
+    }
+  },
+  "schema": "casegraphen.experimental.runtime_pilot.report.v0"
+}

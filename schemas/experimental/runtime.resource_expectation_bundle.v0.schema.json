@@ -1,0 +1,20 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.runtime.resource_expectation_bundle.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","topology_content_hash","case_revision_id","expectations"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.runtime.resource_expectation_bundle.v0"},
+    "schema_version":{"const":0},
+    "topology_content_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "case_revision_id":{"type":"string","minLength":1},
+    "expectations":{"type":"array","items":{"$ref":"#/$defs/expectation"}}
+  },
+  "$defs":{"expectation":{"type":"object","additionalProperties":false,"required":["node_id","attempt_id","declaration","reservation","allocations","disposition_evidence"],"properties":{
+    "node_id":{"type":"string","minLength":1},"attempt_id":{"type":"string","minLength":1},
+    "declaration":{"$ref":"casegraphen.experimental.resource.declaration.v0"},
+    "reservation":{"$ref":"casegraphen.experimental.resource.reservation.v0"},
+    "allocations":{"type":"array","items":{"$ref":"casegraphen.experimental.runtime.resource_allocation.v0"}},
+    "disposition_evidence":{"type":"array","items":{"$ref":"casegraphen.experimental.resource.reservation_disposition.v0"}}
+  }}}
+}

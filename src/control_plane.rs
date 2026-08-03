@@ -127,12 +127,12 @@ pub const NOTIFICATIONS: &[NotificationKind] = &[
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct OperationGateInput {
-    pub actor_id: String,
-    pub capability_ids: Vec<String>,
-    pub operation_scope_id: String,
-    pub audience: String,
-    pub source_boundary_id: String,
+pub struct CallerDeclaredAuditContext {
+    pub declared_actor_id: String,
+    pub declared_capability_ids: Vec<String>,
+    pub declared_operation_scope_id: String,
+    pub declared_audience: String,
+    pub declared_source_boundary_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -143,8 +143,29 @@ pub struct ControlPlaneRequest {
     pub idempotency_key: String,
     pub tool: ControlPlaneTool,
     pub base_revision_id: Option<String>,
-    pub operation_gate: Option<OperationGateInput>,
+    /// Caller attribution only. This is not a validated CaseGraphen operation
+    /// gate and never authorizes an acceptance-ledger mutation.
+    pub caller_declared_audit_context: Option<CallerDeclaredAuditContext>,
     pub payload: Value,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonicalCasegraphenAuthorization {
+    NotEvaluated,
+}
+
+impl Default for CanonicalCasegraphenAuthorization {
+    fn default() -> Self {
+        Self::NotEvaluated
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlPlaneAuthorityFacts {
+    pub caller_declared_audit_context_present: bool,
+    pub canonical_casegraphen_authorization: CanonicalCasegraphenAuthorization,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -177,6 +198,10 @@ pub struct ControlPlaneResponse {
     pub request_id: String,
     pub idempotency_key: String,
     pub replayed: bool,
+    /// Old experimental durable journals omitted these facts. Loading them
+    /// defaults conservatively to no caller context and no evaluated authority.
+    #[serde(default)]
+    pub authority_facts: ControlPlaneAuthorityFacts,
     pub result: Option<Value>,
     pub refusal: Option<ControlPlaneRefusal>,
 }
@@ -396,12 +421,12 @@ impl ControlPlaneState {
                 .base_revision_id
                 .as_deref()
                 .map_or(true, str::is_empty)
-                || request.operation_gate.is_none())
+                || request.caller_declared_audit_context.is_none())
         {
             return self.local_refusal(
                 request,
-                "explicit_mutation_context_required",
-                "state-changing tools require client-supplied base revision and operation gate",
+                "explicit_mutation_audit_context_required",
+                "state-changing host tools require a client-supplied base revision and caller-declared audit context; this context does not authorize the operation",
             );
         }
         if request.tool.requires_base_revision()
@@ -428,6 +453,7 @@ impl ControlPlaneState {
             request_id: request.request_id.clone(),
             idempotency_key: request.idempotency_key.clone(),
             replayed: false,
+            authority_facts: authority_facts(request),
             result,
             refusal,
         };
@@ -526,6 +552,7 @@ impl ControlPlaneState {
             request_id: request.request_id.clone(),
             idempotency_key: request.idempotency_key.clone(),
             replayed: false,
+            authority_facts: authority_facts(request),
             result: None,
             refusal: Some(local_refusal(code, detail)),
         }
@@ -549,6 +576,13 @@ fn replay(response: &ControlPlaneResponse) -> ControlPlaneResponse {
     }
 }
 
+fn authority_facts(request: &ControlPlaneRequest) -> ControlPlaneAuthorityFacts {
+    ControlPlaneAuthorityFacts {
+        caller_declared_audit_context_present: request.caller_declared_audit_context.is_some(),
+        canonical_casegraphen_authorization: CanonicalCasegraphenAuthorization::NotEvaluated,
+    }
+}
+
 fn digest(value: &impl Serialize) -> String {
     let bytes = serde_json::to_vec(value).expect("control-plane value serializes");
     format!("{:x}", Sha256::digest(bytes))
@@ -559,7 +593,7 @@ fn request_semantic_digest(request: &ControlPlaneRequest) -> String {
         request.schema.as_str(),
         request.tool,
         request.base_revision_id.as_deref(),
-        request.operation_gate.as_ref(),
+        request.caller_declared_audit_context.as_ref(),
         &request.payload,
     ))
 }

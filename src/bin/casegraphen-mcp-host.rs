@@ -16,12 +16,14 @@ use casegraphen::{
     mcp_stdio::{serve_stdio, McpStdioServer},
     native_eval::evaluate_native_case,
     native_store::NativeCaseStore,
+    resource_allocator::{AtomicResourceAllocator, ResourceAllocatorConfiguration},
     resource_protocol::{
-        grant_topology_reservation, reconcile_resource_allocations, RateLimitCapacity,
-        ReservationDispositionAssertion, ResourceDeclaration, ResourceReservation,
-        RuntimeResourceAllocation,
+        reconcile_resource_allocations, ReservationDispositionAssertion, ResourceDeclaration,
+        ResourceReservation, RuntimeResourceAllocation,
     },
-    runtime_integration::{GenericJsonlReconciler, RuntimeResourceExpectation},
+    runtime_integration::{
+        GenericJsonlReconciler, ResourceExpectationBundle, RuntimeResourceExpectation,
+    },
     runtime_protocol::{RuntimeGraphExpectation, RuntimeNodeReport},
     streaming_reconciliation::{
         derive_streaming_acceptance, derive_streaming_resource_permits, reconcile_stream,
@@ -42,12 +44,15 @@ struct HostConfiguration {
     state_path: PathBuf,
     store_path: PathBuf,
     artifact_path: PathBuf,
+    resource_journal_path: PathBuf,
+    resource_configuration_path: Option<PathBuf>,
     authorization_token: String,
 }
 
 struct OperationalDelegate {
     store_path: PathBuf,
     artifact_path: PathBuf,
+    allocator: AtomicResourceAllocator,
 }
 
 #[derive(Deserialize)]
@@ -70,12 +75,12 @@ struct ProposalCompilerInput {
 struct ResourceReservationInput {
     declaration: ResourceDeclaration,
     reservation: ResourceReservation,
-    #[serde(default)]
-    existing_reservations: Vec<ResourceReservation>,
-    #[serde(default)]
-    disposition_assertions: Vec<ReservationDispositionAssertion>,
-    #[serde(default)]
-    rate_limit_capacities: Vec<RateLimitCapacity>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceDispositionInput {
+    assertion: ReservationDispositionAssertion,
 }
 
 #[derive(Deserialize)]
@@ -212,25 +217,73 @@ impl DecisionDelegate for OperationalDelegate {
                     .ok_or_else(|| refusal("explicit_revision_required", "reconcile_run requires the client-observed revision"))?;
                 let mut reconciler = GenericJsonlReconciler::new();
                 reconciler.ingest_jsonl(jsonl);
-                serde_json::to_value(reconciler.reconcile(&topology, base_revision_id))
+                let report = if let Some(bundle) = request.payload.get("resource_expectation_bundle") {
+                    let bundle: ResourceExpectationBundle = serde_json::from_value(bundle.clone())
+                        .map_err(|error| refusal("invalid_resource_expectation_bundle", &error.to_string()))?;
+                    let expectations = bundle.validate(&topology, base_revision_id)
+                        .map_err(|findings| findings_refusal("resource_expectation_bundle_refused", &findings))?;
+                    for entry in &bundle.expectations {
+                        if !self.allocator.contains_exact_reservation(&entry.declaration, &entry.reservation)
+                            .map_err(allocator_refusal)?
+                        {
+                            return Err(refusal("noncanonical_resource_reservation", "resource expectation does not name an exact allocator journal reservation"));
+                        }
+                        for assertion in &entry.disposition_evidence {
+                            if !self.allocator.contains_disposition(assertion).map_err(allocator_refusal)? {
+                                return Err(refusal("noncanonical_resource_disposition", "resource disposition evidence is absent from allocator journal"));
+                            }
+                        }
+                    }
+                    let allocation_jsonl = bundle.allocation_jsonl();
+                    if !allocation_jsonl.is_empty() {
+                        reconciler.ingest_jsonl(&allocation_jsonl);
+                    }
+                    reconciler.reconcile_with_resources(&topology, base_revision_id, &expectations)
+                } else {
+                    reconciler.reconcile(&topology, base_revision_id)
+                };
+                serde_json::to_value(report)
                     .map_err(|error| refusal("serialization_failure", &error.to_string()))
             }
             ControlPlaneTool::ReserveResources => {
                 let topology = topology_from_payload(&request.payload)?;
                 let input: ResourceReservationInput = payload_value(&request.payload, "resource_request")?;
-                let reservation = grant_topology_reservation(
+                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
+                    refusal("explicit_revision_required", "resource allocation requires a base revision")
+                )?;
+                let outcome = self.allocator.reserve(
                     &topology,
-                    &input.declaration,
-                    &input.reservation,
-                    &input.existing_reservations,
-                    &input.disposition_assertions,
-                    &input.rate_limit_capacities,
-                )
-                .map_err(|findings| findings_refusal("resource_reservation_refused", &findings))?;
+                    base_revision_id,
+                    input.declaration,
+                    input.reservation,
+                    &request.idempotency_key,
+                ).map_err(allocator_refusal)?;
                 Ok(json!({
                     "topology_content_hash": execution_topology_content_hash(&topology).expect("typed topology hashes"),
                     "base_revision_id": request.base_revision_id,
-                    "reservation": reservation,
+                    "allocator_event": outcome.event,
+                    "allocator_generation": outcome.snapshot.generation,
+                    "active_reservations": outcome.snapshot.active_reservations,
+                    "replayed": outcome.replayed,
+                    "accepted_runtime_output": false
+                }))
+            }
+            ControlPlaneTool::ReleaseResources => {
+                let input: ResourceDispositionInput = payload_value(&request.payload, "resource_disposition")?;
+                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
+                    refusal("explicit_revision_required", "resource disposition requires a base revision")
+                )?;
+                let outcome = self.allocator.disposition(
+                    base_revision_id,
+                    input.assertion,
+                    &request.idempotency_key,
+                ).map_err(allocator_refusal)?;
+                Ok(json!({
+                    "base_revision_id": request.base_revision_id,
+                    "allocator_event": outcome.event,
+                    "allocator_generation": outcome.snapshot.generation,
+                    "active_reservations": outcome.snapshot.active_reservations,
+                    "replayed": outcome.replayed,
                     "accepted_runtime_output": false
                 }))
             }
@@ -585,6 +638,12 @@ fn io_refusal(error: io::Error) -> ControlPlaneRefusal {
     refusal("host_io_error", &error.to_string())
 }
 
+fn allocator_refusal(
+    error: casegraphen::resource_allocator::ResourceAllocatorError,
+) -> ControlPlaneRefusal {
+    refusal("resource_allocator_refused", &error.to_string())
+}
+
 fn refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
     ControlPlaneRefusal {
         code: code.to_owned(),
@@ -607,6 +666,8 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
     let mut state_path = None;
     let mut store_path = None;
     let mut artifact_path = None;
+    let mut resource_journal_path = None;
+    let mut resource_configuration_path = None;
     let mut token_env = None;
     let mut args = env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -617,6 +678,8 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
             "--state" => state_path = Some(PathBuf::from(value)),
             "--store" => store_path = Some(PathBuf::from(value)),
             "--artifacts" => artifact_path = Some(PathBuf::from(value)),
+            "--resource-journal" => resource_journal_path = Some(PathBuf::from(value)),
+            "--resource-capacities" => resource_configuration_path = Some(PathBuf::from(value)),
             "--auth-token-env" => token_env = Some(value),
             _ => return Err(format!("unsupported argument {flag}")),
         }
@@ -624,10 +687,14 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
     let token_env = token_env.ok_or("--auth-token-env is required")?;
     let authorization_token = env::var(&token_env)
         .map_err(|_| format!("authorization token environment variable {token_env} is missing"))?;
+    let artifact_path = artifact_path.ok_or("--artifacts is required")?;
     Ok(Some(HostConfiguration {
         state_path: state_path.ok_or("--state is required")?,
         store_path: store_path.ok_or("--store is required")?,
-        artifact_path: artifact_path.ok_or("--artifacts is required")?,
+        resource_journal_path: resource_journal_path
+            .unwrap_or_else(|| artifact_path.join("resource-allocator-journal")),
+        resource_configuration_path,
+        artifact_path,
         authorization_token,
     }))
 }
@@ -639,9 +706,23 @@ fn main() -> io::Result<()> {
         return Ok(());
     };
     fs::create_dir_all(&configuration.artifact_path)?;
+    let resource_configuration = match &configuration.resource_configuration_path {
+        Some(path) => serde_json::from_slice::<ResourceAllocatorConfiguration>(&fs::read(path)?)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        None => ResourceAllocatorConfiguration {
+            schema: casegraphen::resource_allocator::RESOURCE_ALLOCATOR_CONFIGURATION_SCHEMA
+                .to_owned(),
+            schema_version: 0,
+            capacities: Vec::new(),
+        },
+    };
+    let allocator =
+        AtomicResourceAllocator::new(configuration.resource_journal_path, resource_configuration)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let delegate = OperationalDelegate {
         store_path: configuration.store_path,
         artifact_path: configuration.artifact_path,
+        allocator,
     };
     let mut server = McpStdioServer::new_durable_authenticated(
         delegate,

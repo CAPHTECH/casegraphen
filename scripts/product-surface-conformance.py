@@ -17,11 +17,19 @@ def main() -> int:
     request_tools = json.loads(
         (root / "schemas/experimental/control_plane.request.v0.schema.json").read_text()
     )["properties"]["tool"]["enum"]
+    request_schema = json.loads(
+        (root / "schemas/experimental/control_plane.request.v0.schema.json").read_text()
+    )
     adr = (root / "docs/adr/0020-graph-engineering-product-surface.md").read_text()
     failures: list[str] = []
 
     if catalog != request_tools:
         failures.append("control-plane catalog and request schema tool order differ")
+    request_properties = request_schema["properties"]
+    if "operation_gate" in request_properties:
+        failures.append("MCP request schema ambiguously exposes an operation gate")
+    if "caller_declared_audit_context" not in request_properties:
+        failures.append("MCP request schema omits caller-declared audit context")
     if not (root / "src/bin/casegraphen-mcp-host.rs").is_file():
         failures.append("operational host binary is missing")
     cargo = (root / "Cargo.toml").read_text()
@@ -33,6 +41,22 @@ def main() -> int:
         failures.append("operational host is absent from CLI usage")
     if "product-surface.v0.json" not in readme:
         failures.append("README does not link the canonical product-surface inventory")
+    invariants = inventory["invariants"]
+    for required_invariant in (
+        "host_access_requires_bearer_authentication",
+        "host_state_changes_require_caller_declared_audit_context",
+        "caller_declared_audit_context_authorizes_nothing",
+        "acceptance_ledger_mutations_require_canonical_operation_gates",
+        "resource_allocator_state_is_host_canonical",
+        "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle",
+    ):
+        if invariants.get(required_invariant) is not True:
+            failures.append(f"missing authority invariant: {required_invariant}")
+    host_guide = (root / "docs/guides/mcp-operational-host.md").read_text()
+    if "The bearer token authorizes access to host tools" not in host_guide:
+        failures.append("host guide does not state the bearer authorization boundary")
+    if "They are not a CaseGraphen operation gate" not in host_guide:
+        failures.append("host guide does not deny audit-context authorization")
 
     seen: set[str] = set()
     for workflow in inventory["workflows"]:
@@ -53,7 +77,7 @@ def main() -> int:
 
     expected = {
         "compile", "integrate_reconcile", "simulate", "resource_reserve",
-        "resource_reconcile", "expansion", "streaming", "redesign",
+        "resource_release", "resource_reconcile", "expansion", "streaming", "redesign",
     }
     if seen != expected:
         failures.append(f"workflow inventory differs: {sorted(seen ^ expected)}")

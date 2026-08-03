@@ -11,7 +11,7 @@
     "assertion_id": {"$ref": "#/$defs/id"},
     "reservation_id": {"$ref": "#/$defs/id"},
     "attempt_id": {"$ref": "#/$defs/id"},
-    "kind": {"enum": ["release", "supersede"]},
+    "kind": {"enum": ["release", "supersede", "expire"]},
     "asserted_by": {"$ref": "#/$defs/id"},
     "reason": {"$ref": "#/$defs/id"},
     "superseding_reservation_id": {"type": ["string", "null"], "minLength": 1}

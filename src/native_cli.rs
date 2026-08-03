@@ -258,6 +258,7 @@ pub(crate) enum NativeCliCommand {
         case_space_id: Id,
         claim_cell_id: Id,
         topology_input: PathBuf,
+        policy_manifest_input: PathBuf,
         reviewer_id: Id,
         reason: String,
         base_revision_id: Id,
@@ -884,6 +885,7 @@ impl NativeCliCommand {
                 case_space_id,
                 claim_cell_id,
                 topology_input,
+                policy_manifest_input,
                 reviewer_id,
                 reason,
                 base_revision_id,
@@ -895,6 +897,7 @@ impl NativeCliCommand {
                 NativeTopologyReviewOptions {
                     claim_cell_id,
                     topology_input,
+                    policy_manifest_input,
                     action: *action,
                     reviewer_id,
                     reason,

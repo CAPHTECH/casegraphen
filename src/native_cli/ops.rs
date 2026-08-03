@@ -78,6 +78,7 @@ pub(super) struct NativePlanReviewOptions<'a> {
 pub(super) struct NativeTopologyReviewOptions<'a> {
     pub(super) claim_cell_id: &'a Id,
     pub(super) topology_input: &'a Path,
+    pub(super) policy_manifest_input: &'a Path,
     pub(super) action: ReviewAction,
     pub(super) reviewer_id: &'a Id,
     pub(super) reason: &'a str,

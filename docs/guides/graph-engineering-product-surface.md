@@ -6,7 +6,7 @@
 casegraphen-mcp-host --state state.json --store case-store --artifacts artifacts --auth-token-env CASEGRAPHEN_MCP_TOKEN
 ```
 
-Use MCP `initialize`, `notifications/initialized`, then `tools/call`. Each tool argument contains `request_id`, `idempotency_key`, `payload`, and—where a revision or mutation is involved—an explicit `base_revision_id` and `operation_gate`. The host never substitutes `current` for the revision observed by the client.
+Use MCP `initialize`, `notifications/initialized`, then `tools/call`. Each tool argument contains `request_id`, `idempotency_key`, and `payload`. Case-bound workflows also carry the exact client-observed `base_revision_id`; host-managed state changes carry `caller_declared_audit_context` for attribution. Bearer authentication authorizes host access. The audit context is not a CaseGraphen operation gate, and the host never substitutes `current` for the observed revision.
 
 The end-to-end sequence is:
 

@@ -7,7 +7,8 @@
     {"workflow":"compile","entry_point":"operational_mcp_host","tool":"compile_deployment_bundle","owner":"src/graph_compiler.rs","skills":["casegraphen-design","casegraphen-integrate"]},
     {"workflow":"integrate_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_run","owner":"src/runtime_integration.rs","skills":["casegraphen-integrate"]},
     {"workflow":"simulate","entry_point":"operational_mcp_host","tool":"simulate_execution_topology","owner":"src/graph_simulation.rs","skills":["casegraphen-audit"]},
-    {"workflow":"resource_reserve","entry_point":"operational_mcp_host","tool":"reserve_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"resource_reserve","entry_point":"operational_mcp_host","tool":"reserve_resources","owner":"src/resource_allocator.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"resource_release","entry_point":"operational_mcp_host","tool":"release_resources","owner":"src/resource_allocator.rs","skills":["casegraphen-integrate"]},
     {"workflow":"resource_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
     {"workflow":"expansion","entry_point":"operational_mcp_host","tool":"evaluate_expansion_round","owner":"src/dynamic_expansion.rs","skills":["casegraphen-design","casegraphen-audit"]},
     {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
@@ -17,6 +18,11 @@
     "runtime_reports_are_untrusted": true,
     "proposals_are_never_auto_accepted": true,
     "client_observed_revisions_are_not_replaced": true,
-    "mutations_require_operation_gates": true
+    "host_access_requires_bearer_authentication": true,
+    "host_state_changes_require_caller_declared_audit_context": true,
+    "caller_declared_audit_context_authorizes_nothing": true,
+    "acceptance_ledger_mutations_require_canonical_operation_gates": true,
+    "resource_allocator_state_is_host_canonical": true,
+    "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle": true
   }
 }

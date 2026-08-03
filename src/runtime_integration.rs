@@ -25,6 +25,164 @@ pub const RUNTIME_INTEGRATION_REPORT_SCHEMA: &str =
 /// Schema identity of one generic JSONL ingest envelope.
 pub const RUNTIME_INTEGRATION_RECORD_SCHEMA: &str =
     "casegraphen.experimental.runtime.integration.jsonl_record.v0";
+pub const RESOURCE_EXPECTATION_BUNDLE_SCHEMA: &str =
+    "casegraphen.experimental.runtime.resource_expectation_bundle.v0";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceExpectationBundle {
+    pub schema: String,
+    pub schema_version: u32,
+    pub topology_content_hash: String,
+    pub case_revision_id: String,
+    pub expectations: Vec<ResourceExpectationBundleEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceExpectationBundleEntry {
+    pub node_id: String,
+    pub attempt_id: String,
+    pub declaration: ResourceDeclaration,
+    pub reservation: ResourceReservation,
+    pub allocations: Vec<RuntimeResourceAllocation>,
+    pub disposition_evidence: Vec<crate::resource_protocol::ReservationDispositionAssertion>,
+}
+
+impl ResourceExpectationBundle {
+    pub fn validate(
+        &self,
+        topology: &ExecutionTopology,
+        case_revision_id: &str,
+    ) -> Result<Vec<RuntimeResourceExpectation>, Vec<IngestFinding>> {
+        let mut findings = Vec::new();
+        let topology_hash =
+            execution_topology_content_hash(topology).expect("typed execution topology serializes");
+        if self.schema != RESOURCE_EXPECTATION_BUNDLE_SCHEMA || self.schema_version != 0 {
+            findings.push(bundle_finding(
+                "unsupported_resource_expectation_bundle",
+                "schema/version must name runtime.resource_expectation_bundle.v0",
+            ));
+        }
+        if self.topology_content_hash != topology_hash {
+            findings.push(bundle_finding(
+                "resource_bundle_topology_mismatch",
+                "bundle must name the exact topology content hash",
+            ));
+        }
+        if self.case_revision_id != case_revision_id {
+            findings.push(bundle_finding(
+                "resource_bundle_revision_mismatch",
+                "bundle must name the exact client-observed case revision",
+            ));
+        }
+        let mut nodes = BTreeSet::new();
+        let mut attempts = BTreeSet::new();
+        let mut reservations = BTreeSet::new();
+        let mut allocations = BTreeSet::new();
+        for entry in &self.expectations {
+            if !nodes.insert(entry.node_id.as_str()) {
+                findings.push(bundle_finding(
+                    "duplicate_resource_bundle_node",
+                    &format!("{} appears more than once", entry.node_id),
+                ));
+            }
+            if !attempts.insert(entry.attempt_id.as_str()) {
+                findings.push(bundle_finding(
+                    "duplicate_resource_bundle_attempt",
+                    &format!("{} appears more than once", entry.attempt_id),
+                ));
+            }
+            if !reservations.insert(entry.reservation.reservation_id.as_str()) {
+                findings.push(bundle_finding(
+                    "duplicate_resource_bundle_reservation",
+                    &format!(
+                        "{} appears more than once",
+                        entry.reservation.reservation_id
+                    ),
+                ));
+            }
+            if entry.node_id != entry.declaration.node_id
+                || entry.attempt_id != entry.reservation.attempt_id
+                || entry.declaration.declaration_id != entry.reservation.declaration_id
+            {
+                findings.push(bundle_finding(
+                    "resource_bundle_join_mismatch",
+                    &format!("{} identities do not join", entry.node_id),
+                ));
+            }
+            for allocation in &entry.allocations {
+                if !allocations.insert(allocation.allocation_id.as_str()) {
+                    findings.push(bundle_finding(
+                        "duplicate_resource_bundle_allocation",
+                        &format!("{} appears more than once", allocation.allocation_id),
+                    ));
+                }
+                if allocation.reservation_id != entry.reservation.reservation_id
+                    || allocation.attempt_id != entry.attempt_id
+                {
+                    findings.push(bundle_finding(
+                        "resource_bundle_allocation_join_mismatch",
+                        &format!(
+                            "{} does not join {}",
+                            allocation.allocation_id, entry.reservation.reservation_id
+                        ),
+                    ));
+                }
+            }
+            for assertion in &entry.disposition_evidence {
+                if assertion.reservation_id != entry.reservation.reservation_id
+                    || assertion.attempt_id != entry.attempt_id
+                {
+                    findings.push(bundle_finding(
+                        "resource_bundle_disposition_join_mismatch",
+                        &format!(
+                            "{} does not join {}",
+                            assertion.assertion_id, entry.reservation.reservation_id
+                        ),
+                    ));
+                }
+            }
+        }
+        if findings.is_empty() {
+            Ok(self
+                .expectations
+                .iter()
+                .map(|entry| RuntimeResourceExpectation {
+                    declaration: entry.declaration.clone(),
+                    reservation: entry.reservation.clone(),
+                })
+                .collect())
+        } else {
+            findings.sort_by(|left, right| {
+                (&left.code, &left.detail).cmp(&(&right.code, &right.detail))
+            });
+            Err(findings)
+        }
+    }
+
+    pub fn allocation_jsonl(&self) -> String {
+        self.expectations
+            .iter()
+            .flat_map(|entry| &entry.allocations)
+            .map(|allocation| {
+                serde_json::to_string(
+                    &json!({"kind":"resource_allocation","allocation":allocation}),
+                )
+                .expect("typed allocation serializes")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn bundle_finding(code: &str, detail: &str) -> IngestFinding {
+    IngestFinding {
+        code: code.to_owned(),
+        line: None,
+        detail: detail.to_owned(),
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

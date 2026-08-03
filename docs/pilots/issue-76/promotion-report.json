@@ -1,0 +1,24 @@
+{
+  "accepted": false,
+  "blockers": [
+    "Real runtime integration evidence is insufficient to promote experimental v0 to stable."
+  ],
+  "candidate": "graph-engineering-plane-v0",
+  "evidence": [
+    "Four materially different local runtime adapters executed real process, file-drop, durable-queue, and event-stream boundaries.",
+    "Complete fan-out/reduce stopped at needs_review with accepted=false.",
+    "Missing report and schema mismatch failed closed.",
+    "Explicit retry lineage reconciled without relying on JSONL order.",
+    "File-drop workspaces were physically distinct and output bytes were content-addressed.",
+    "Unsafe shared writers produced a graph-lint resource conflict finding.",
+    "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation."
+  ],
+  "promotion_recommended": false,
+  "review_seam": "operator_review_required",
+  "schema": "casegraphen.experimental.runtime_pilot.promotion_report.v0",
+  "unknowns": [
+    "Runtime-reported model, context, cost, version, and latency are not independently anchored.",
+    "The pilots do not cover a remote runtime, sustained load, or binary artifacts.",
+    "A deployment hash is pilot provenance, not a runtime.node_report.v0 field."
+  ]
+}

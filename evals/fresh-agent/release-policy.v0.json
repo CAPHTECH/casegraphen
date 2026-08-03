@@ -1,6 +1,19 @@
 {
   "schema": "casegraphen.eval.fresh_agent_release_policy.v0",
+  "baseline": "release-baseline.v0.json",
+  "retention": "all provider and aggregate reports must be retained by content hash",
+  "failure_disposition": "failures may create only unreviewed audit/redesign proposals and never mutate accepted topology",
   "required_providers": ["codex", "claude"],
+  "runner_pins": {
+    "codex": {
+      "package_identity": "@openai/codex@0.146.0",
+      "version": "0.146.0"
+    },
+    "claude": {
+      "package_identity": "@anthropic-ai/claude-code@2.1.220",
+      "version": "2.1.220"
+    }
+  },
   "required_scenario_ids": [
     "independent-20-file-fanout",
     "same-file-resource-edge",

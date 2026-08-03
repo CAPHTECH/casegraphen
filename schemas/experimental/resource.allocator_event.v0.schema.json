@@ -1,0 +1,26 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.resource.allocator_event.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","sequence","prior_event_hash","idempotency_key","operation_digest","event_hash","payload"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.resource.allocator_event.v0"},
+    "schema_version":{"const":0},
+    "sequence":{"type":"integer","minimum":1},
+    "prior_event_hash":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/hash"}]},
+    "idempotency_key":{"type":"string","minLength":1},
+    "operation_digest":{"$ref":"#/$defs/hash"},
+    "event_hash":{"$ref":"#/$defs/hash"},
+    "payload":{"oneOf":[{"$ref":"#/$defs/reserve"},{"$ref":"#/$defs/disposition"}]}
+  },
+  "$defs":{
+    "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "reserve":{"type":"object","additionalProperties":false,"required":["kind","topology_content_hash","base_revision_id","declaration","reservation"],"properties":{
+      "kind":{"const":"reserve"},"topology_content_hash":{"$ref":"#/$defs/hash"},"base_revision_id":{"type":"string","minLength":1},
+      "declaration":{"$ref":"casegraphen.experimental.resource.declaration.v0"},"reservation":{"$ref":"casegraphen.experimental.resource.reservation.v0"}
+    }},
+    "disposition":{"type":"object","additionalProperties":false,"required":["kind","base_revision_id","assertion"],"properties":{
+      "kind":{"const":"disposition"},"base_revision_id":{"type":"string","minLength":1},"assertion":{"$ref":"casegraphen.experimental.resource.reservation_disposition.v0"}
+    }}
+  }
+}

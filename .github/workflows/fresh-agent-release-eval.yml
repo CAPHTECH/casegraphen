@@ -19,15 +19,14 @@ on:
 
 jobs:
   evaluate:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         provider: [codex, claude]
     runs-on: ubuntu-latest
     timeout-minutes: 240
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.80.0
@@ -35,24 +34,42 @@ jobs:
         run: |
           python3 -m pip install --user jsonschema==4.26.0
           if [ "${{ matrix.provider }}" = codex ]; then
-            npm install --global @openai/codex
+            npm install --global @openai/codex@0.146.0
           else
-            npm install --global @anthropic-ai/claude-code
+            npm install --global @anthropic-ai/claude-code@2.1.220
           fi
       - name: Build the canonical evaluator
         run: cargo build --release --locked --bin casegraphen
-      - name: Execute the real provider matrix lane
+      - name: Execute the Codex provider lane
+        if: matrix.provider == 'codex'
         shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          model="${{ inputs.codex_model }}"
-          if [ "${{ matrix.provider }}" = claude ]; then model="${{ inputs.claude_model }}"; fi
           python3 scripts/fresh-agent-eval.py \
-            --runner-profile "${{ matrix.provider }}" \
-            --model "$model" \
+            --runner-profile codex \
+            --runner-package-identity '@openai/codex@0.146.0' \
+            --expected-runner-version '0.146.0' \
+            --model "${{ inputs.codex_model }}" \
             --budget-usd "${{ inputs.budget_usd }}" \
             --timeout 900 \
             --casegraphen-bin target/release/casegraphen \
-            --output-dir "fresh-agent-${{ matrix.provider }}"
+            --output-dir fresh-agent-codex
+      - name: Execute the Claude provider lane
+        if: matrix.provider == 'claude'
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python3 scripts/fresh-agent-eval.py \
+            --runner-profile claude \
+            --runner-package-identity '@anthropic-ai/claude-code@2.1.220' \
+            --expected-runner-version '2.1.220' \
+            --model "${{ inputs.claude_model }}" \
+            --budget-usd "${{ inputs.budget_usd }}" \
+            --timeout 900 \
+            --casegraphen-bin target/release/casegraphen \
+            --output-dir fresh-agent-claude
       - name: Publish raw and scored evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -61,3 +78,37 @@ jobs:
           path: fresh-agent-${{ matrix.provider }}
           if-no-files-found: error
           retention-days: 90
+
+  aggregate:
+    if: always()
+    needs: evaluate
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fresh-agent-*-${{ github.sha }}
+          path: fresh-agent-inputs
+      - name: Build strict content-addressed matrix report
+        id: aggregate
+        continue-on-error: true
+        run: |
+          python3 scripts/fresh-agent-release.py \
+            --runs-root fresh-agent-inputs \
+            --output-dir fresh-agent-release-report
+      - name: Publish matrix report and retained evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-agent-release-report-${{ github.sha }}
+          path: fresh-agent-release-report
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require independent manual review before promotion
+        if: steps.aggregate.outcome != 'success'
+        run: |
+          echo 'The strict matrix is incomplete or awaits a run-bound manual review.' >&2
+          echo 'Download the provider artifacts, create the bound manual-review document, and rerun fresh-agent-release.py.' >&2
+          exit 1

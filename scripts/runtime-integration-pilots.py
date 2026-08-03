@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Run reproducible local-runtime pilots through the operational MCP host.
 
-The pilots deliberately use two different runtime boundaries:
+The pilots deliberately use four different runtime boundaries:
 
 * ``process-jsonl`` streams envelopes directly from local subprocesses.
 * ``file-drop`` collects native per-attempt files from isolated workspaces and
   only then adapts them to the generic JSONL boundary.
+* ``sqlite-queue`` crosses a transactional durable queue/result-table boundary.
+* ``async-stream`` crosses an asyncio subprocess event-stream boundary.
 
 Everything reported by either runtime remains a declaration.  The script asks
 the real ``casegraphen-mcp-host`` to lint and reconcile and never changes a case
@@ -15,12 +17,14 @@ or accepts a proposal.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import concurrent.futures
 import hashlib
 import json
 import os
 import platform
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -69,6 +73,7 @@ def report(
     retry_of: str | None = None, parents: list[str] | None = None,
     inputs: list[str] | None = None, worktree_id: str | None = None,
     commit_sha: str | None = None, cost: float = 0.0,
+    resource_allocations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": "node_report",
@@ -101,7 +106,7 @@ def report(
             "reported_context_id": f"context:{attempt_id}",
             "token_usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5},
             "cost": {"amount": cost, "currency": "USD"},
-            "resource_allocations": [],
+            "resource_allocations": resource_allocations or [],
             "worktree_id": worktree_id,
             "commit_sha": commit_sha,
             "verifier_report_ids": [],
@@ -146,16 +151,27 @@ class McpHost:
             raise RuntimeError(f"MCP error: {response['error']}")
         return response["result"]
 
-    def call(self, name: str, payload: dict[str, Any], suffix: str) -> dict[str, Any]:
+    def call(
+        self, name: str, payload: dict[str, Any], suffix: str, *, mutation: bool = False
+    ) -> dict[str, Any]:
+        arguments = {
+            "request_id": f"request:pilot:{suffix}",
+            "idempotency_key": f"idempotency:pilot:{suffix}",
+            "base_revision_id": BASE_REVISION,
+            "payload": payload,
+        }
+        if mutation:
+            arguments["caller_declared_audit_context"] = {
+                "declared_actor_id": "actor:runtime-pilot",
+                "declared_capability_ids": ["capability:resource-pilot"],
+                "declared_operation_scope_id": "scope:runtime-pilot",
+                "declared_audience": "audit",
+                "declared_source_boundary_id": "boundary:runtime-pilot",
+            }
         result = self._request("tools/call", {
             "authorization": self.token,
             "name": name,
-            "arguments": {
-                "request_id": f"request:pilot:{suffix}",
-                "idempotency_key": f"idempotency:pilot:{suffix}",
-                "base_revision_id": BASE_REVISION,
-                "payload": payload,
-            },
+            "arguments": arguments,
         })
         structured = result["structuredContent"]
         if structured.get("refusal") is not None:
@@ -371,6 +387,193 @@ Path(native_path).write_text(json.dumps(native, sort_keys=True), encoding='utf-8
     }
 
 
+def single_resource_topology(template: dict[str, Any], family: str) -> dict[str, Any]:
+    """Create one valid, resource-bearing topology for an independent runtime family."""
+    topology = json.loads(json.dumps(template))
+    node = topology["nodes"][0]
+    topology["topology_id"] = f"topology:pilot-{family}"
+    topology["nodes"] = [node]
+    topology["edges"] = []
+    node["node_id"] = f"node:{family}"
+    node["work_cell_id"] = f"work:{family}"
+    node["idempotency_key"] = f"{family}:<input-hash>"
+    node["resource_claims"] = [{
+        "resource": f"file:pilot/{family}.input",
+        "mode": "read",
+        "rate_limit_group": None,
+        "workspace_strategy": "shared",
+        "network_scope": [],
+        "secret_scope": [],
+    }]
+    return topology
+
+
+def resource_contracts(
+    topology: dict[str, Any], topology_hash: str, family: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    node = topology["nodes"][0]
+    claim = node["resource_claims"][0]
+    declaration = {
+        "schema": "casegraphen.experimental.resource.declaration.v0",
+        "schema_version": 0,
+        "declaration_id": f"declaration:{family}",
+        "runtime_graph_id": topology["topology_id"],
+        "runtime_graph_content_hash": topology_hash,
+        "node_id": node["node_id"],
+        "claims": node["resource_claims"],
+    }
+    grant = {
+        "resource_id": claim["resource"],
+        "mode": claim["mode"],
+        "rate_limit_group": claim["rate_limit_group"],
+        "rate_limit_units": 1 if claim["rate_limit_group"] is not None else 0,
+        "workspace_strategy": claim["workspace_strategy"],
+        "network_scope": claim["network_scope"],
+        "secret_scope": claim["secret_scope"],
+    }
+    reservation = {
+        "schema": "casegraphen.experimental.resource.reservation.v0",
+        "schema_version": 0,
+        "reservation_id": f"reservation:{family}:1",
+        "declaration_id": declaration["declaration_id"],
+        "attempt_id": f"attempt:{family}:1",
+        "granted_at": "2026-08-03T00:00:00Z",
+        "grants": [grant],
+    }
+    allocation = {
+        "schema": "casegraphen.experimental.runtime.resource_allocation.v0",
+        "schema_version": 0,
+        "allocation_id": f"allocation:{family}:1",
+        "reservation_id": reservation["reservation_id"],
+        "attempt_id": reservation["attempt_id"],
+        **grant,
+        "worktree_id": None,
+        "trust_boundary": "runtime_reported_untrusted_until_independently_reconciled",
+    }
+    return declaration, reservation, allocation
+
+
+def sqlite_queue_runtime(root: Path) -> tuple[str, dict[str, Any]]:
+    database = root / "sqlite-queue.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "CREATE TABLE jobs(id INTEGER PRIMARY KEY, payload TEXT, state TEXT);"
+        "CREATE TABLE results(job_id INTEGER PRIMARY KEY, output TEXT);"
+    )
+    connection.execute("INSERT INTO jobs(payload,state) VALUES (?,?)", ("sqlite-payload", "queued"))
+    connection.commit()
+    started = time.monotonic_ns()
+    row = connection.execute("SELECT id,payload FROM jobs WHERE state='queued'").fetchone()
+    if row is None:
+        raise RuntimeError("SQLite pilot queue did not retain its job")
+    output = row[1].upper()
+    connection.execute("UPDATE jobs SET state='complete' WHERE id=?", (row[0],))
+    connection.execute("INSERT INTO results(job_id,output) VALUES (?,?)", (row[0], output))
+    connection.commit()
+    retained = connection.execute("SELECT output FROM results WHERE job_id=?", (row[0],)).fetchone()[0]
+    connection.close()
+    return retained, {
+        "adapter": "sqlite-durable-queue",
+        "runtime": "sqlite3-transactional-worker",
+        "runtime_version": sqlite3.sqlite_version,
+        "adapter_version": "0.1.0",
+        "database_content_hash": file_sha256(database),
+        "measured_latency_ms": max(0, (time.monotonic_ns() - started) // 1_000_000),
+        "durable_result_observed": retained == output,
+        "trust": "runtime_declared_untrusted",
+    }
+
+
+async def _async_worker() -> tuple[str, int]:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import sys; print(sys.stdin.read().strip()[::-1])",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await process.communicate(b"async-payload\n")
+    return stdout.decode().strip(), int(process.returncode or 0)
+
+
+def async_stream_runtime() -> tuple[str, dict[str, Any]]:
+    started = time.monotonic_ns()
+    output, returncode = asyncio.run(_async_worker())
+    if returncode != 0:
+        raise RuntimeError(f"async subprocess exited {returncode}")
+    chunks = [output[index:index + 3] for index in range(0, len(output), 3)]
+    return "".join(chunks), {
+        "adapter": "async-subprocess-stream",
+        "runtime": "asyncio-event-loop",
+        "runtime_version": platform.python_version(),
+        "adapter_version": "0.1.0",
+        "chunk_count": len(chunks),
+        "logical_sequence": list(range(len(chunks))),
+        "measured_latency_ms": max(0, (time.monotonic_ns() - started) // 1_000_000),
+        "trust": "runtime_declared_untrusted",
+    }
+
+
+def run_resource_family(
+    host: McpHost,
+    topology: dict[str, Any],
+    topology_hash: str,
+    family: str,
+    output_text: str,
+    observation: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    declaration, reservation, allocation = resource_contracts(topology, topology_hash, family)
+    host.call(
+        "reserve_resources",
+        {"topology_json": json.dumps(topology), "resource_request": {
+            "declaration": declaration, "reservation": reservation,
+        }},
+        f"reserve-{family}",
+        mutation=True,
+    )
+    artifact_id, artifact_record = artifact(output_text, "text/plain")
+    node = topology["nodes"][0]
+    report_record = report(
+        topology_id=topology["topology_id"], topology_hash=topology_hash,
+        node_id=node["node_id"], attempt_id=reservation["attempt_id"],
+        output_id=artifact_id, expected_schema=node["outputs"][0]["schema_id"],
+        actual_schema=node["outputs"][0]["schema_id"], adapter_name=observation["adapter"],
+        adapter_version=observation["adapter_version"], runtime_name=observation["runtime"],
+        runtime_version=observation["runtime_version"], started_at="2026-08-03T00:00:00Z",
+        finished_at="2026-08-03T00:00:01Z",
+        resource_allocations=[{
+            "resource_id": allocation["resource_id"], "mode": allocation["mode"],
+            "allocation_id": allocation["allocation_id"],
+        }],
+    )
+    records = [artifact_record, report_record]
+    bundle = {
+        "schema": "casegraphen.experimental.runtime.resource_expectation_bundle.v0",
+        "schema_version": 0,
+        "topology_content_hash": topology_hash,
+        "case_revision_id": BASE_REVISION,
+        "expectations": [{
+            "node_id": node["node_id"], "attempt_id": reservation["attempt_id"],
+            "declaration": declaration, "reservation": reservation,
+            "allocations": [allocation], "disposition_evidence": [],
+        }],
+    }
+    result = host.call(
+        "reconcile_run",
+        {"topology_json": json.dumps(topology), "runtime_jsonl": jsonl(records),
+         "resource_expectation_bundle": bundle},
+        f"reconcile-{family}",
+    )
+    observation.update({
+        "topology_content_hash": topology_hash,
+        "output_artifact_id": artifact_id,
+        "reservation_id": reservation["reservation_id"],
+        "resource_reconciliation_complete": result.get("reconciliation_complete") is True,
+    })
+    return records, observation, result
+
+
 def jsonl(records: list[dict[str, Any]]) -> str:
     return "\n".join(json.dumps(record, sort_keys=True, separators=(",", ":")) for record in records)
 
@@ -398,6 +601,8 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
     fanout = json.loads(topology_paths["fanout_reduce"].read_text())
     worktree = json.loads(topology_paths["worktree_isolation"].read_text())
     collision = json.loads(topology_paths["resource_collision"].read_text())
+    sqlite_topology = single_resource_topology(fanout, "sqlite-queue")
+    async_topology = single_resource_topology(fanout, "async-stream")
     with tempfile.TemporaryDirectory(prefix="casegraphen-runtime-pilot-") as directory:
         root = Path(directory)
         host = McpHost(host_binary, root)
@@ -405,10 +610,38 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             fanout_lint = host.call("lint_execution_topology", {"topology_json": json.dumps(fanout)}, "lint-fanout")
             worktree_lint = host.call("lint_execution_topology", {"topology_json": json.dumps(worktree)}, "lint-worktree")
             collision_lint = host.call("lint_execution_topology", {"topology_json": json.dumps(collision)}, "lint-collision")
+            sqlite_lint = host.call(
+                "lint_execution_topology",
+                {"topology_json": json.dumps(sqlite_topology)},
+                "lint-sqlite-queue",
+            )
+            async_lint = host.call(
+                "lint_execution_topology",
+                {"topology_json": json.dumps(async_topology)},
+                "lint-async-stream",
+            )
             fanout_hash = fanout_lint["topology_content_hash"]
             worktree_hash = worktree_lint["topology_content_hash"]
             process_records, process_observation = process_jsonl_adapter(fanout, fanout_hash)
             file_records, file_observation = file_drop_adapter(worktree, worktree_hash, root)
+            sqlite_output, sqlite_observation = sqlite_queue_runtime(root)
+            async_output, async_observation = async_stream_runtime()
+            sqlite_records, sqlite_observation, sqlite_result = run_resource_family(
+                host,
+                sqlite_topology,
+                sqlite_lint["topology_content_hash"],
+                "sqlite-queue",
+                sqlite_output,
+                sqlite_observation,
+            )
+            async_records, async_observation, async_result = run_resource_family(
+                host,
+                async_topology,
+                async_lint["topology_content_hash"],
+                "async-stream",
+                async_output,
+                async_observation,
+            )
 
             complete = host.call("reconcile_run", {
                 "topology_json": json.dumps(fanout), "runtime_jsonl": jsonl(process_records),
@@ -460,27 +693,29 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             "Carry source adapter run identity without promoting runtime declarations to facts.",
             "Let the operational host accept canonical resource expectations for reconciliation.",
         ],
-        "derived_from_pilots": ["generic-jsonl", "file-drop"],
+        "derived_from_pilots": [
+            "generic-jsonl", "file-drop", "sqlite-durable-queue", "async-subprocess-stream"
+        ],
     })
     promotion = {
         "schema": "casegraphen.experimental.runtime_pilot.promotion_report.v0",
         "candidate": "graph-engineering-plane-v0", "promotion_recommended": False,
         "accepted": False,
         "evidence": [
-            "Two materially different local runtime adapters executed actual subprocesses.",
+            "Four materially different local runtime adapters executed real process, file-drop, durable-queue, and event-stream boundaries.",
             "Complete fan-out/reduce stopped at needs_review with accepted=false.",
             "Missing report and schema mismatch failed closed.",
             "Explicit retry lineage reconciled without relying on JSONL order.",
             "File-drop workspaces were physically distinct and output bytes were content-addressed.",
             "Unsafe shared writers produced a graph-lint resource conflict finding.",
+            "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation.",
         ],
         "unknowns": [
             "Runtime-reported model, context, cost, version, and latency are not independently anchored.",
-            "The pilots do not cover a remote runtime, sustained load, crash recovery, or binary artifacts.",
+            "The pilots do not cover a remote runtime, sustained load, or binary artifacts.",
             "A deployment hash is pilot provenance, not a runtime.node_report.v0 field.",
         ],
         "blockers": [
-            "Resource-bearing reconcile_run cannot supply declaration/reservation expectations through the operational host.",
             "Real runtime integration evidence is insufficient to promote experimental v0 to stable.",
         ],
         "review_seam": "operator_review_required",
@@ -498,13 +733,17 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             "git_version": subprocess.check_output(["git", "--version"], text=True).strip(),
             "trust": "locally_observed_not_ledger_accepted",
         },
-        "adapters": [process_observation, file_observation],
+        "adapters": [
+            process_observation, file_observation, sqlite_observation, async_observation
+        ],
         "scenarios": {
             "fanout_reduce_complete": complete,
             "missing_report": missing,
             "schema_mismatch": mismatch,
             "worktree_isolation": worktree_result,
             "resource_collision_lint": collision_lint,
+            "sqlite_resource_reconciliation": sqlite_result,
+            "async_resource_reconciliation": async_result,
         },
         "assertions": {
             "complete_halts_for_review": complete["halt"] == "needs_review" and complete["accepted"] is False,
@@ -514,8 +753,22 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             "retry_lineage_preserved": process_observation["retry_lineage"] == ["attempt:inspect-b:1", "attempt:inspect-b:2"],
             "resource_collision_detected": any("resource" in code for code in collision_codes),
             "workspaces_isolated": file_observation["workspace_isolation_observed"],
-            "resource_boundary_fails_closed": worktree_result["halt"] == "resource_reconciliation_incomplete" and not worktree_result["proposals"],
-            "all_runtime_results_unaccepted": all(result["accepted"] is False for result in [complete, missing, mismatch, worktree_result]),
+            "legacy_resource_boundary_fails_closed": worktree_result["halt"] == "resource_reconciliation_incomplete" and not worktree_result["proposals"],
+            "additional_families_resource_complete": all(
+                result["halt"] == "needs_review"
+                and result["accepted"] is False
+                and result["reconciliation_complete"] is True
+                and all(proposal["review_status"] == "unreviewed" for proposal in result["proposals"])
+                for result in [sqlite_result, async_result]
+            ),
+            "four_materially_distinct_families": len({
+                observation["runtime"] for observation in [
+                    process_observation, file_observation, sqlite_observation, async_observation
+                ]
+            }) == 4,
+            "all_runtime_results_unaccepted": all(result["accepted"] is False for result in [
+                complete, missing, mismatch, worktree_result, sqlite_result, async_result
+            ]),
         },
         "redesign_proposal": redesign,
         "next_version_proposal": next_version,
@@ -526,10 +779,40 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
         raise RuntimeError(f"pilot assertions failed: {failed}")
     (output / "process-jsonl.complete.jsonl").write_text(jsonl(process_records) + "\n", encoding="utf-8")
     (output / "file-drop.complete.jsonl").write_text(jsonl(file_records) + "\n", encoding="utf-8")
+    (output / "sqlite-queue.complete.jsonl").write_text(
+        jsonl(sqlite_records) + "\n", encoding="utf-8"
+    )
+    (output / "async-stream.complete.jsonl").write_text(
+        jsonl(async_records) + "\n", encoding="utf-8"
+    )
     write_json(output / "pilot-report.json", summary)
     write_json(output / "redesign-proposal.json", redesign)
     write_json(output / "v0-next-version-proposal.json", next_version)
     write_json(output / "promotion-report.json", promotion)
+    retained_names = [
+        "pilot-report.json",
+        "process-jsonl.complete.jsonl",
+        "file-drop.complete.jsonl",
+        "sqlite-queue.complete.jsonl",
+        "async-stream.complete.jsonl",
+        "redesign-proposal.json",
+        "v0-next-version-proposal.json",
+        "promotion-report.json",
+    ]
+    retained_manifest = {
+        "schema": "casegraphen.experimental.runtime_pilot.evidence_manifest.v0",
+        "accepted": False,
+        "trust": "locally_observed_not_ledger_accepted",
+        "files": [
+            {
+                "path": name,
+                "content_hash": f"sha256:{file_sha256(output / name)}",
+                "byte_length": (output / name).stat().st_size,
+            }
+            for name in retained_names
+        ],
+    }
+    write_json(output / "retained-evidence.manifest.json", retained_manifest)
     return summary
 
 

@@ -1,4 +1,8 @@
 use crate::{
+    deployment_policy::{
+        deployment_policy_manifest_content_hash, validate_deployment_policy_manifest,
+        DeploymentPolicyManifest,
+    },
     native_eval::{
         evaluate_native_case, latest_evidence_review_statuses, NativeCaseEvaluation,
         NativeCloseInvariantResult, NativeEvalError, NativeReviewGapType,
@@ -58,6 +62,7 @@ pub struct ExecutionTopologyReviewTarget {
     pub observed_base_revision_id: Id,
     pub claim_cell_id: Id,
     pub artifact_id: Id,
+    pub policy_manifest_content_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expansion_proposal_id: Option<Id>,
 }
@@ -204,8 +209,15 @@ pub fn execution_topology_review_morphism(
     case_space: &CaseSpace,
     request: ExecutionTopologyReviewRequest,
     topology_artifact_bytes: &[u8],
+    policy_manifest_bytes: &[u8],
 ) -> NativeReviewResult<CaseMorphism> {
-    require_execution_topology_review_target(case_space, &request.target, topology_artifact_bytes)?;
+    require_execution_topology_review_target(
+        case_space,
+        &request.target,
+        request.action,
+        topology_artifact_bytes,
+        policy_manifest_bytes,
+    )?;
     let action = request.action;
     let target = request.target.clone();
     let generic = NativeReviewRequest {
@@ -234,6 +246,22 @@ pub fn execution_topology_review_morphism(
         "execution_topology_binding".to_owned(),
         serde_json::to_value(target).expect("typed topology review target serializes"),
     );
+    if action == ReviewAction::Accept {
+        let topology: crate::execution_topology::ExecutionTopology =
+            serde_json::from_slice(topology_artifact_bytes)
+                .expect("validated execution topology artifact still deserializes");
+        let advisories = crate::graph_lint::lint_execution_topology(&topology)
+            .findings
+            .into_iter()
+            .filter(|finding| {
+                finding.classification == crate::graph_lint::FindingClassification::Heuristic
+            })
+            .collect::<Vec<_>>();
+        morphism.metadata.insert(
+            "execution_topology_review_advisories".to_owned(),
+            serde_json::to_value(advisories).expect("typed graph lint findings serialize"),
+        );
+    }
     Ok(morphism)
 }
 
@@ -826,7 +854,9 @@ fn require_review_request(
 fn require_execution_topology_review_target(
     case_space: &CaseSpace,
     target: &ExecutionTopologyReviewTarget,
+    action: ReviewAction,
     topology_artifact_bytes: &[u8],
+    policy_manifest_bytes: &[u8],
 ) -> NativeReviewResult<()> {
     if target.case_space_id != case_space.case_space_id {
         return Err(error("execution topology review case_space_id mismatch"));
@@ -849,6 +879,22 @@ fn require_execution_topology_review_target(
     let topology: crate::execution_topology::ExecutionTopology =
         serde_json::from_slice(topology_artifact_bytes)
             .map_err(|source| error(format!("invalid execution topology artifact: {source}")))?;
+    if action == ReviewAction::Accept {
+        let findings = crate::execution_topology::validate_execution_topology(&topology);
+        if !findings.is_empty() {
+            return Err(error(format!(
+                "execution_topology_validation:{}",
+                findings
+                    .iter()
+                    .map(|finding| format!(
+                        "{} at {}: {}",
+                        finding.code, finding.location, finding.detail
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )));
+        }
+    }
     let actual_artifact_hash = crate::native_hash::sha256_hex(topology_artifact_bytes);
     if target.artifact_id.as_str() != format!("artifact:sha256-{actual_artifact_hash}") {
         return Err(error(
@@ -865,6 +911,32 @@ fn require_execution_topology_review_target(
         return Err(error(
             "execution topology artifact identity does not match the review target",
         ));
+    }
+    let policy_manifest: DeploymentPolicyManifest =
+        serde_json::from_slice(policy_manifest_bytes)
+            .map_err(|source| error(format!("invalid deployment policy manifest: {source}")))?;
+    let actual_policy_manifest_hash = deployment_policy_manifest_content_hash(&policy_manifest)
+        .map_err(|source| {
+            error(format!(
+                "deployment policy manifest cannot be hashed: {source}"
+            ))
+        })?;
+    if actual_policy_manifest_hash != target.policy_manifest_content_hash {
+        return Err(error(
+            "deployment policy manifest bytes do not match the review target",
+        ));
+    }
+    if let Some(finding) = validate_deployment_policy_manifest(
+        &topology,
+        &target.topology_content_hash,
+        &policy_manifest,
+    )
+    .first()
+    {
+        return Err(error(format!(
+            "deployment_policy_manifest_validation:{} at {}: {}",
+            finding.code, finding.location, finding.detail
+        )));
     }
     let claim = case_space
         .case_cells
@@ -885,6 +957,10 @@ fn require_execution_topology_review_target(
             target.topology_content_hash.as_str(),
         ),
         ("artifact_id", target.artifact_id.as_str()),
+        (
+            "policy_manifest_content_hash",
+            target.policy_manifest_content_hash.as_str(),
+        ),
         ("case_space_id", target.case_space_id.as_str()),
     ] {
         if claim.metadata.get(field).and_then(Value::as_str) != Some(expected) {

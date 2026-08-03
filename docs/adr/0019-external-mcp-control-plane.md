@@ -28,8 +28,9 @@ The trust boundary is explicit:
 - MCP clients, runtime reports, model/context identity, notifications, and
   reconnect cursors are untrusted inputs;
 - resource reads are projections of CaseGraphen/runtime state, not new facts;
-- mutating requests carry the client-observed `base_revision_id` and operation
-  gate; the adapter never substitutes current;
+- state-changing host requests carry the client-observed `base_revision_id`
+  and caller-declared audit context; the adapter never substitutes current and
+  never represents that context as a validated CaseGraphen operation gate;
 - stale revision is a structured refusal containing supplied and current ids;
 - notifications describe observed state changes and grant no authority;
 - request ids/content hashes make reconnect and replay idempotent; an id reused
@@ -94,3 +95,13 @@ until delegated to their existing CLI owner. The host does
 not schedule, invoke models, retry work, interpret notifications as grants, or
 auto-resume. `casegraphen-mcp` remains the stateless reference adapter and
 continues to identify itself that way.
+
+## Amendment: authorization vocabulary (2026-08-03)
+
+ADR 0021 fixes the operational authorization model. The exact bearer token
+authenticates and authorizes host-tool access. `caller_declared_audit_context`
+is attribution only; its actor/capability/scope/audience/source declarations are
+not checked by `check_operation_gate` and never claim canonical authority.
+Operational responses record bearer authentication separately from canonical
+CaseGraphen authorization (`not_evaluated`). Acceptance-ledger mutations remain
+owned by the CLI/store canonical gate path and refused by this host.

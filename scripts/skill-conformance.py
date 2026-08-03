@@ -59,6 +59,9 @@ OVERCLAIMS = (
     "MCP control plane is production ready",
     "agent behavior eval is implemented",
     "runtime output is accepted evidence",
+    "reservation requires an explicit operation gate",
+    "MCP operation gate required",
+    "MCP mutations require operation gate",
 )
 
 

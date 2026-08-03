@@ -1,0 +1,47 @@
+{
+  "accepted": false,
+  "files": [
+    {
+      "byte_length": 25216,
+      "content_hash": "sha256:d03ee998600c6c1be57c9887ffe65ec4522be2216ed32cf220f22bb9f8995bfc",
+      "path": "pilot-report.json"
+    },
+    {
+      "byte_length": 6227,
+      "content_hash": "sha256:7564d236328f7cc22c0bb45654004b3662085e30fac10382cb464c852e6ab0c4",
+      "path": "process-jsonl.complete.jsonl"
+    },
+    {
+      "byte_length": 3152,
+      "content_hash": "sha256:98563229b3ab271115049c12917fc2033fde552d637eb146eb695729c4eb8877",
+      "path": "file-drop.complete.jsonl"
+    },
+    {
+      "byte_length": 1631,
+      "content_hash": "sha256:3343f3452341578ccce06332aaed719f13a9c8a11d074609366c9534f67be114",
+      "path": "sqlite-queue.complete.jsonl"
+    },
+    {
+      "byte_length": 1627,
+      "content_hash": "sha256:36f5d8fc3749aa26cfbe0aa548cc771def2d37c7e96ab2bd86b46fb7ba23e0cc",
+      "path": "async-stream.complete.jsonl"
+    },
+    {
+      "byte_length": 833,
+      "content_hash": "sha256:b5a15d9082fac4782b29a2f8e1709e2027b8a4c57a4fb7807d5f6c8650baa803",
+      "path": "redesign-proposal.json"
+    },
+    {
+      "byte_length": 750,
+      "content_hash": "sha256:35447abfab2377efd3201e391b45b71c1e0ac9d1c3fcce32ca071103b1e46759",
+      "path": "v0-next-version-proposal.json"
+    },
+    {
+      "byte_length": 1293,
+      "content_hash": "sha256:47d2d6f7fe19e9ed03e08c00ed3f6511f3d81ced7f05f5fac60d68b4b73725c5",
+      "path": "promotion-report.json"
+    }
+  ],
+  "schema": "casegraphen.experimental.runtime_pilot.evidence_manifest.v0",
+  "trust": "locally_observed_not_ledger_accepted"
+}

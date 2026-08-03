@@ -8836,6 +8836,39 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
     let topology: ExecutionTopology =
         serde_json::from_value(topology_value.clone()).expect("typed topology");
     let topology_hash = execution_topology_content_hash(&topology).expect("topology hash");
+    let verification_policies = topology
+        .verification_policy_ids
+        .iter()
+        .map(|id| {
+            let mut value = json_file(repo_path(
+                "schemas/experimental/verification.policy.example.json",
+            ));
+            value["verification_policy_id"] = json!(id);
+            (id.clone(), value)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let budget_policies = topology
+        .budget_policy_ids
+        .iter()
+        .map(|id| (id.clone(), json!({"policy_id": id, "max_cost": 10})))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let expansion_policies = std::collections::BTreeMap::new();
+    let policy_manifest = casegraphen::deployment_policy::deployment_policy_manifest(
+        &topology,
+        &topology_hash,
+        &verification_policies,
+        &budget_policies,
+        &expansion_policies,
+    );
+    let policy_manifest_hash =
+        casegraphen::deployment_policy::deployment_policy_manifest_content_hash(&policy_manifest)
+            .expect("policy manifest hash");
+    let policy_manifest_path = directory.join("deployment-policy-manifest.json");
+    fs::write(
+        &policy_manifest_path,
+        serde_json::to_vec_pretty(&policy_manifest).expect("policy manifest bytes"),
+    )
+    .expect("write policy manifest");
     let topology_path = directory.join("execution.topology.json");
     let topology_bytes = serde_json::to_vec_pretty(&topology_value).expect("topology bytes");
     fs::write(&topology_path, &topology_bytes).expect("write topology artifact");
@@ -8852,7 +8885,8 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
         "topology_id": topology.topology_id,
         "execution_topology_content_hash": topology_hash,
         "artifact_id": artifact_id,
-        "case_space_id": native_case_space_id()
+        "case_space_id": native_case_space_id(),
+        "policy_manifest_content_hash": policy_manifest_hash
     });
     let claim_path = directory.join("execution-topology-claim.json");
     fs::write(
@@ -8895,6 +8929,8 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
         "evidence:execution-topology",
         "--input",
         topology_path.to_str().expect("topology path"),
+        "--policy-manifest",
+        policy_manifest_path.to_str().expect("policy manifest path"),
         "--reviewer-id",
         "reviewer:topology",
         "--reason",
@@ -8973,23 +9009,9 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
                 allowed_transition_classes: vec![transition.clone()],
             })
             .collect(),
-        verification_policies: topology
-            .verification_policy_ids
-            .iter()
-            .map(|id| {
-                let mut value = json_file(repo_path(
-                    "schemas/experimental/verification.policy.example.json",
-                ));
-                value["verification_policy_id"] = json!(id);
-                (id.clone(), value)
-            })
-            .collect(),
-        budget_policies: topology
-            .budget_policy_ids
-            .iter()
-            .map(|id| (id.clone(), json!({"policy_id": id, "max_cost": 10})))
-            .collect(),
-        expansion_policies: Default::default(),
+        verification_policies: verification_policies.clone(),
+        budget_policies: budget_policies.clone(),
+        expansion_policies: expansion_policies.clone(),
     };
     let bundle = compile_execution_topology(&topology, &request)
         .expect("store-produced reviewed topology compiles");
@@ -9007,6 +9029,8 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
             "evidence:execution-topology",
             "--input",
             topology_path.to_str().expect("topology path"),
+            "--policy-manifest",
+            policy_manifest_path.to_str().expect("policy manifest path"),
             "--reviewer-id",
             "reviewer:topology",
             "--reason",

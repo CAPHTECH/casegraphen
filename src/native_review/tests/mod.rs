@@ -92,7 +92,7 @@ fn invalid_review_target_is_rejected() {
 #[test]
 fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
     let mut space = fixture_space();
-    let (topology_bytes, target) = topology_review_target(&space);
+    let (topology_bytes, policy_manifest_bytes, target) = topology_review_target(&space);
     let artifact_id = target.artifact_id.to_string();
     let artifact_hash = artifact_id.trim_start_matches("artifact:sha256-");
     let mut claim = cell(
@@ -109,6 +109,10 @@ fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
             json!(target.topology_content_hash),
         ),
         ("artifact_id".to_owned(), json!(artifact_id)),
+        (
+            "policy_manifest_content_hash".to_owned(),
+            json!(target.policy_manifest_content_hash),
+        ),
         (
             "case_space_id".to_owned(),
             json!(space.case_space_id.clone()),
@@ -145,6 +149,7 @@ fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
             target_revision_id: id("revision:execution-topology-reviewed"),
         },
         &topology_bytes,
+        &policy_manifest_bytes,
     )
     .expect("dedicated topology review");
     let canonical = canonical_review(&morphism).expect("canonical topology review");
@@ -153,6 +158,13 @@ fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
         NativeReviewTargetKind::ExecutionTopology
     );
     assert_eq!(canonical.execution_topology, Some(target));
+    let advisories = morphism.metadata["execution_topology_review_advisories"]
+        .as_array()
+        .expect("review advisories are an array");
+    assert!(!advisories.is_empty(), "fixture carries reviewer advice");
+    assert!(advisories.iter().all(|finding| {
+        finding.get("classification").and_then(Value::as_str) == Some("heuristic")
+    }));
 
     let error = accept_review_morphism(
         &space,
@@ -170,7 +182,7 @@ fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
 #[test]
 fn execution_topology_review_refuses_stale_revision_and_changed_binding() {
     let mut space = fixture_space();
-    let (topology_bytes, mut target) = topology_review_target(&space);
+    let (topology_bytes, policy_manifest_bytes, mut target) = topology_review_target(&space);
     let artifact_id = target.artifact_id.to_string();
     let artifact_hash = artifact_id.trim_start_matches("artifact:sha256-");
     let mut claim = cell(
@@ -187,6 +199,10 @@ fn execution_topology_review_refuses_stale_revision_and_changed_binding() {
             json!(target.topology_content_hash),
         ),
         ("artifact_id".to_owned(), json!(artifact_id)),
+        (
+            "policy_manifest_content_hash".to_owned(),
+            json!(target.policy_manifest_content_hash),
+        ),
         (
             "case_space_id".to_owned(),
             json!(space.case_space_id.clone()),
@@ -222,18 +238,59 @@ fn execution_topology_review_refuses_stale_revision_and_changed_binding() {
         source_ids: vec![id("source:test")],
         target_revision_id: id("revision:execution-topology-reviewed"),
     };
-    let error = execution_topology_review_morphism(&space, request, &topology_bytes)
-        .expect_err("stale review target refuses");
+    let error = execution_topology_review_morphism(
+        &space,
+        request,
+        &topology_bytes,
+        &policy_manifest_bytes,
+    )
+    .expect_err("stale review target refuses");
     assert!(error.message.contains("observed revision is stale"));
 }
 
-fn topology_review_target(space: &CaseSpace) -> (Vec<u8>, ExecutionTopologyReviewTarget) {
+#[test]
+fn execution_topology_review_refuses_policy_manifest_substitution() {
+    let mut space = fixture_space();
+    let (topology_bytes, policy_manifest_bytes, target) = topology_review_target(&space);
+    install_topology_review_target(&mut space, &target);
+    let mut substituted: Value = serde_json::from_slice(&policy_manifest_bytes).unwrap();
+    substituted["budget_policies"][0]["content_hash"] = json!("f".repeat(64));
+    let substituted = serde_json::to_vec(&substituted).unwrap();
+    let error = execution_topology_review_morphism(
+        &space,
+        ExecutionTopologyReviewRequest {
+            target,
+            action: ReviewAction::Accept,
+            reviewer_id: id("reviewer:native"),
+            reviewed_at: "2026-08-03T00:00:00Z".to_owned(),
+            reason: "Substitution must refuse.".to_owned(),
+            evidence_ids: Vec::new(),
+            source_ids: vec![id("source:test")],
+            target_revision_id: id("revision:manifest-substitution"),
+        },
+        &topology_bytes,
+        &substituted,
+    )
+    .expect_err("changed policy manifest bytes are not reviewed authority");
+    assert!(error
+        .message
+        .contains("policy manifest bytes do not match the review target"));
+}
+
+fn topology_review_target(space: &CaseSpace) -> (Vec<u8>, Vec<u8>, ExecutionTopologyReviewTarget) {
     let mut value: Value = serde_json::from_str(include_str!(
         "../../../schemas/experimental/execution.topology.file-review.example.json"
     ))
     .expect("topology fixture");
     value["topology_id"] = json!("topology:review-fixture");
     value["case_space_id"] = json!(space.case_space_id.clone());
+    topology_review_target_from_value(space, value)
+}
+
+fn topology_review_target_from_value(
+    space: &CaseSpace,
+    value: Value,
+) -> (Vec<u8>, Vec<u8>, ExecutionTopologyReviewTarget) {
     let bytes = serde_json::to_vec(&value).expect("topology fixture bytes");
     let topology: crate::execution_topology::ExecutionTopology =
         serde_json::from_slice(&bytes).expect("typed topology fixture");
@@ -241,8 +298,31 @@ fn topology_review_target(space: &CaseSpace) -> (Vec<u8>, ExecutionTopologyRevie
         crate::execution_topology::execution_topology_content_hash(&topology)
             .expect("topology fixture hash");
     let artifact_hash = crate::native_hash::sha256_hex(&bytes);
+    let verification_policies = topology
+        .verification_policy_ids
+        .iter()
+        .map(|id| (id.clone(), json!({"verification_policy_id": id})))
+        .collect();
+    let budget_policies = topology
+        .budget_policy_ids
+        .iter()
+        .map(|id| (id.clone(), json!({"policy_id": id})))
+        .collect();
+    let expansion_policies = BTreeMap::new();
+    let policy_manifest = crate::deployment_policy::deployment_policy_manifest(
+        &topology,
+        &topology_content_hash,
+        &verification_policies,
+        &budget_policies,
+        &expansion_policies,
+    );
+    let policy_manifest_bytes = serde_json::to_vec(&policy_manifest).unwrap();
+    let policy_manifest_content_hash =
+        crate::deployment_policy::deployment_policy_manifest_content_hash(&policy_manifest)
+            .unwrap();
     (
         bytes,
+        policy_manifest_bytes,
         ExecutionTopologyReviewTarget {
             topology_id: id("topology:review-fixture"),
             topology_content_hash,
@@ -250,9 +330,131 @@ fn topology_review_target(space: &CaseSpace) -> (Vec<u8>, ExecutionTopologyRevie
             observed_base_revision_id: space.revision.revision_id.clone(),
             claim_cell_id: id("evidence:execution-topology"),
             artifact_id: id(&format!("artifact:sha256-{artifact_hash}")),
+            policy_manifest_content_hash,
             expansion_proposal_id: None,
         },
     )
+}
+
+fn install_topology_review_target(space: &mut CaseSpace, target: &ExecutionTopologyReviewTarget) {
+    let artifact_id = target.artifact_id.to_string();
+    let artifact_hash = artifact_id.trim_start_matches("artifact:sha256-");
+    let mut claim = cell(
+        target.claim_cell_id.as_str(),
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+        SourceKind::Document,
+        ReviewStatus::Unreviewed,
+    );
+    claim.metadata.extend([
+        ("topology_id".to_owned(), json!(target.topology_id)),
+        (
+            "execution_topology_content_hash".to_owned(),
+            json!(target.topology_content_hash),
+        ),
+        ("artifact_id".to_owned(), json!(artifact_id)),
+        ("case_space_id".to_owned(), json!(target.case_space_id)),
+        (
+            "policy_manifest_content_hash".to_owned(),
+            json!(target.policy_manifest_content_hash),
+        ),
+    ]);
+    let mut artifact = cell(
+        &artifact_id,
+        CaseCellType::Custom("artifact".to_owned()),
+        CaseCellLifecycle::Resolved,
+        SourceKind::Custom("tool_captured_artifact".to_owned()),
+        ReviewStatus::Unreviewed,
+    );
+    artifact
+        .metadata
+        .insert("content_hash".to_owned(), json!(artifact_hash));
+    space.case_cells.extend([claim, artifact]);
+    space.case_relations.push(relation(
+        "relation:execution-topology-artifact",
+        CaseRelationType::DerivesFrom,
+        target.claim_cell_id.as_str(),
+        &artifact_id,
+    ));
+}
+
+#[test]
+fn execution_topology_accept_uses_canonical_semantic_validation_but_reject_remains_auditable() {
+    let base: Value = serde_json::from_str(include_str!(
+        "../../../schemas/experimental/execution.topology.file-review.example.json"
+    ))
+    .expect("topology fixture");
+    let mut cases = Vec::new();
+
+    let mut unknown_node = base.clone();
+    unknown_node["edges"][0]["to"] = json!("node:missing");
+    cases.push((unknown_node, "unknown_edge_target", "$.edges[0].to"));
+
+    let mut invalid_binding = base.clone();
+    invalid_binding["edges"][0]["output"] = json!("missing_output");
+    cases.push((
+        invalid_binding,
+        "unknown_output_binding",
+        "$.edges[0].output",
+    ));
+
+    let mut self_edge = base.clone();
+    let self_source = self_edge["edges"][0]["from"].clone();
+    self_edge["edges"][0]["to"] = self_source;
+    cases.push((self_edge, "self_edge", "$.edges[0]"));
+
+    let mut resource_mismatch = base.clone();
+    resource_mismatch["edges"][3]["kind"] = json!("resource_exclusion");
+    resource_mismatch["edges"][3]["resource_scope"] = json!(["file:not-shared"]);
+    cases.push((
+        resource_mismatch,
+        "unknown_resource_scope",
+        "$.edges[3].resource_scope",
+    ));
+
+    let mut policy_mismatch = base;
+    policy_mismatch["nodes"][0]["verification_policy_id"] = json!("verification:missing");
+    cases.push((
+        policy_mismatch,
+        "unknown_policy_reference",
+        "$.nodes[0].verification_policy_id",
+    ));
+
+    for (mut value, code, location) in cases {
+        let mut space = fixture_space();
+        value["topology_id"] = json!("topology:review-fixture");
+        value["case_space_id"] = json!(space.case_space_id.clone());
+        let (topology_bytes, manifest_bytes, target) =
+            topology_review_target_from_value(&space, value);
+        install_topology_review_target(&mut space, &target);
+        let request = |action| ExecutionTopologyReviewRequest {
+            target: target.clone(),
+            action,
+            reviewer_id: id("reviewer:native"),
+            reviewed_at: "2026-08-03T00:00:00Z".to_owned(),
+            reason: "Record semantic disposition.".to_owned(),
+            evidence_ids: Vec::new(),
+            source_ids: vec![id("source:test")],
+            target_revision_id: id("revision:semantic-disposition"),
+        };
+        let error = execution_topology_review_morphism(
+            &space,
+            request(ReviewAction::Accept),
+            &topology_bytes,
+            &manifest_bytes,
+        )
+        .expect_err("semantic invalidity prevents acceptance");
+        assert!(error.message.contains(code), "{}", error.message);
+        assert!(error.message.contains(location), "{}", error.message);
+
+        execution_topology_review_morphism(
+            &space,
+            request(ReviewAction::Reject),
+            &topology_bytes,
+            &manifest_bytes,
+        )
+        .expect("invalid proposal can still be rejected audibly");
+    }
 }
 
 #[test]

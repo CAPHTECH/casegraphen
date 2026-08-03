@@ -99,6 +99,7 @@ pub(super) struct NativeOptions {
     pub(super) left_store: Option<PathBuf>,
     pub(super) right_store: Option<PathBuf>,
     pub(super) input: Option<PathBuf>,
+    pub(super) policy_manifest: Option<PathBuf>,
     pub(super) projection: Option<PathBuf>,
     pub(super) packet: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
@@ -245,6 +246,9 @@ impl NativeOptions {
                     satisfies_ids: Vec::new(),
                     artifact_paths: Vec::new(),
                 });
+            }
+            Some("--policy-manifest") => {
+                self.policy_manifest = Some(require_path(args, "--policy-manifest")?)
             }
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
             Some("--packet") => self.packet = Some(require_path(args, "--packet")?),

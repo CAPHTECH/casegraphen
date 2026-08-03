@@ -1,0 +1,13 @@
+{
+  "schema": "casegraphen.experimental.deployment_policy_manifest.v0",
+  "schema_version": 0,
+  "topology_id": "topology:security-review",
+  "topology_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verification_policies": [
+    { "policy_id": "verification:independent", "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  ],
+  "budget_policies": [
+    { "policy_id": "budget:small", "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  ],
+  "expansion_policies": []
+}

@@ -94,12 +94,12 @@ fn unsupported_acceptance_mutation_fails_closed_at_the_host() {
                         "request_id":"request:no-host-accept",
                         "idempotency_key":"idempotency:no-host-accept",
                         "base_revision_id":"revision:observed",
-                        "operation_gate":{
-                            "actor_id":"actor:reviewer",
-                            "capability_ids":["capability:review"],
-                            "operation_scope_id":"scope:review",
-                            "audience":"audit",
-                            "source_boundary_id":"boundary:mcp"
+                        "caller_declared_audit_context":{
+                            "declared_actor_id":"actor:reviewer",
+                            "declared_capability_ids":["capability:review-declared"],
+                            "declared_operation_scope_id":"scope:review",
+                            "declared_audience":"audit",
+                            "declared_source_boundary_id":"boundary:mcp"
                         },
                         "payload":{}
                     }

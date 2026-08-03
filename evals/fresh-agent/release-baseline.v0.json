@@ -1,0 +1,21 @@
+{
+  "schema": "casegraphen.eval.fresh_agent_release_baseline.v0",
+  "manifest_schema": "casegraphen.eval.fresh_agent_manifest.v0",
+  "providers": ["codex", "claude"],
+  "scenarios": {
+    "independent-20-file-fanout": ["graph_lint"],
+    "same-file-resource-edge": ["graph_lint"],
+    "correlated-verifier-context": ["graph_lint"],
+    "hierarchical-1000-fanin": ["graph_lint"],
+    "missing-one-of-200-reports": ["completeness_oracle"],
+    "dynamic-loop-dedupe-all-seen": ["json_assert", "json_schema"],
+    "evidence-requires-review": ["json_assert"],
+    "stale-revision-no-auto-rebase": ["json_assert"],
+    "tool-failure-versus-domain-halt": ["json_assert"],
+    "proposal-not-direct-mutation": ["json_schema"]
+  },
+  "maximum_new_deterministic_failures": 0,
+  "maximum_missing_scenarios": 0,
+  "maximum_unavailable_evaluators": 0,
+  "maximum_timeouts": 0
+}

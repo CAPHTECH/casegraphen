@@ -169,9 +169,14 @@ fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner()
             "codex",
             "--budget-usd",
             "1",
+            "--expected-runner-version",
+            "0.146.0",
+            "--runner-package-identity",
+            "@openai/codex@0.146.0",
             "--output-dir",
             run_root.to_str().unwrap(),
         ])
+        .env("OPENAI_API_KEY", "fixture-openai-credential")
         .env("PATH", "/definitely/no/provider/bin")
         .current_dir(root())
         .output()
@@ -182,6 +187,139 @@ fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner()
     assert_eq!(summary["status"], "provider_unavailable");
     assert_eq!(summary["provider"]["provider"], "codex");
     assert_eq!(summary["results"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn missing_provider_credential_is_explicitly_unavailable() {
+    let output_root = TestOutputDirectory::new();
+    let run_root = output_root.path.join("credential-unavailable");
+    let output = Command::new("python3")
+        .args([
+            "scripts/fresh-agent-eval.py",
+            "--runner-profile",
+            "codex",
+            "--budget-usd",
+            "1",
+            "--expected-runner-version",
+            "0.146.0",
+            "--runner-package-identity",
+            "@openai/codex@0.146.0",
+            "--output-dir",
+            run_root.to_str().unwrap(),
+        ])
+        .env_remove("OPENAI_API_KEY")
+        .current_dir(root())
+        .output()
+        .expect("run missing-credential path");
+    assert_eq!(output.status.code(), Some(3));
+    let summary: Value =
+        serde_json::from_str(&fs::read_to_string(run_root.join("summary.json")).unwrap()).unwrap();
+    assert_eq!(summary["status"], "credential_unavailable");
+    assert_eq!(
+        summary["provider"]["credential_environment"],
+        "OPENAI_API_KEY"
+    );
+    assert_eq!(summary["results"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn provider_environment_contains_only_the_selected_provider_credential() {
+    let probe = r#"
+import importlib.util, json, pathlib
+path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
+spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+environment = module.provider_environment('codex')
+print(json.dumps(sorted(key for key in environment if module.is_secret_key(key))))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", probe])
+        .env("OPENAI_API_KEY", "selected")
+        .env("ANTHROPIC_API_KEY", "unrelated")
+        .env("GITHUB_TOKEN", "unrelated-host-token")
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let keys: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(keys, serde_json::json!(["OPENAI_API_KEY"]));
+}
+
+#[test]
+fn credential_material_in_generated_files_is_failed_and_withheld() {
+    let output_root = TestOutputDirectory::new();
+    let run_root = output_root.path.join("leak");
+    let runner = serde_json::to_string(&vec![
+        "python3",
+        root()
+            .join("tests/fixtures/fresh-agent/leaking-runner.py")
+            .to_str()
+            .unwrap(),
+    ])
+    .unwrap();
+    let output = Command::new("python3")
+        .args([
+            "scripts/fresh-agent-eval.py",
+            "--runner-json",
+            &runner,
+            "--output-dir",
+            run_root.to_str().unwrap(),
+            "--scenario",
+            "evidence-requires-review",
+        ])
+        .env("TEST_API_KEY", "fixture-secret-that-must-not-survive")
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let scenario = run_root.join("evidence-requires-review");
+    assert!(!scenario.join("workspace").exists());
+    assert!(!fs::read_to_string(scenario.join("raw.stdout"))
+        .unwrap()
+        .contains("fixture-secret-that-must-not-survive"));
+    let result: Value =
+        serde_json::from_str(&fs::read_to_string(scenario.join("result.json")).unwrap()).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(result["credential_material_scan"]["status"], "fail");
+}
+
+#[test]
+fn workflow_conformance_rejects_shared_job_secret_scope() {
+    let output = Command::new("python3")
+        .arg("scripts/fresh-agent-workflow-conformance.py")
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let output_root = TestOutputDirectory::new();
+    let invalid = output_root.path.join("shared-secrets.yml");
+    let valid =
+        fs::read_to_string(root().join(".github/workflows/fresh-agent-release-eval.yml")).unwrap();
+    fs::write(
+        &invalid,
+        valid.replace(
+            "    steps:\n",
+            "    env:\n      OPENAI_API_KEY: shared\n      ANTHROPIC_API_KEY: shared\n    steps:\n",
+        ),
+    )
+    .unwrap();
+    let rejected = Command::new("python3")
+        .args([
+            "scripts/fresh-agent-workflow-conformance.py",
+            "--workflow",
+            invalid.to_str().unwrap(),
+        ])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stdout).contains("job scope"));
 }
 
 #[test]
@@ -198,6 +336,11 @@ fn release_policy_names_both_real_providers_and_all_scenarios() {
         policy["required_scenario_ids"].as_array().unwrap().len(),
         10
     );
+    assert_eq!(
+        policy["runner_pins"]["codex"]["package_identity"],
+        "@openai/codex@0.146.0"
+    );
+    assert_eq!(policy["runner_pins"]["claude"]["version"], "2.1.220");
     assert_eq!(
         policy["stable_promotion_threshold"]["deterministic_failures"],
         0

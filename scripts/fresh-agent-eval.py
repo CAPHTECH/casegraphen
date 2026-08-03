@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "evals/fresh-agent/scenarios.v0.json"
+DEFAULT_RELEASE_POLICY = ROOT / "evals/fresh-agent/release-policy.v0.json"
 REQUIRED_SCENARIOS = {
     "independent-20-file-fanout",
     "same-file-resource-edge",
@@ -56,6 +58,11 @@ RUNNER_PROFILES = {
         "--verbose",
     ],
 }
+PROFILE_CREDENTIAL_ENV = {
+    "codex": "OPENAI_API_KEY",
+    "claude": "ANTHROPIC_API_KEY",
+}
+SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
 
 
 def utc_now() -> str:
@@ -76,13 +83,42 @@ def hash_tree(path: pathlib.Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def runner_identity(command: list[str], provider: str, model: str | None) -> dict[str, Any]:
+def is_secret_key(key: str) -> bool:
+    return any(marker in key.upper() for marker in SECRET_MARKERS)
+
+
+def provider_environment(provider: str, workspace: pathlib.Path | None = None) -> dict[str, str]:
+    """Build a provider environment containing at most that provider's credential."""
+    credential_key = PROFILE_CREDENTIAL_ENV.get(provider)
+    environment = {key: value for key, value in os.environ.items() if not is_secret_key(key)}
+    if credential_key and os.environ.get(credential_key):
+        environment[credential_key] = os.environ[credential_key]
+    if workspace is not None:
+        environment["CASEGRAPHEN_EVAL_WORKSPACE"] = str(workspace)
+    return environment
+
+
+def runner_identity(
+    command: list[str],
+    provider: str,
+    model: str | None,
+    expected_version: str | None,
+    package_identity: str | None,
+) -> dict[str, Any]:
     executable = shutil.which(command[0])
     if executable is None:
         return {"provider": provider, "model": model, "available": False, "executable": command[0]}
     try:
         version = subprocess.run(
-            [executable, "--version"], capture_output=True, text=True, timeout=15, check=False
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            # Version discovery needs no provider authority. Keeping the
+            # credential out also prevents a compromised probe from echoing it
+            # into retained runner identity evidence.
+            env=provider_environment("identity-probe"),
         )
         version_text = (version.stdout or version.stderr).strip()
     except subprocess.TimeoutExpired:
@@ -93,19 +129,45 @@ def runner_identity(command: list[str], provider: str, model: str | None) -> dic
         "available": True,
         "executable": str(pathlib.Path(executable).resolve()),
         "version": version_text,
+        "expected_version": expected_version,
+        "version_matches": expected_version is None
+        or re.search(rf"(?<![0-9.]){re.escape(expected_version)}(?![0-9.])", version_text) is not None,
+        "declared_package_identity": package_identity,
         "command_hash": sha256_bytes(json.dumps(command, separators=(",", ":")).encode()),
     }
 
 
 def secret_values(environment: dict[str, str]) -> list[str]:
-    markers = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
-    return [value for key, value in environment.items() if value and any(marker in key.upper() for marker in markers)]
+    return [value for key, value in environment.items() if value and is_secret_key(key)]
 
 
 def redact(text: str, secrets: list[str]) -> str:
     for secret in secrets:
         text = text.replace(secret, "[REDACTED]")
     return text
+
+
+def redact_value(value: Any, secrets: list[str]) -> Any:
+    if isinstance(value, str):
+        return redact(value, secrets)
+    if isinstance(value, list):
+        return [redact_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_value(item, secrets) for key, item in value.items()}
+    return value
+
+
+def files_containing_secrets(path: pathlib.Path, secrets: list[str]) -> list[pathlib.Path]:
+    encoded = [secret.encode() for secret in secrets if secret]
+    if not encoded:
+        return []
+    affected: list[pathlib.Path] = []
+    for item in path.rglob("*"):
+        if item.is_file():
+            content = item.read_bytes()
+            if any(secret in content for secret in encoded):
+                affected.append(item)
+    return affected
 
 
 def usage_observations(stdout: str) -> list[dict[str, Any]]:
@@ -360,12 +422,14 @@ def run_scenario(
                 command[2:2] = ["--model", model]
             elif identity["provider"] == "claude":
                 command.extend(["--model", model])
-        environment = {
-            **os.environ,
-            "CASEGRAPHEN_EVAL_WORKSPACE": str(workspace),
-            "CASEGRAPHEN_EVAL_SKILL": str(workspace / "skill" / scenario["skill"]),
-        }
-        secrets = secret_values(environment)
+        if identity["provider"] in PROFILE_CREDENTIAL_ENV:
+            environment = provider_environment(identity["provider"], workspace)
+        else:
+            environment = {**os.environ, "CASEGRAPHEN_EVAL_WORKSPACE": str(workspace)}
+        environment["CASEGRAPHEN_EVAL_SKILL"] = str(workspace / "skill" / scenario["skill"])
+        # Scan against the parent environment too: an unrelated credential must
+        # neither reach the provider process nor survive in retained evidence.
+        secrets = secret_values(dict(os.environ))
         declared_input_hash = hash_tree(workspace)
         started_at = utc_now()
         started = time.monotonic()
@@ -396,8 +460,20 @@ def run_scenario(
         (destination / "raw.stdout").write_text(stdout)
         (destination / "raw.stderr").write_text(stderr)
         (destination / "prompt.md").write_text(prompt_file.read_text())
-        shutil.copytree(workspace, destination / "workspace")
         evaluation = evaluate(scenario, workspace, casegraphen_bin)
+        affected = files_containing_secrets(workspace, secrets)
+        workspace_retained = not affected
+        if workspace_retained:
+            shutil.copytree(workspace, destination / "workspace")
+        else:
+            evaluation.append(
+                {
+                    "kind": "credential_material_scan",
+                    "status": "fail",
+                    "detail": "generated workspace withheld because credential material was detected",
+                }
+            )
+        evaluation = redact_value(evaluation, secrets)
         result = {
             "scenario_id": scenario["id"],
             "provider": identity,
@@ -405,7 +481,12 @@ def run_scenario(
             "prompt_hash": sha256_bytes(prompt_file.read_bytes()),
             "skill_hash": hash_tree(workspace / "skill" / scenario["skill"]),
             "declared_input_hash": declared_input_hash,
-            "produced_workspace_hash": hash_tree(workspace),
+            "produced_workspace_hash": hash_tree(workspace) if workspace_retained else None,
+            "workspace_retained": workspace_retained,
+            "credential_material_scan": {
+                "status": "pass" if workspace_retained else "fail",
+                "affected_file_count": len(affected),
+            },
             "raw_stdout_hash": sha256_bytes(stdout.encode()),
             "raw_stderr_hash": sha256_bytes(stderr.encode()),
             "usage_observations": usage_observations(stdout),
@@ -427,6 +508,8 @@ def main() -> int:
     parser.add_argument("--runner-json", help="JSON array command; exact {workspace}, {prompt_file}, and {skill_path} tokens are replaced")
     parser.add_argument("--runner-profile", choices=sorted(RUNNER_PROFILES))
     parser.add_argument("--model", help="provider model id; recorded exactly as supplied")
+    parser.add_argument("--expected-runner-version", help="exact version required for a real runner profile")
+    parser.add_argument("--runner-package-identity", help="exact pinned package identity retained with evidence")
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--timeout", type=int, default=900)
@@ -457,7 +540,37 @@ def main() -> int:
     provider = args.runner_profile or "custom"
     if args.runner_profile and (args.budget_usd is None or args.budget_usd <= 0):
         parser.error("real runner profiles require a positive --budget-usd")
-    identity = runner_identity(runner, provider, args.model)
+    if args.runner_profile and (not args.expected_runner_version or not args.runner_package_identity):
+        parser.error("real runner profiles require --expected-runner-version and --runner-package-identity")
+    if args.runner_profile:
+        policy = json.loads(DEFAULT_RELEASE_POLICY.read_text())
+        pin = policy["runner_pins"][args.runner_profile]
+        if args.expected_runner_version != pin["version"] or args.runner_package_identity != pin["package_identity"]:
+            parser.error("real runner identity must exactly match evals/fresh-agent/release-policy.v0.json")
+    credential_key = PROFILE_CREDENTIAL_ENV.get(provider)
+    if credential_key and not os.environ.get(credential_key):
+        unavailable = {
+            "schema": "casegraphen.eval.fresh_agent_run.v0",
+            "status": "credential_unavailable",
+            "provider": {
+                "provider": provider,
+                "model": args.model,
+                "available": False,
+                "credential_environment": credential_key,
+                "declared_package_identity": args.runner_package_identity,
+                "expected_version": args.expected_runner_version,
+            },
+            "results": [],
+        }
+        (output_root / "summary.json").write_text(json.dumps(unavailable, indent=2, sort_keys=True) + "\n")
+        return 3
+    identity = runner_identity(
+        runner,
+        provider,
+        args.model,
+        args.expected_runner_version,
+        args.runner_package_identity,
+    )
     if not identity["available"]:
         unavailable = {
             "schema": "casegraphen.eval.fresh_agent_run.v0",
@@ -466,6 +579,15 @@ def main() -> int:
             "results": [],
         }
         (output_root / "summary.json").write_text(json.dumps(unavailable, indent=2, sort_keys=True) + "\n")
+        return 3
+    if not identity["version_matches"]:
+        mismatch = {
+            "schema": "casegraphen.eval.fresh_agent_run.v0",
+            "status": "runner_version_mismatch",
+            "provider": identity,
+            "results": [],
+        }
+        (output_root / "summary.json").write_text(json.dumps(mismatch, indent=2, sort_keys=True) + "\n")
         return 3
     results = [
         run_scenario(scenario, runner, output_root, args.timeout, args.casegraphen_bin, identity, args.model)

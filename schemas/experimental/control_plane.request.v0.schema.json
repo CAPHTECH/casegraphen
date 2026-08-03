@@ -2,25 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "casegraphen.experimental.control_plane.request.v0",
   "type": "object", "additionalProperties": false,
-  "required": ["schema", "request_id", "idempotency_key", "tool", "base_revision_id", "operation_gate", "payload"],
+  "required": ["schema", "request_id", "idempotency_key", "tool", "base_revision_id", "caller_declared_audit_context", "payload"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.control_plane.request.v0"},
     "request_id": {"type": "string", "minLength": 1},
     "idempotency_key": {"type": "string", "minLength": 1},
     "tool": {"enum": ["propose_execution_topology", "lint_execution_topology", "compile_deployment_bundle", "attach_runtime_report", "reconcile_run", "apply_evidence_packet", "review_accept", "review_reject", "resume", "supersede_dispatch", "reserve_resources", "reconcile_resources", "release_resources", "simulate_execution_topology", "evaluate_expansion_round", "reconcile_streaming_run", "propose_topology_redesign"]},
     "base_revision_id": {"type": ["string", "null"], "minLength": 1},
-    "operation_gate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/gate"}]},
+    "caller_declared_audit_context": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/caller_declared_audit_context"}]},
     "payload": {}
   },
-  "$defs": {"gate": {
+  "$defs": {"caller_declared_audit_context": {
     "type": "object", "additionalProperties": false,
-    "required": ["actor_id", "capability_ids", "operation_scope_id", "audience", "source_boundary_id"],
+    "required": ["declared_actor_id", "declared_capability_ids", "declared_operation_scope_id", "declared_audience", "declared_source_boundary_id"],
     "properties": {
-      "actor_id": {"type": "string", "minLength": 1},
-      "capability_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
-      "operation_scope_id": {"type": "string", "minLength": 1},
-      "audience": {"type": "string", "minLength": 1},
-      "source_boundary_id": {"type": "string", "minLength": 1}
+      "declared_actor_id": {"type": "string", "minLength": 1},
+      "declared_capability_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+      "declared_operation_scope_id": {"type": "string", "minLength": 1},
+      "declared_audience": {"type": "string", "minLength": 1},
+      "declared_source_boundary_id": {"type": "string", "minLength": 1}
     }
   }}
 }

@@ -2,13 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "casegraphen.experimental.control_plane.response.v0",
   "type": "object", "additionalProperties": false,
-  "required": ["schema", "sequence", "request_id", "idempotency_key", "replayed", "result", "refusal"],
+  "required": ["schema", "sequence", "request_id", "idempotency_key", "replayed", "authority_facts", "result", "refusal"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.control_plane.response.v0"},
     "sequence": {"type": "integer", "minimum": 0},
     "request_id": {"type": "string"},
     "idempotency_key": {"type": "string"},
     "replayed": {"type": "boolean"},
+    "authority_facts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["caller_declared_audit_context_present", "canonical_casegraphen_authorization"],
+      "properties": {
+        "caller_declared_audit_context_present": {"type": "boolean"},
+        "canonical_casegraphen_authorization": {"const": "not_evaluated"}
+      }
+    },
     "result": {},
     "refusal": {"type": ["object", "null"]}
   }

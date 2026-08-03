@@ -4,6 +4,11 @@
 
 **Retain and revise experimental v0; do not propose a stable contract yet.**
 
+Topology review authority now includes the canonical deployment-policy
+manifest hash as well as topology bytes and the observed case revision. Stable
+promotion requires preserving this boundary: compilation must reproduce the
+reviewed manifest, and topology/policy changes must obtain a new review.
+
 The integrity blockers reported against commit `092fdcda49066be243b76a651c395daf47db3c05`
 are resolved and the plane is suitable for additional runtime-integration
 pilots. The available evidence is not broad enough to freeze the vocabulary as
@@ -41,3 +46,11 @@ fresh-agent release matrix, and one independent MCP client have produced
 retained reports. At that point, either publish a reviewed stable proposal or
 revise v0 again. No runtime report or passing test automatically performs that
 decision.
+
+Issue #76 adds reproducible evidence infrastructure for this trigger: a strict
+two-provider/ten-scenario aggregator, four materially distinct local runtime
+families (including two resource-bearing generic-JSONL families), and a
+stdlib-only Python MCP client that reaches the topology-to-review seam. These
+remain evaluation machinery, not evidence that the real two-provider matrix
+has passed. Stable promotion still requires retained real-provider summaries
+and a manual review bound to those exact run hashes.

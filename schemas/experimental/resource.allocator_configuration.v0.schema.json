@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.resource.allocator_configuration.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","capacities"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.resource.allocator_configuration.v0"},
+    "schema_version":{"const":0},
+    "capacities":{"type":"array","items":{"$ref":"casegraphen.experimental.resource.rate_limit_capacity.v0"}}
+  }
+}

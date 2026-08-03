@@ -22,17 +22,23 @@ This Skill does not schedule nodes, retry work, call models, or mutate a case.
 5. If the result halts `incomplete_runtime_reports`, obtain missing reports or
    artifacts from the external runtime and ingest them. Do not synthesize one.
 6. If the result halts `resource_reconciliation_incomplete`, correct or obtain
-   the topology-bound declaration, reservation, and typed allocation records.
-   Do not infer a grant from the compact node-report allocation summary.
+   the topology-bound declaration, host-issued reservation, and typed
+   allocation records. For the operational host, submit them as an exact
+   `runtime.resource_expectation_bundle.v0`; do not infer a grant from the
+   compact node-report allocation summary.
 7. If the result halts `needs_review`, present every proposal at the review
    seam. Every proposal remains `unreviewed`; `accepted` remains false.
 
 For standalone operation, use the inventory-governed MCP tools:
-`compile_deployment_bundle`, `reconcile_run`, `reserve_resources`,
+`compile_deployment_bundle`, `reconcile_run`, `reserve_resources`, `release_resources`,
 `reconcile_resources`, and `reconcile_streaming_run`. They delegate to the same
-canonical modules described above. Reservation requires an explicit operation
-gate and observed revision; streaming re-derives canonical readiness and
-resource permits for that exact current revision.
+canonical modules described above. Reservation and disposition require an
+explicit observed revision and caller-declared audit context. Existing active
+reservations, dispositions, and rate capacities are host-canonical allocator
+state and must never be supplied by the caller. The MCP bearer token authorizes host
+access; the audit context is attribution only and is never a CaseGraphen
+operation gate. Streaming re-derives canonical readiness and resource permits
+for the exact current revision.
 
 ## Non-negotiable boundary
 

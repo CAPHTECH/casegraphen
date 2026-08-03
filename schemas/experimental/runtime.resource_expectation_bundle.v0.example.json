@@ -1,0 +1,12 @@
+{
+  "schema":"casegraphen.experimental.runtime.resource_expectation_bundle.v0",
+  "schema_version":0,
+  "topology_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "case_revision_id":"revision:resource-run-1",
+  "expectations":[{
+    "node_id":"node:refactor-a","attempt_id":"attempt:refactor-a:1",
+    "declaration":{"schema":"casegraphen.experimental.resource.declaration.v0","schema_version":0,"declaration_id":"declaration:refactor-a","runtime_graph_id":"topology:worktree-review","runtime_graph_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","node_id":"node:refactor-a","claims":[]},
+    "reservation":{"schema":"casegraphen.experimental.resource.reservation.v0","schema_version":0,"reservation_id":"reservation:refactor-a","declaration_id":"declaration:refactor-a","attempt_id":"attempt:refactor-a:1","granted_at":"2026-08-03T00:00:00Z","grants":[]},
+    "allocations":[],"disposition_evidence":[]
+  }]
+}
