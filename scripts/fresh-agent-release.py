@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import pathlib
+import re
 import shutil
 import sys
 from typing import Any
@@ -79,6 +81,49 @@ def summary_hash(summary: dict[str, Any]) -> str:
     if claimed != actual:
         raise ValueError(f"summary_content_hash_mismatch:{claimed}:{actual}")
     return actual
+
+
+def verify_host_attestation(
+    provider: str,
+    summary: dict[str, Any],
+    run_hash: str | None,
+    policy: dict[str, Any],
+    attestation_path: pathlib.Path | None,
+    key_path: pathlib.Path | None,
+) -> tuple[str | None, list[str]]:
+    findings: list[str] = []
+    if attestation_path is None or key_path is None:
+        return None, [f"missing_host_attestation:{provider}"]
+    try:
+        attestation = load(attestation_path)
+        key = key_path.read_bytes()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None, [f"unreadable_host_attestation:{provider}"]
+    supplied_mac = attestation.pop("hmac_sha256", None)
+    if not isinstance(supplied_mac, str) or len(key) < 32:
+        return None, [f"invalid_host_attestation_signature:{provider}"]
+    expected_mac = hmac.new(key, canonical(attestation), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(supplied_mac, expected_mac):
+        findings.append(f"invalid_host_attestation_signature:{provider}")
+    authentication = summary.get("provider", {}).get("authentication", {})
+    pin = policy["runner_pins"][provider]
+    expected = {
+        "schema": "casegraphen.eval.cli_session_host_attestation.v0",
+        "provider": provider,
+        "run_content_hash": run_hash,
+        "host_attestation_challenge": summary.get("host_attestation_challenge"),
+        "authentication_classification": authentication.get("classification"),
+        "credential_boundary": "dedicated_provider_os_account_with_brokered_session",
+        "agent_credential_read_access": False,
+        "key_id": pin.get("host_attestation_key_id"),
+    }
+    for field, value in expected.items():
+        if attestation.get(field) != value:
+            findings.append(f"host_attestation_binding_mismatch:{provider}:{field}")
+    runner_hash = attestation.get("runner_instance_id_hash")
+    if not isinstance(runner_hash, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", runner_hash):
+        findings.append(f"host_attestation_binding_mismatch:{provider}:runner_instance_id_hash")
+    return digest(attestation_path.read_bytes()), findings
 
 
 def evidence_inventory(
@@ -170,6 +215,7 @@ def content_addressed_proposal(kind: str, payload: dict[str, Any]) -> dict[str, 
 def aggregate(
     run_paths: list[pathlib.Path], policy_path: pathlib.Path, baseline_path: pathlib.Path,
     manifest_path: pathlib.Path, manual_path: pathlib.Path | None, output: pathlib.Path,
+    host_attestations: dict[str, pathlib.Path], attestation_keys: dict[str, pathlib.Path],
 ) -> tuple[dict[str, Any], int]:
     policy, baseline, manifest = load(policy_path), load(baseline_path), load(manifest_path)
     findings = validate_baseline(baseline, policy, manifest)
@@ -198,6 +244,22 @@ def aggregate(
     for provider in policy["required_providers"]:
         if provider not in summaries:
             findings.append(f"missing_provider:{provider}")
+    host_attestation_hashes: dict[str, str] = {}
+    for provider in policy["required_providers"]:
+        summary = summaries.get(provider)
+        if summary is None:
+            continue
+        attestation_hash, attestation_findings = verify_host_attestation(
+            provider,
+            summary,
+            run_hashes.get(provider),
+            policy,
+            host_attestations.get(provider),
+            attestation_keys.get(provider),
+        )
+        findings.extend(attestation_findings)
+        if attestation_hash is not None:
+            host_attestation_hashes[provider] = attestation_hash
     manual, cost_waivers, manual_findings, manual_hash = manual_resolutions(
         manual_path, run_hashes
     )
@@ -218,10 +280,39 @@ def aggregate(
         if identity.get("available") is not True or identity.get("version_matches") is not True:
             findings.append(f"provider_identity_unavailable:{provider}")
             counts["unavailable"] += 1
-        if not identity.get("package_identity") or not identity.get("expected_version"):
+        pin = policy["runner_pins"][provider]
+        if (
+            identity.get("declared_package_identity") != pin["package_identity"]
+            or identity.get("expected_version") != pin["version"]
+        ):
             findings.append(f"provider_identity_unpinned:{provider}")
+        authentication = identity.get("authentication", {})
+        if (
+            authentication.get("mode") != pin["authentication_mode"]
+            or authentication.get("available") is not True
+            or authentication.get("non_api_key_session_verified") is not True
+            or not authentication.get("classification")
+            or authentication.get("probe_output_retained") is not False
+        ):
+            findings.append(f"provider_cli_session_unavailable:{provider}")
+            counts["unavailable"] += 1
+        if authentication.get("classification") not in pin.get(
+            "allowed_authentication_classifications", []
+        ):
+            findings.append(f"provider_cli_session_class_refused:{provider}")
+            counts["unavailable"] += 1
         if summary.get("manifest_hash") != digest(manifest_path.read_bytes()):
             findings.append(f"scenario_manifest_hash_mismatch:{provider}")
+        model_observation = summary.get("model_observation", {})
+        if model_observation.get("observable") is True:
+            reported_models = model_observation.get("reported_models")
+            if (
+                model_observation.get("matches_declared") is not True
+                or reported_models != [identity.get("model")]
+            ):
+                findings.append(f"provider_model_observation_mismatch:{provider}")
+        elif model_observation.get("observable") is not False:
+            findings.append(f"provider_model_observation_missing:{provider}")
         results = summary.get("results") if isinstance(summary.get("results"), list) else []
         by_id: dict[str, dict[str, Any]] = {}
         for result in results:
@@ -344,6 +435,21 @@ def aggregate(
             "byte_length": len(manual_bytes),
             "retained_blob": manual_blob.relative_to(output).as_posix(),
         })
+    for provider, attestation_path in sorted(host_attestations.items()):
+        if provider not in host_attestation_hashes or not attestation_path.is_file():
+            continue
+        attestation_bytes = attestation_path.read_bytes()
+        attestation_content_hash = digest(attestation_bytes)
+        blob = output / "blobs" / attestation_content_hash.replace(":", "-")
+        if not blob.exists():
+            blob.write_bytes(attestation_bytes)
+        inventory.append({
+            "provider": f"{provider}_host_attestation",
+            "source_path": attestation_path.name,
+            "content_hash": attestation_content_hash,
+            "byte_length": len(attestation_bytes),
+            "retained_blob": blob.relative_to(output).as_posix(),
+        })
     status = "pass" if not findings else "fail"
     report: dict[str, Any] = {
         "schema": "casegraphen.eval.fresh_agent_release_report.v0",
@@ -355,6 +461,7 @@ def aggregate(
         "scenario_manifest_content_hash": digest(manifest_path.read_bytes()),
         "manual_review_content_hash": manual_hash,
         "provider_run_content_hashes": run_hashes,
+        "host_attestation_content_hashes": host_attestation_hashes,
         "counts": counts,
         "findings": findings,
         "matrix": matrix,
@@ -385,6 +492,18 @@ def discover_runs(root: pathlib.Path) -> list[pathlib.Path]:
     return sorted({path.parent for path in root.rglob("summary.json")})
 
 
+def provider_paths(values: list[str], argument: str) -> dict[str, pathlib.Path]:
+    parsed: dict[str, pathlib.Path] = {}
+    for value in values:
+        provider, separator, path = value.partition("=")
+        if separator != "=" or provider not in {"codex", "claude"} or not path:
+            raise ValueError(f"{argument} must use provider=/absolute/or/relative/path")
+        if provider in parsed:
+            raise ValueError(f"duplicate {argument} for {provider}")
+        parsed[provider] = pathlib.Path(path)
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider-run", action="append", type=pathlib.Path, default=[])
@@ -393,6 +512,8 @@ def main() -> int:
     parser.add_argument("--baseline", type=pathlib.Path, default=DEFAULT_BASELINE)
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--manual-review", type=pathlib.Path)
+    parser.add_argument("--host-attestation", action="append", default=[])
+    parser.add_argument("--attestation-key", action="append", default=[])
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--check-baseline", action="store_true")
     args = parser.parse_args()
@@ -409,8 +530,20 @@ def main() -> int:
     runs = list(args.provider_run)
     if args.runs_root:
         runs.extend(discover_runs(args.runs_root))
+    try:
+        host_attestations = provider_paths(args.host_attestation, "--host-attestation")
+        attestation_keys = provider_paths(args.attestation_key, "--attestation-key")
+    except ValueError as error:
+        parser.error(str(error))
     report, code = aggregate(
-        runs, args.policy, args.baseline, args.manifest, args.manual_review, args.output_dir
+        runs,
+        args.policy,
+        args.baseline,
+        args.manifest,
+        args.manual_review,
+        args.output_dir,
+        host_attestations,
+        attestation_keys,
     )
     print(json.dumps({"status": report["status"], "content_hash": report["content_hash"],
                       "finding_count": len(report["findings"])}, sort_keys=True))

@@ -7,11 +7,19 @@
   "runner_pins": {
     "codex": {
       "package_identity": "@openai/codex@0.146.0",
-      "version": "0.146.0"
+      "version": "0.146.0",
+      "authentication_mode": "cli_session",
+      "allowed_authentication_classifications": ["codex_chatgpt_session"],
+      "host_attestation_key_id": "codex-cli-session-host-v1",
+      "self_hosted_runner_label": "casegraphen-codex-cli-session"
     },
     "claude": {
       "package_identity": "@anthropic-ai/claude-code@2.1.220",
-      "version": "2.1.220"
+      "version": "2.1.220",
+      "authentication_mode": "cli_session",
+      "allowed_authentication_classifications": ["claude_subscription_session", "claude_oauth_session"],
+      "host_attestation_key_id": "claude-cli-session-host-v1",
+      "self_hosted_runner_label": "casegraphen-claude-cli-session"
     }
   },
   "required_scenario_ids": [

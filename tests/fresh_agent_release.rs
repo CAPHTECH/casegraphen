@@ -3,6 +3,7 @@
 use serde_json::Value;
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -41,7 +42,27 @@ fn aggregate(directory: &Path, output: &Path, manual: bool) -> std::process::Out
         .args(["scripts/fresh-agent-release.py", "--runs-root"])
         .arg(directory)
         .args(["--output-dir"])
-        .arg(output);
+        .arg(output)
+        .args(["--host-attestation"])
+        .arg(format!(
+            "codex={}",
+            directory.join("codex-host-attestation.json").display()
+        ))
+        .args(["--host-attestation"])
+        .arg(format!(
+            "claude={}",
+            directory.join("claude-host-attestation.json").display()
+        ))
+        .args(["--attestation-key"])
+        .arg(format!(
+            "codex={}",
+            directory.join("codex-host-attestation.key").display()
+        ))
+        .args(["--attestation-key"])
+        .arg(format!(
+            "claude={}",
+            directory.join("claude-host-attestation.key").display()
+        ));
     if manual {
         command
             .args(["--manual-review"])
@@ -108,8 +129,106 @@ fn complete_matrix_passes_and_retains_content_addressed_evidence() {
 }
 
 #[test]
+fn caller_cli_session_assertion_without_host_attestation_cannot_promote() {
+    let directory = temp("self-asserted-input");
+    let output = temp("self-asserted-parent").join("report");
+    fixture(&directory, "pass");
+    let result = Command::new("python3")
+        .args(["scripts/fresh-agent-release.py", "--runs-root"])
+        .arg(&directory)
+        .args(["--manual-review"])
+        .arg(directory.join("manual-review.json"))
+        .args(["--output-dir"])
+        .arg(&output)
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let report = report(&output);
+    assert_eq!(report["promotion_eligible"], false);
+    assert!(report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|finding| finding == "missing_host_attestation:codex"));
+    fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(output.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn substituted_host_attestation_signature_fails_closed() {
+    let directory = temp("attestation-substitution-input");
+    let output = temp("attestation-substitution-parent").join("report");
+    fixture(&directory, "pass");
+    let path = directory.join("codex-host-attestation.json");
+    let mut attestation: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    attestation["runner_instance_id_hash"] = Value::from(format!("sha256:{}", "f".repeat(64)));
+    fs::write(&path, serde_json::to_vec_pretty(&attestation).unwrap()).unwrap();
+    let result = aggregate(&directory, &output, true);
+    assert!(!result.status.success());
+    assert!(report(&output)["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|finding| finding == "invalid_host_attestation_signature:codex"));
+    fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(output.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn privileged_host_attester_reprobes_and_binds_the_exact_run() {
+    let directory = temp("host-attester-input");
+    let output = temp("host-attester-parent").join("report");
+    fixture(&directory, "pass");
+    let cli = directory.join("codex-cli");
+    fs::write(
+        &cli,
+        "#!/bin/sh\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then echo 'Logged in using ChatGPT' >&2; exit 0; fi\nexit 2\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&cli).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&cli, permissions).unwrap();
+    let attestation = directory.join("codex-host-attestation.json");
+    let result = Command::new("python3")
+        .args(["scripts/fresh-agent-host-attest.py", "--summary"])
+        .arg(directory.join("codex/summary.json"))
+        .args(["--provider", "codex", "--provider-cli"])
+        .arg(&cli)
+        .args(["--key-file"])
+        .arg(directory.join("codex-host-attestation.key"))
+        .args([
+            "--key-id",
+            "codex-cli-session-host-v1",
+            "--runner-instance-id-hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--output",
+        ])
+        .arg(&attestation)
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let aggregate = aggregate(&directory, &output, true);
+    assert!(aggregate.status.success());
+    assert_eq!(report(&output)["promotion_eligible"], true);
+    fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(output.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn missing_unavailable_timeout_and_unresolved_review_cannot_pass() {
-    for mode in ["missing", "provider_unavailable", "timeout"] {
+    for mode in [
+        "missing",
+        "provider_unavailable",
+        "cli_session_unavailable",
+        "timeout",
+        "model_mismatch",
+    ] {
         let directory = temp(&format!("{mode}-input"));
         let output = temp(&format!("{mode}-parent")).join("report");
         fixture(&directory, mode);
@@ -118,6 +237,13 @@ fn missing_unavailable_timeout_and_unresolved_review_cannot_pass() {
         let report = report(&output);
         assert_eq!(report["status"], "fail");
         assert_eq!(report["promotion_eligible"], false);
+        if mode == "model_mismatch" {
+            assert!(report["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding == "provider_model_observation_mismatch:claude"));
+        }
         assert!(report["failure_proposals"]
             .as_array()
             .unwrap()

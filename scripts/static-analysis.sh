@@ -28,7 +28,44 @@ if [ -z "$pinned" ] || [ -z "$cargo_msrv" ] || [ "$normalized_pin" != "$cargo_ms
   exit 1
 fi
 for workflow in .github/workflows/*.yml; do
-  workflow_pins=$(sed -n 's/.*uses: dtolnay\/rust-toolchain@\([^[:space:]]*\).*/\1/p' "$workflow")
+  workflow_pins=$(awk '
+    /uses: dtolnay\/rust-toolchain@/ {
+      ref = $0
+      sub(/^.*uses: dtolnay\/rust-toolchain@/, "", ref)
+      sub(/[[:space:]].*$/, "", ref)
+      if (ref ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) {
+        print ref
+        awaiting_toolchain = 0
+      } else {
+        awaiting_toolchain = 1
+      }
+      next
+    }
+    awaiting_toolchain && /^[[:space:]]+toolchain:[[:space:]]*/ {
+      value = $0
+      sub(/^.*toolchain:[[:space:]]*/, "", value)
+      sub(/[[:space:]#].*$/, "", value)
+      print value
+      awaiting_toolchain = 0
+      next
+    }
+    awaiting_toolchain && /^[[:space:]]*-[[:space:]]+(uses:|name:|run:)/ {
+      print "missing-toolchain-input"
+      awaiting_toolchain = 0
+    }
+    END {
+      if (awaiting_toolchain) {
+        print "missing-toolchain-input"
+      }
+    }
+  ' "$workflow")
+  workflow_action_count=$(awk '/uses: dtolnay\/rust-toolchain@/ { count += 1 } END { print count + 0 }' "$workflow")
+  workflow_pin_count=$(printf '%s\n' "$workflow_pins" | awk 'NF { count += 1 } END { print count + 0 }')
+  if [ "$workflow_action_count" != "$workflow_pin_count" ]; then
+    printf 'error: %s must declare toolchain: %s when dtolnay/rust-toolchain is SHA-pinned.\n' \
+      "$workflow" "$pinned" >&2
+    exit 1
+  fi
   for workflow_pin in $workflow_pins; do
     if [ "$workflow_pin" != "$pinned" ]; then
       printf 'error: %s pins Rust %s but rust-toolchain.toml pins %s.\n' \

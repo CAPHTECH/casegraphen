@@ -7,7 +7,12 @@ Use these as modeling shapes, then let `graph lint` judge the concrete graph.
 Give each independently executable item its own node, typed input, output, and
 resource claims. Add no ordering edge merely to express list order. If two
 nodes touch a shared exclusive resource, independence is false and the resource
-relationship must be explicit.
+relationship must be explicit. Cover every conflicting pair, including a
+reader that can overlap a later writer or exclusive claimant; serializing only
+the writer/writer pair leaves a real read/write race. If analysis nodes read the
+same shared file or worktree before mutation, either place a barrier after all
+reads and before the first write, or consume an immutable snapshot that is not
+the live resource.
 
 ## Reduction and synthesis
 

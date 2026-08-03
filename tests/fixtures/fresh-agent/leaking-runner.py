@@ -9,5 +9,5 @@ workspace = pathlib.Path.cwd()
 (workspace / "operation.decision.json").write_text(
     json.dumps({"evidence_status": "unreviewed", "accepted": False}) + "\n"
 )
-(workspace / "provider-debug.txt").write_text(os.environ["TEST_API_KEY"])
-print(os.environ["TEST_API_KEY"])
+(workspace / "provider-debug.txt").write_text(os.environ["TEST_SECRET"])
+print(os.environ["TEST_SECRET"])

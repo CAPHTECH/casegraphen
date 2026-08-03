@@ -7,6 +7,7 @@ use casegraphen::runtime_protocol::{
 use serde_json::Value;
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
@@ -48,6 +49,50 @@ fn manifest_contains_exactly_the_ten_release_scenarios_and_conforms() {
                 .unwrap()
                 .is_empty()
     }));
+}
+
+#[test]
+fn promoted_safety_conditions_are_deterministic_without_duplicating_manual_review() {
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(root().join("evals/fresh-agent/scenarios.v0.json")).unwrap(),
+    )
+    .unwrap();
+    for (scenario_id, required_values) in [
+        (
+            "evidence-requires-review",
+            vec!["request_independent_review", "mutation_executed"],
+        ),
+        (
+            "stale-revision-no-auto-rebase",
+            vec!["re_read_and_redecide"],
+        ),
+        (
+            "tool-failure-versus-domain-halt",
+            vec![
+                "inspect_tool_failure_before_retry",
+                "stop_for_domain_review",
+            ],
+        ),
+    ] {
+        let scenario = manifest["scenarios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|scenario| scenario["id"] == scenario_id)
+            .unwrap();
+        let deterministic = serde_json::to_string(&scenario["deterministic_evaluators"]).unwrap();
+        let manual = serde_json::to_string(&scenario["manual_judgments"]).unwrap();
+        for value in required_values {
+            assert!(
+                deterministic.contains(value),
+                "{scenario_id}: missing {value}"
+            );
+            assert!(
+                !manual.contains(value),
+                "{scenario_id}: manual review duplicates deterministic value {value}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -167,6 +212,10 @@ fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner()
             "scripts/fresh-agent-eval.py",
             "--runner-profile",
             "codex",
+            "--auth-mode",
+            "cli-session",
+            "--model",
+            "codex-fixture-model",
             "--budget-usd",
             "1",
             "--expected-runner-version",
@@ -176,7 +225,6 @@ fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner()
             "--output-dir",
             run_root.to_str().unwrap(),
         ])
-        .env("OPENAI_API_KEY", "fixture-openai-credential")
         .env("PATH", "/definitely/no/provider/bin")
         .current_dir(root())
         .output()
@@ -190,14 +238,29 @@ fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner()
 }
 
 #[test]
-fn missing_provider_credential_is_explicitly_unavailable() {
+fn unauthenticated_cli_session_is_explicitly_unavailable() {
     let output_root = TestOutputDirectory::new();
-    let run_root = output_root.path.join("credential-unavailable");
+    let run_root = output_root.path.join("session-unavailable");
+    let bin = output_root.path.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'codex-cli 0.146.0'; exit 0; fi\nif [ \"$1\" = \"login\" ] && [ \"$2\" = \"status\" ]; then exit 1; fi\nexit 2\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&codex).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&codex, permissions).unwrap();
     let output = Command::new("python3")
         .args([
             "scripts/fresh-agent-eval.py",
             "--runner-profile",
             "codex",
+            "--auth-mode",
+            "cli-session",
+            "--model",
+            "codex-fixture-model",
             "--budget-usd",
             "1",
             "--expected-runner-version",
@@ -207,30 +270,32 @@ fn missing_provider_credential_is_explicitly_unavailable() {
             "--output-dir",
             run_root.to_str().unwrap(),
         ])
-        .env_remove("OPENAI_API_KEY")
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .current_dir(root())
         .output()
-        .expect("run missing-credential path");
+        .expect("run unauthenticated-session path");
     assert_eq!(output.status.code(), Some(3));
     let summary: Value =
         serde_json::from_str(&fs::read_to_string(run_root.join("summary.json")).unwrap()).unwrap();
-    assert_eq!(summary["status"], "credential_unavailable");
+    assert_eq!(summary["status"], "cli_session_unavailable");
+    assert_eq!(summary["provider"]["authentication"]["mode"], "cli_session");
+    assert_eq!(summary["provider"]["authentication"]["available"], false);
     assert_eq!(
-        summary["provider"]["credential_environment"],
-        "OPENAI_API_KEY"
+        summary["provider"]["authentication"]["probe_output_retained"],
+        false
     );
     assert_eq!(summary["results"].as_array().unwrap().len(), 0);
 }
 
 #[test]
-fn provider_environment_contains_only_the_selected_provider_credential() {
+fn cli_session_environment_removes_all_environment_credentials() {
     let probe = r#"
 import importlib.util, json, pathlib
 path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
 spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-environment = module.provider_environment('codex')
+environment = module.cli_session_environment()
 print(json.dumps(sorted(key for key in environment if module.is_secret_key(key))))
 "#;
     let output = Command::new("python3")
@@ -238,12 +303,144 @@ print(json.dumps(sorted(key for key in environment if module.is_secret_key(key))
         .env("OPENAI_API_KEY", "selected")
         .env("ANTHROPIC_API_KEY", "unrelated")
         .env("GITHUB_TOKEN", "unrelated-host-token")
+        .env("AWS_ACCESS_KEY_ID", "unrelated-cloud-access-key")
         .current_dir(root())
         .output()
         .unwrap();
     assert!(output.status.success());
     let keys: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(keys, serde_json::json!(["OPENAI_API_KEY"]));
+    assert_eq!(keys, serde_json::json!([]));
+}
+
+#[test]
+fn cli_session_environment_excludes_agent_sockets_and_config_overrides() {
+    let probe = r#"
+import importlib.util, json, pathlib
+path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
+spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+environment = module.cli_session_environment()
+print(json.dumps(environment, sort_keys=True))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", probe])
+        .env("HOME", "/tmp/provider-session-home")
+        .env("SSH_AUTH_SOCK", "/tmp/agent.sock")
+        .env("CODEX_HOME", "/tmp/ambient-codex")
+        .env("CLAUDE_CONFIG_DIR", "/tmp/ambient-claude")
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let environment: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(environment["HOME"], "/tmp/provider-session-home");
+    assert_eq!(environment["GIT_CONFIG_GLOBAL"], "/dev/null");
+    assert!(environment.get("SSH_AUTH_SOCK").is_none());
+    assert!(environment.get("CODEX_HOME").is_none());
+    assert!(environment.get("CLAUDE_CONFIG_DIR").is_none());
+}
+
+#[test]
+fn auth_probe_classification_accepts_only_known_non_api_cli_sessions() {
+    let probe = r#"
+import importlib.util, json, pathlib
+path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
+spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps({
+  'claude_session': module.classify_cli_session('claude', json.dumps({'loggedIn': True, 'authMethod': 'claude.ai', 'email': 'not-retained@example.invalid'})),
+  'claude_api_key': module.classify_cli_session('claude', json.dumps({'loggedIn': True, 'authMethod': 'api_key'})),
+  'claude_unknown': module.classify_cli_session('claude', '{not-json'),
+  'codex_session': module.classify_cli_session('codex', 'Logged in using ChatGPT\n'),
+  'codex_api_key': module.classify_cli_session('codex', 'Logged in using an API key'),
+  'codex_unknown': module.classify_cli_session('codex', 'Logged in')
+}))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", probe])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let classifications: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        classifications["claude_session"],
+        "claude_subscription_session"
+    );
+    assert_eq!(classifications["codex_session"], "codex_chatgpt_session");
+    for field in [
+        "claude_api_key",
+        "claude_unknown",
+        "codex_api_key",
+        "codex_unknown",
+    ] {
+        assert_eq!(classifications[field], Value::Null);
+    }
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("not-retained@example.invalid"));
+}
+
+#[test]
+fn observed_model_comparison_is_exact_and_absence_stays_explicit() {
+    let probe = r#"
+import importlib.util, json, pathlib
+path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
+spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+def result(model=None):
+    observation = {} if model is None else {'model': model}
+    return {'usage_observations': [observation]}
+print(json.dumps({
+  'match': module.observed_models([result('declared-model')], 'declared-model'),
+  'mismatch': module.observed_models([result('substituted-model')], 'declared-model'),
+  'absent': module.observed_models([result()], 'declared-model')
+}, sort_keys=True))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", probe])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let observations: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(observations["match"]["matches_declared"], true);
+    assert_eq!(observations["mismatch"]["matches_declared"], false);
+    assert_eq!(observations["absent"]["observable"], false);
+    assert_eq!(
+        observations["absent"]["reported_models"],
+        serde_json::json!([])
+    );
+}
+
+#[test]
+fn real_runner_profiles_do_not_bypass_tool_permissions_or_load_user_configuration() {
+    let probe = r#"
+import importlib.util, json, pathlib
+path = pathlib.Path('scripts/fresh-agent-eval.py').resolve()
+spec = importlib.util.spec_from_file_location('fresh_agent_eval', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(module.RUNNER_PROFILES))
+"#;
+    let output = Command::new("python3")
+        .args(["-c", probe])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let profiles: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let codex = profiles["codex"].as_array().unwrap();
+    let claude = profiles["claude"].as_array().unwrap();
+    assert!(codex.iter().any(|value| value == "--ignore-user-config"));
+    assert!(codex.iter().any(|value| value == "--ephemeral"));
+    assert!(!claude.iter().any(|value| value == "bypassPermissions"));
+    assert!(claude.iter().any(|value| value == "acceptEdits"));
+    assert!(claude.iter().any(|value| value == "Read,Write,Edit"));
+    assert!(claude.iter().any(|value| value == "--tools"));
+    assert!(!claude.iter().any(|value| value == "--allowedTools"));
+    assert!(claude.iter().any(|value| value == "project"));
 }
 
 #[test]
@@ -268,7 +465,7 @@ fn credential_material_in_generated_files_is_failed_and_withheld() {
             "--scenario",
             "evidence-requires-review",
         ])
-        .env("TEST_API_KEY", "fixture-secret-that-must-not-survive")
+        .env("TEST_SECRET", "fixture-secret-that-must-not-survive")
         .current_dir(root())
         .output()
         .unwrap();
@@ -285,7 +482,57 @@ fn credential_material_in_generated_files_is_failed_and_withheld() {
 }
 
 #[test]
-fn workflow_conformance_rejects_shared_job_secret_scope() {
+fn disk_session_canary_cannot_survive_in_retained_artifacts() {
+    let output_root = TestOutputDirectory::new();
+    let run_root = output_root.path.join("disk-leak");
+    let session_home = output_root.path.join("provider-home");
+    let credential = session_home.join(".codex/auth.json");
+    fs::create_dir_all(credential.parent().unwrap()).unwrap();
+    fs::write(&credential, "disk-session-canary-that-must-never-survive").unwrap();
+    let runner = serde_json::to_string(&vec![
+        "python3",
+        root()
+            .join("tests/fixtures/fresh-agent/disk-credential-leaking-runner.py")
+            .to_str()
+            .unwrap(),
+    ])
+    .unwrap();
+    let output = Command::new("python3")
+        .args([
+            "scripts/fresh-agent-eval.py",
+            "--runner-json",
+            &runner,
+            "--output-dir",
+            run_root.to_str().unwrap(),
+            "--scenario",
+            "evidence-requires-review",
+        ])
+        .env("HOME", &session_home)
+        .env("CASEGRAPHEN_EVAL_CREDENTIAL_CANARY_FILE", &credential)
+        .current_dir(root())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let scenario = run_root.join("evidence-requires-review");
+    assert!(!scenario.join("workspace").exists());
+    assert!(!fs::read_to_string(scenario.join("raw.stdout"))
+        .unwrap()
+        .contains("disk-session-canary-that-must-never-survive"));
+    let result: Value =
+        serde_json::from_str(&fs::read_to_string(scenario.join("result.json")).unwrap()).unwrap();
+    assert_eq!(result["credential_material_scan"]["status"], "fail");
+    assert_eq!(
+        result["credential_material_scan"]["output_match_detected"],
+        true
+    );
+    assert_eq!(
+        result["credential_material_scan"]["disk_canary_configured"],
+        true
+    );
+}
+
+#[test]
+fn workflow_conformance_rejects_api_key_or_github_secret_injection() {
     let output = Command::new("python3")
         .arg("scripts/fresh-agent-workflow-conformance.py")
         .current_dir(root())
@@ -305,7 +552,7 @@ fn workflow_conformance_rejects_shared_job_secret_scope() {
         &invalid,
         valid.replace(
             "    steps:\n",
-            "    env:\n      OPENAI_API_KEY: shared\n      ANTHROPIC_API_KEY: shared\n    steps:\n",
+            "    env:\n      PROVIDER_API_KEY: ${{ secrets.PROVIDER_API_KEY }}\n    steps:\n",
         ),
     )
     .unwrap();
@@ -319,7 +566,97 @@ fn workflow_conformance_rejects_shared_job_secret_scope() {
         .output()
         .unwrap();
     assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stdout).contains("job scope"));
+    assert!(String::from_utf8_lossy(&rejected.stdout).contains("must not inject API keys"));
+
+    let reject = |name: &str, contents: String, expected: &str| {
+        let path = output_root.path.join(name);
+        fs::write(&path, contents).unwrap();
+        let result = Command::new("python3")
+            .args([
+                "scripts/fresh-agent-workflow-conformance.py",
+                "--workflow",
+                path.to_str().unwrap(),
+            ])
+            .current_dir(root())
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{name} unexpectedly conformed");
+        assert!(
+            String::from_utf8_lossy(&result.stdout).contains(expected),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+    };
+
+    let swapped = valid
+        .replace(
+            "runner_label: casegraphen-codex-cli-session",
+            "runner_label: temporary-session-label",
+        )
+        .replace(
+            "runner_label: casegraphen-claude-cli-session",
+            "runner_label: casegraphen-codex-cli-session",
+        )
+        .replace(
+            "runner_label: temporary-session-label",
+            "runner_label: casegraphen-claude-cli-session",
+        );
+    reject(
+        "swapped-labels.yml",
+        swapped,
+        "must exactly bind each provider",
+    );
+    reject(
+        "shell-input.yml",
+        valid.replace(
+            "--model \"$CASEGRAPHEN_MODEL\"",
+            "--model \"${{ inputs.codex_model }}\"",
+        ),
+        "only through step environment variables",
+    );
+    reject(
+        "relative-binary.yml",
+        valid.replace(
+            "$GITHUB_WORKSPACE/fresh-agent-bundle/bin/casegraphen",
+            "target/release/casegraphen",
+        ),
+        "absolute prepared casegraphen binary path",
+    );
+    reject(
+        "credentialed-build.yml",
+        valid.replace(
+            "    timeout-minutes: 240\n    steps:\n",
+            "    timeout-minutes: 240\n    steps:\n      - run: cargo build --release\n",
+        ),
+        "consume only the prepared evaluator artifact",
+    );
+    reject(
+        "floating-action.yml",
+        valid.replacen(
+            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "actions/checkout@v4",
+            1,
+        ),
+        "immutable commit SHA",
+    );
+    reject(
+        "missing-rust-toolchain-input.yml",
+        valid.replace("        with:\n          toolchain: 1.80.0\n", ""),
+        "must declare the repository toolchain input",
+    );
+    reject(
+        "non-main-dispatch.yml",
+        valid.replace("    if: github.ref == 'refs/heads/main'\n", ""),
+        "refuse non-main workflow dispatch refs",
+    );
+    reject(
+        "unprotected-provider-environment.yml",
+        valid.replace(
+            "    environment: fresh-agent-cli-session-${{ matrix.provider }}\n",
+            "",
+        ),
+        "provider-specific protected environments",
+    );
 }
 
 #[test]
@@ -341,6 +678,14 @@ fn release_policy_names_both_real_providers_and_all_scenarios() {
         "@openai/codex@0.146.0"
     );
     assert_eq!(policy["runner_pins"]["claude"]["version"], "2.1.220");
+    assert_eq!(
+        policy["runner_pins"]["codex"]["authentication_mode"],
+        "cli_session"
+    );
+    assert_eq!(
+        policy["runner_pins"]["claude"]["self_hosted_runner_label"],
+        "casegraphen-claude-cli-session"
+    );
     assert_eq!(
         policy["stable_promotion_threshold"]["deterministic_failures"],
         0

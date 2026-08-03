@@ -14,6 +14,7 @@ import json
 import os
 import pathlib
 import re
+import secrets as secrets_module
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,9 @@ RUNNER_PROFILES = {
         "exec",
         "--sandbox",
         "workspace-write",
+        "--ignore-user-config",
+        "--ephemeral",
+        "--strict-config",
         "--skip-git-repo-check",
         "--color",
         "never",
@@ -52,17 +56,52 @@ RUNNER_PROFILES = {
         "claude",
         "--print",
         "--permission-mode",
-        "bypassPermissions",
+        "acceptEdits",
+        "--tools",
+        "Read,Write,Edit",
+        "--setting-sources",
+        "project",
+        "--disable-slash-commands",
+        "--strict-mcp-config",
         "--output-format",
         "stream-json",
         "--verbose",
     ],
 }
-PROFILE_CREDENTIAL_ENV = {
-    "codex": "OPENAI_API_KEY",
-    "claude": "ANTHROPIC_API_KEY",
+PROFILE_AUTH_STATUS_ARGS = {
+    "codex": ["login", "status"],
+    "claude": ["auth", "status", "--json"],
 }
-SECRET_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
+SECRET_MARKERS = (
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "API_KEY",
+    "ACCESS_KEY",
+    "PRIVATE_KEY",
+    "COOKIE",
+    "AUTHORIZATION",
+    "BEARER",
+    "CREDENTIAL",
+)
+CLI_SESSION_ENVIRONMENT_ALLOWLIST = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "NO_COLOR",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "USER",
+}
+CLAUDE_NON_API_SESSION_METHODS = {
+    "claude.ai": "claude_subscription_session",
+    "oauth": "claude_oauth_session",
+    "subscription": "claude_subscription_session",
+}
 
 
 def utc_now() -> str:
@@ -87,15 +126,91 @@ def is_secret_key(key: str) -> bool:
     return any(marker in key.upper() for marker in SECRET_MARKERS)
 
 
-def provider_environment(provider: str, workspace: pathlib.Path | None = None) -> dict[str, str]:
-    """Build a provider environment containing at most that provider's credential."""
-    credential_key = PROFILE_CREDENTIAL_ENV.get(provider)
-    environment = {key: value for key, value in os.environ.items() if not is_secret_key(key)}
-    if credential_key and os.environ.get(credential_key):
-        environment[credential_key] = os.environ[credential_key]
+def cli_session_environment(workspace: pathlib.Path | None = None) -> dict[str, str]:
+    """Expose only process basics needed by a pre-provisioned CLI session.
+
+    HOME remains because provider CLIs may need their session store. The
+    dedicated OS account/credential broker is therefore an external trust
+    boundary; arbitrary ambient configuration and agent sockets are excluded.
+    """
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key in CLI_SESSION_ENVIRONMENT_ALLOWLIST and value
+    }
+    environment["GIT_CONFIG_GLOBAL"] = os.devnull
+    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    environment["GIT_TERMINAL_PROMPT"] = "0"
     if workspace is not None:
         environment["CASEGRAPHEN_EVAL_WORKSPACE"] = str(workspace)
     return environment
+
+
+def classify_cli_session(provider: str, output: str) -> str | None:
+    """Return a non-API-key session class, or None for every unknown shape."""
+    if provider == "claude":
+        try:
+            value = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(value, dict) or value.get("loggedIn") is not True:
+            return None
+        method = value.get("authMethod")
+        return CLAUDE_NON_API_SESSION_METHODS.get(method) if isinstance(method, str) else None
+    if provider == "codex":
+        normalized = re.sub(r"\x1b\[[0-9;]*m", "", output).strip().casefold()
+        lines = {line.strip() for line in normalized.splitlines() if line.strip()}
+        if lines & {"logged in using chatgpt", "logged in using chatgpt account"}:
+            return "codex_chatgpt_session"
+        return None
+    return None
+
+
+def cli_session_status(command: list[str], provider: str) -> dict[str, Any]:
+    """Ask the pinned CLI whether its disk-backed session is authenticated.
+
+    Probe output exists only in process memory long enough to classify an exact
+    non-API-key session shape. Raw output and account metadata are never retained.
+    """
+    executable = shutil.which(command[0])
+    args = PROFILE_AUTH_STATUS_ARGS[provider]
+    probe = [executable or command[0], *args]
+    try:
+        process = subprocess.run(
+            probe,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env=cli_session_environment(),
+        )
+        probe_output = (
+            process.stdout
+            if provider == "claude"
+            else f"{process.stdout}\n{process.stderr}"
+        )
+        classification = (
+            classify_cli_session(provider, probe_output)
+            if executable is not None and process.returncode == 0
+            else None
+        )
+        available = classification is not None
+        exit_code = process.returncode
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        available = False
+        exit_code = None
+        classification = None
+    return {
+        "mode": "cli_session",
+        "available": available,
+        "classification": classification,
+        "non_api_key_session_verified": classification is not None,
+        "status_exit_code": exit_code,
+        "probe_command_hash": sha256_bytes(json.dumps(args, separators=(",", ":")).encode()),
+        "probe_output_retained": False,
+        "child_environment_policy": "allowlisted_cli_session_environment_v1",
+        "credential_boundary": "dedicated_provider_os_account_or_broker_required",
+    }
 
 
 def runner_identity(
@@ -115,23 +230,32 @@ def runner_identity(
             text=True,
             timeout=15,
             check=False,
-            # Version discovery needs no provider authority. Keeping the
-            # credential out also prevents a compromised probe from echoing it
-            # into retained runner identity evidence.
-            env=provider_environment("identity-probe"),
+            # Version discovery needs no provider authority. Removing
+            # secret-like environment values also prevents a compromised probe
+            # from echoing them into retained runner identity evidence.
+            env=cli_session_environment(),
         )
         version_text = (version.stdout or version.stderr).strip()
+        version_exit_code = version.returncode
     except subprocess.TimeoutExpired:
         version_text = "version probe timed out"
+        version_exit_code = None
     return {
         "provider": provider,
         "model": model,
         "available": True,
         "executable": str(pathlib.Path(executable).resolve()),
         "version": version_text,
+        "version_probe_exit_code": version_exit_code,
         "expected_version": expected_version,
-        "version_matches": expected_version is None
-        or re.search(rf"(?<![0-9.]){re.escape(expected_version)}(?![0-9.])", version_text) is not None,
+        "version_matches": version_exit_code == 0
+        and (
+            expected_version is None
+            or re.search(
+                rf"(?<![0-9.]){re.escape(expected_version)}(?![0-9.])", version_text
+            )
+            is not None
+        ),
         "declared_package_identity": package_identity,
         "command_hash": sha256_bytes(json.dumps(command, separators=(",", ":")).encode()),
     }
@@ -139,6 +263,19 @@ def runner_identity(
 
 def secret_values(environment: dict[str, str]) -> list[str]:
     return [value for key, value in environment.items() if value and is_secret_key(key)]
+
+
+def credential_canary_values() -> list[str]:
+    """Read an operator-owned disk canary without exposing its path to children."""
+    raw_path = os.environ.get("CASEGRAPHEN_EVAL_CREDENTIAL_CANARY_FILE")
+    if not raw_path:
+        return []
+    path = pathlib.Path(raw_path)
+    try:
+        value = path.read_text()
+    except (OSError, UnicodeError):
+        return []
+    return [value] if value and len(value.encode()) <= 4096 else []
 
 
 def redact(text: str, secrets: list[str]) -> str:
@@ -199,6 +336,22 @@ def observed_cost_usd(results: list[dict[str, Any]]) -> tuple[float, bool]:
                 if isinstance(value, (int, float)):
                     values.append(float(value))
     return sum(values), bool(values)
+
+
+def observed_models(results: list[dict[str, Any]], declared: str | None) -> dict[str, Any]:
+    reported = sorted(
+        {
+            observation["model"]
+            for result in results
+            for observation in result.get("usage_observations", [])
+            if isinstance(observation.get("model"), str) and observation["model"]
+        }
+    )
+    return {
+        "observable": bool(reported),
+        "reported_models": reported,
+        "matches_declared": bool(reported) and reported == [declared],
+    }
 
 
 def load_manifest(path: pathlib.Path) -> dict[str, Any]:
@@ -422,14 +575,15 @@ def run_scenario(
                 command[2:2] = ["--model", model]
             elif identity["provider"] == "claude":
                 command.extend(["--model", model])
-        if identity["provider"] in PROFILE_CREDENTIAL_ENV:
-            environment = provider_environment(identity["provider"], workspace)
+        if identity["provider"] in PROFILE_AUTH_STATUS_ARGS:
+            environment = cli_session_environment(workspace)
         else:
             environment = {**os.environ, "CASEGRAPHEN_EVAL_WORKSPACE": str(workspace)}
+            environment.pop("CASEGRAPHEN_EVAL_CREDENTIAL_CANARY_FILE", None)
         environment["CASEGRAPHEN_EVAL_SKILL"] = str(workspace / "skill" / scenario["skill"])
-        # Scan against the parent environment too: an unrelated credential must
+        # Scan against the parent environment too: secret-like values must
         # neither reach the provider process nor survive in retained evidence.
-        secrets = secret_values(dict(os.environ))
+        secrets = list(dict.fromkeys(secret_values(dict(os.environ)) + credential_canary_values()))
         declared_input_hash = hash_tree(workspace)
         started_at = utc_now()
         started = time.monotonic()
@@ -453,6 +607,7 @@ def run_scenario(
             stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
         elapsed_ms = int((time.monotonic() - started) * 1000)
         finished_at = utc_now()
+        output_match_detected = any(secret in stdout or secret in stderr for secret in secrets)
         stdout = redact(stdout, secrets)
         stderr = redact(stderr, secrets)
         destination = output_root / scenario["id"]
@@ -462,7 +617,7 @@ def run_scenario(
         (destination / "prompt.md").write_text(prompt_file.read_text())
         evaluation = evaluate(scenario, workspace, casegraphen_bin)
         affected = files_containing_secrets(workspace, secrets)
-        workspace_retained = not affected
+        workspace_retained = not affected and not output_match_detected
         if workspace_retained:
             shutil.copytree(workspace, destination / "workspace")
         else:
@@ -486,6 +641,8 @@ def run_scenario(
             "credential_material_scan": {
                 "status": "pass" if workspace_retained else "fail",
                 "affected_file_count": len(affected),
+                "output_match_detected": output_match_detected,
+                "disk_canary_configured": bool(credential_canary_values()),
             },
             "raw_stdout_hash": sha256_bytes(stdout.encode()),
             "raw_stderr_hash": sha256_bytes(stderr.encode()),
@@ -507,6 +664,7 @@ def main() -> int:
     parser.add_argument("--check-manifest", action="store_true")
     parser.add_argument("--runner-json", help="JSON array command; exact {workspace}, {prompt_file}, and {skill_path} tokens are replaced")
     parser.add_argument("--runner-profile", choices=sorted(RUNNER_PROFILES))
+    parser.add_argument("--auth-mode", choices=["cli-session"])
     parser.add_argument("--model", help="provider model id; recorded exactly as supplied")
     parser.add_argument("--expected-runner-version", help="exact version required for a real runner profile")
     parser.add_argument("--runner-package-identity", help="exact pinned package identity retained with evidence")
@@ -542,28 +700,15 @@ def main() -> int:
         parser.error("real runner profiles require a positive --budget-usd")
     if args.runner_profile and (not args.expected_runner_version or not args.runner_package_identity):
         parser.error("real runner profiles require --expected-runner-version and --runner-package-identity")
+    if args.runner_profile and not args.model:
+        parser.error("real runner profiles require an exact --model id")
+    if args.runner_profile and args.auth_mode != "cli-session":
+        parser.error("real runner profiles require --auth-mode cli-session")
     if args.runner_profile:
         policy = json.loads(DEFAULT_RELEASE_POLICY.read_text())
         pin = policy["runner_pins"][args.runner_profile]
         if args.expected_runner_version != pin["version"] or args.runner_package_identity != pin["package_identity"]:
             parser.error("real runner identity must exactly match evals/fresh-agent/release-policy.v0.json")
-    credential_key = PROFILE_CREDENTIAL_ENV.get(provider)
-    if credential_key and not os.environ.get(credential_key):
-        unavailable = {
-            "schema": "casegraphen.eval.fresh_agent_run.v0",
-            "status": "credential_unavailable",
-            "provider": {
-                "provider": provider,
-                "model": args.model,
-                "available": False,
-                "credential_environment": credential_key,
-                "declared_package_identity": args.runner_package_identity,
-                "expected_version": args.expected_runner_version,
-            },
-            "results": [],
-        }
-        (output_root / "summary.json").write_text(json.dumps(unavailable, indent=2, sort_keys=True) + "\n")
-        return 3
     identity = runner_identity(
         runner,
         provider,
@@ -589,11 +734,26 @@ def main() -> int:
         }
         (output_root / "summary.json").write_text(json.dumps(mismatch, indent=2, sort_keys=True) + "\n")
         return 3
+    if args.runner_profile:
+        authentication = cli_session_status(runner, provider)
+        identity["authentication"] = authentication
+        if not authentication["available"]:
+            unavailable = {
+                "schema": "casegraphen.eval.fresh_agent_run.v0",
+                "status": "cli_session_unavailable",
+                "provider": identity,
+                "results": [],
+            }
+            (output_root / "summary.json").write_text(
+                json.dumps(unavailable, indent=2, sort_keys=True) + "\n"
+            )
+            return 3
     results = [
         run_scenario(scenario, runner, output_root, args.timeout, args.casegraphen_bin, identity, args.model)
         for scenario in scenarios
     ]
     total_cost_usd, cost_observable = observed_cost_usd(results)
+    model_observation = observed_models(results, args.model)
     summary = {
         "schema": "casegraphen.eval.fresh_agent_run.v0",
         "status": "completed",
@@ -605,7 +765,9 @@ def main() -> int:
             "observable": cost_observable,
             "per_scenario_timeout_seconds": args.timeout,
         },
+        "model_observation": model_observation,
         "results": results,
+        "host_attestation_challenge": secrets_module.token_hex(32),
     }
     summary["content_hash"] = sha256_bytes(
         json.dumps(summary, separators=(",", ":"), sort_keys=True).encode()
@@ -618,6 +780,8 @@ def main() -> int:
         for result in results
     )
     if args.budget_usd is not None and cost_observable and total_cost_usd > args.budget_usd:
+        failed = True
+    if model_observation["observable"] and not model_observation["matches_declared"]:
         failed = True
     return 1 if failed else 0
 

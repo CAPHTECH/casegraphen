@@ -18,61 +18,97 @@ on:
         type: string
 
 jobs:
-  evaluate:
+  prepare:
     permissions:
       contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3887e42e9fc0dcb4ce1d793231536d4a233d0979
+        with:
+          toolchain: 1.80.0
+      - name: Build immutable evaluation bundle
+        shell: bash
+        run: |
+          cargo build --release --locked --bin casegraphen
+          mkdir -p fresh-agent-bundle/bin fresh-agent-bundle/scripts
+          cp target/release/casegraphen fresh-agent-bundle/bin/casegraphen
+          cp scripts/fresh-agent-eval.py fresh-agent-bundle/scripts/fresh-agent-eval.py
+          cp -R evals skills schemas fresh-agent-bundle/
+          python3 -m pip install --target fresh-agent-bundle/python-deps jsonschema==4.26.0
+      - name: Publish immutable evaluation bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-evaluator-${{ github.sha }}
+          path: fresh-agent-bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  evaluate:
+    if: github.ref == 'refs/heads/main'
+    needs: prepare
+    permissions:
+      contents: read
+    environment: fresh-agent-cli-session-${{ matrix.provider }}
     strategy:
       fail-fast: false
       matrix:
-        provider: [codex, claude]
-    runs-on: ubuntu-latest
+        include:
+          - provider: codex
+            runner_label: casegraphen-codex-cli-session
+          - provider: claude
+            runner_label: casegraphen-claude-cli-session
+    runs-on: [self-hosted, linux, x64, casegraphen-fresh-agent, "${{ matrix.runner_label }}"]
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0
-      - name: Install evaluation dependencies
-        run: |
-          python3 -m pip install --user jsonschema==4.26.0
-          if [ "${{ matrix.provider }}" = codex ]; then
-            npm install --global @openai/codex@0.146.0
-          else
-            npm install --global @anthropic-ai/claude-code@2.1.220
-          fi
-      - name: Build the canonical evaluator
-        run: cargo build --release --locked --bin casegraphen
+      - name: Download immutable evaluation bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-evaluator-${{ github.sha }}
+          path: fresh-agent-bundle
+      - name: Prepare downloaded executable
+        run: chmod 0755 fresh-agent-bundle/bin/casegraphen
       - name: Execute the Codex provider lane
         if: matrix.provider == 'codex'
         shell: bash
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CASEGRAPHEN_MODEL: ${{ inputs.codex_model }}
+          CASEGRAPHEN_BUDGET_USD: ${{ inputs.budget_usd }}
         run: |
-          python3 scripts/fresh-agent-eval.py \
+          export PYTHONPATH="$GITHUB_WORKSPACE/fresh-agent-bundle/python-deps"
+          python3 fresh-agent-bundle/scripts/fresh-agent-eval.py \
             --runner-profile codex \
+            --auth-mode cli-session \
             --runner-package-identity '@openai/codex@0.146.0' \
             --expected-runner-version '0.146.0' \
-            --model "${{ inputs.codex_model }}" \
-            --budget-usd "${{ inputs.budget_usd }}" \
+            --model "$CASEGRAPHEN_MODEL" \
+            --budget-usd "$CASEGRAPHEN_BUDGET_USD" \
             --timeout 900 \
-            --casegraphen-bin target/release/casegraphen \
+            --casegraphen-bin "$GITHUB_WORKSPACE/fresh-agent-bundle/bin/casegraphen" \
             --output-dir fresh-agent-codex
       - name: Execute the Claude provider lane
         if: matrix.provider == 'claude'
         shell: bash
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CASEGRAPHEN_MODEL: ${{ inputs.claude_model }}
+          CASEGRAPHEN_BUDGET_USD: ${{ inputs.budget_usd }}
         run: |
-          python3 scripts/fresh-agent-eval.py \
+          export PYTHONPATH="$GITHUB_WORKSPACE/fresh-agent-bundle/python-deps"
+          python3 fresh-agent-bundle/scripts/fresh-agent-eval.py \
             --runner-profile claude \
+            --auth-mode cli-session \
             --runner-package-identity '@anthropic-ai/claude-code@2.1.220' \
             --expected-runner-version '2.1.220' \
-            --model "${{ inputs.claude_model }}" \
-            --budget-usd "${{ inputs.budget_usd }}" \
+            --model "$CASEGRAPHEN_MODEL" \
+            --budget-usd "$CASEGRAPHEN_BUDGET_USD" \
             --timeout 900 \
-            --casegraphen-bin target/release/casegraphen \
+            --casegraphen-bin "$GITHUB_WORKSPACE/fresh-agent-bundle/bin/casegraphen" \
             --output-dir fresh-agent-claude
       - name: Publish raw and scored evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: fresh-agent-${{ matrix.provider }}-${{ github.sha }}
           path: fresh-agent-${{ matrix.provider }}
@@ -86,8 +122,10 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: fresh-agent-*-${{ github.sha }}
           path: fresh-agent-inputs
@@ -100,7 +138,7 @@ jobs:
             --output-dir fresh-agent-release-report
       - name: Publish matrix report and retained evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: fresh-agent-release-report-${{ github.sha }}
           path: fresh-agent-release-report
