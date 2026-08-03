@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.runtime.integration_report.v0",
+  "title": "Experimental runtime integration report v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "report_version", "topology_id", "topology_content_hash", "base_revision_id", "accepted", "reconciliation_complete", "halt", "completeness", "resource_reconciliations", "artifacts", "proposals", "ingest_findings"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.runtime.integration_report.v0"},
+    "report_version": {"const": 0},
+    "topology_id": {"$ref": "#/$defs/id"},
+    "topology_content_hash": {"$ref": "#/$defs/hash"},
+    "base_revision_id": {"$ref": "#/$defs/id"},
+    "accepted": {"const": false},
+    "reconciliation_complete": {"type": "boolean"},
+    "halt": {"enum": ["incomplete_runtime_reports", "resource_reconciliation_incomplete", "needs_review"]},
+    "completeness": {"type": "object"},
+    "resource_reconciliations": {"type": "array", "items": {"$ref": "resource.reconciliation.v0.schema.json"}},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "proposals": {"type": "array", "items": {"$ref": "#/$defs/proposal"}},
+    "ingest_findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "sha256", "media_type", "byte_length"],
+      "properties": {
+        "artifact_id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/hash"},
+        "media_type": {"$ref": "#/$defs/id"}, "byte_length": {"type": "integer", "minimum": 0}
+      }
+    },
+    "proposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proposal_id", "kind", "review_status", "source_boundary", "payload"],
+      "properties": {
+        "proposal_id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["evidence", "morphism"]},
+        "review_status": {"const": "unreviewed"}, "source_boundary": {"$ref": "#/$defs/id"},
+        "payload": {}
+      }
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "line", "detail"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "line": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "detail": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@
       "required": ["kind", "report"],
       "properties": {
         "kind": { "const": "node_report" },
-        "report": { "type": "object" }
+        "report": { "$ref": "runtime.node_report.schema.json" }
       }
     },
     {
@@ -26,7 +26,7 @@
       "required": ["kind", "allocation"],
       "properties": {
         "kind": { "const": "resource_allocation" },
-        "allocation": { "type": "object" }
+        "allocation": { "$ref": "runtime.resource_allocation.v0.schema.json" }
       }
     }
   ]

@@ -51,6 +51,11 @@ ledger separate from the runtime topology and from the runtime's later reports.
 9. Return paths, schema stability, the observed base revision, remaining lint
    findings, and which artifacts still require human or policy review.
 
+When an operational MCP host is available, `compile_deployment_bundle` is the
+supported proposal compiler and `evaluate_expansion_round` is the supported
+bounded expansion evaluator. Both return unreviewed artifacts; this Skill must
+not turn either result into accepted state.
+
 ## Required outputs
 
 - `execution.topology.json` — experimental v0 proposal.

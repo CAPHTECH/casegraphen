@@ -30,9 +30,10 @@ use ops::{
     lift_structured_source, morphism_apply, morphism_check, morphism_propose, morphism_reject,
     operate, operate_text, packet_apply, packet_apply_text, packet_resume, packet_resume_text,
     plan_check, plan_propose, plan_review, projection_apply, review_apply, run_frontier,
-    run_frontier_text, run_step, run_step_text, NativeCloseGateOptions, NativeMutationGateOptions,
-    NativeOperateOptions, NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
-    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
+    run_frontier_text, run_step, run_step_text, topology_review_apply, topology_review_inspect,
+    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
+    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
+    NativeRunGateOptions, NativeRunStepOptions, NativeTopologyReviewOptions,
 };
 use reporting::report;
 
@@ -251,6 +252,24 @@ pub(crate) enum NativeCliCommand {
         gate_options: NativePlanGateOptions,
         output: Option<PathBuf>,
     },
+    TopologyReview {
+        action: ReviewAction,
+        store: PathBuf,
+        case_space_id: Id,
+        claim_cell_id: Id,
+        topology_input: PathBuf,
+        reviewer_id: Id,
+        reason: String,
+        base_revision_id: Id,
+        gate_options: NativePlanGateOptions,
+        output: Option<PathBuf>,
+    },
+    TopologyReviewInspect {
+        store: PathBuf,
+        case_space_id: Id,
+        claim_cell_id: Id,
+        output: Option<PathBuf>,
+    },
     BindingRegister {
         store: PathBuf,
         input: PathBuf,
@@ -388,6 +407,8 @@ impl NativeCliCommand {
             | Self::PlanPropose { output, .. }
             | Self::PlanCheck { output, .. }
             | Self::PlanReview { output, .. }
+            | Self::TopologyReview { output, .. }
+            | Self::TopologyReviewInspect { output, .. }
             | Self::BindingRegister { output, .. }
             | Self::RunStep { output, .. }
             | Self::RunFrontier { output, .. }
@@ -606,6 +627,8 @@ impl NativeCliCommand {
             | Self::PlanPropose { .. }
             | Self::PlanCheck { .. }
             | Self::PlanReview { .. }
+            | Self::TopologyReview { .. }
+            | Self::TopologyReviewInspect { .. }
             | Self::BindingRegister { .. }
             | Self::RunStep { .. }
             | Self::RunFrontier { .. }
@@ -855,6 +878,36 @@ impl NativeCliCommand {
                     gate_options,
                 },
             )?,
+            Self::TopologyReview {
+                action,
+                store,
+                case_space_id,
+                claim_cell_id,
+                topology_input,
+                reviewer_id,
+                reason,
+                base_revision_id,
+                gate_options,
+                ..
+            } => topology_review_apply(
+                store,
+                case_space_id,
+                NativeTopologyReviewOptions {
+                    claim_cell_id,
+                    topology_input,
+                    action: *action,
+                    reviewer_id,
+                    reason,
+                    base_revision_id,
+                    gate_options,
+                },
+            )?,
+            Self::TopologyReviewInspect {
+                store,
+                case_space_id,
+                claim_cell_id,
+                ..
+            } => topology_review_inspect(store, case_space_id, claim_cell_id)?,
             Self::BindingRegister { store, input, .. } => binding_register(store, input)?,
             Self::RunStep {
                 store,

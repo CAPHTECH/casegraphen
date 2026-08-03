@@ -1,0 +1,63 @@
+name: Fresh Agent Release Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      codex_model:
+        description: Exact Codex model id
+        required: true
+        type: string
+      claude_model:
+        description: Exact Claude model id
+        required: true
+        type: string
+      budget_usd:
+        description: Maximum declared spend per provider lane
+        required: true
+        default: "25"
+        type: string
+
+jobs:
+  evaluate:
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [codex, claude]
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80.0
+      - name: Install evaluation dependencies
+        run: |
+          python3 -m pip install --user jsonschema==4.26.0
+          if [ "${{ matrix.provider }}" = codex ]; then
+            npm install --global @openai/codex
+          else
+            npm install --global @anthropic-ai/claude-code
+          fi
+      - name: Build the canonical evaluator
+        run: cargo build --release --locked --bin casegraphen
+      - name: Execute the real provider matrix lane
+        shell: bash
+        run: |
+          model="${{ inputs.codex_model }}"
+          if [ "${{ matrix.provider }}" = claude ]; then model="${{ inputs.claude_model }}"; fi
+          python3 scripts/fresh-agent-eval.py \
+            --runner-profile "${{ matrix.provider }}" \
+            --model "$model" \
+            --budget-usd "${{ inputs.budget_usd }}" \
+            --timeout 900 \
+            --casegraphen-bin target/release/casegraphen \
+            --output-dir "fresh-agent-${{ matrix.provider }}"
+      - name: Publish raw and scored evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-agent-${{ matrix.provider }}-${{ github.sha }}
+          path: fresh-agent-${{ matrix.provider }}
+          if-no-files-found: error
+          retention-days: 90

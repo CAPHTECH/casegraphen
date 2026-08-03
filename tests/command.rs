@@ -1,6 +1,16 @@
 #![allow(missing_docs)]
 
 use arbtest::arbitrary::Arbitrary;
+use casegraphen::{
+    exec::AllowedTransitionClass,
+    execution_topology::{execution_topology_content_hash, ExecutionTopology},
+    graph_compiler::{
+        compile_execution_topology, reviewed_compilation_mode, CompilationTarget, CompilerRequest,
+        NodePlanMapping,
+    },
+    native_model::{CaseCellLifecycle, CaseCellType, CaseMorphismType},
+    native_store::NativeCaseStore,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -8808,6 +8818,225 @@ fn native_evidence_attach_materializes_cell_relation_and_content_hash() {
             .expect("evidence ids")
             .contains(&json!("evidence:attached-cli"))
     );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compilation() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:topology-review-base");
+
+    let mut topology_value = json_file(repo_path(
+        "schemas/experimental/execution.topology.file-review.example.json",
+    ));
+    topology_value["topology_id"] = json!("topology:native-cli-reviewed");
+    topology_value["case_space_id"] = json!(native_case_space_id());
+    let topology: ExecutionTopology =
+        serde_json::from_value(topology_value.clone()).expect("typed topology");
+    let topology_hash = execution_topology_content_hash(&topology).expect("topology hash");
+    let topology_path = directory.join("execution.topology.json");
+    let topology_bytes = serde_json::to_vec_pretty(&topology_value).expect("topology bytes");
+    fs::write(&topology_path, &topology_bytes).expect("write topology artifact");
+    let artifact_hash = format!("{:x}", Sha256::digest(&topology_bytes));
+    let artifact_id = format!("artifact:sha256-{artifact_hash}");
+
+    let mut claim = json_file(native_case_fixture())["case_cells"][3].clone();
+    claim["id"] = json!("evidence:execution-topology");
+    claim["title"] = json!("Execution topology proposal");
+    claim["lifecycle"] = json!("active");
+    claim["provenance"]["review_status"] = json!("unreviewed");
+    claim["metadata"] = json!({
+        "evidence_boundary": "inferred",
+        "topology_id": topology.topology_id,
+        "execution_topology_content_hash": topology_hash,
+        "artifact_id": artifact_id,
+        "case_space_id": native_case_space_id()
+    });
+    let claim_path = directory.join("execution-topology-claim.json");
+    fs::write(
+        &claim_path,
+        serde_json::to_vec_pretty(&claim).expect("claim bytes"),
+    )
+    .expect("write claim");
+
+    let attach_args = [
+        "evidence",
+        "attach",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:topology-review-base",
+        "--input",
+        claim_path.to_str().expect("claim path"),
+        "--artifact",
+        topology_path.to_str().expect("topology path"),
+        "--format",
+        "json",
+    ];
+    let attach = run_cli_with_mutation_gate(&attach_args, "actor:native-evidence-cli");
+    assert!(attach.status.success(), "stderr: {}", stderr(&attach));
+    let attached_revision = stdout_json(&attach)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("attached revision")
+        .to_owned();
+
+    let review_args = [
+        "topology-review",
+        "accept",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:execution-topology",
+        "--input",
+        topology_path.to_str().expect("topology path"),
+        "--reviewer-id",
+        "reviewer:topology",
+        "--reason",
+        "Reviewed the exact topology artifact.",
+        "--base-revision-id",
+        &attached_revision,
+        "--format",
+        "json",
+    ];
+    let accepted = run_cli_with_mutation_gate(&review_args, "actor:native-mutation-cli");
+    assert!(accepted.status.success(), "stderr: {}", stderr(&accepted));
+    let accepted_json = stdout_json(&accepted);
+    let accepted_revision = accepted_json["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("accepted revision")
+        .to_owned();
+    let metadata = &accepted_json["result"]["entry"]["morphism"]["metadata"];
+    assert_eq!(metadata["target_kind"], json!("execution_topology"));
+    assert_eq!(
+        metadata["execution_topology_binding"]["topology_content_hash"],
+        json!(topology_hash)
+    );
+    assert_eq!(
+        metadata["execution_topology_binding"]["artifact_id"],
+        json!(artifact_id)
+    );
+    assert_eq!(
+        metadata["execution_topology_binding"]["observed_base_revision_id"],
+        json!(attached_revision)
+    );
+
+    let inspected = run_cli(&[
+        "topology-review",
+        "inspect",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--target-id",
+        "evidence:execution-topology",
+        "--format",
+        "json",
+    ]);
+    assert!(inspected.status.success(), "stderr: {}", stderr(&inspected));
+    assert_eq!(
+        stdout_json(&inspected)["result"]["current_status"],
+        json!("accepted")
+    );
+
+    let replay = NativeCaseStore::new(directory.clone())
+        .replay_current_case_space(&higher_graphen_core::Id::new(native_case_space_id()).unwrap())
+        .expect("store replay");
+    let mode = reviewed_compilation_mode(&replay.case_space, "evidence:execution-topology")
+        .expect("content-bound reviewed mode");
+    let transition = AllowedTransitionClass {
+        morphism_type: CaseMorphismType::Update,
+        target_cell_types: vec![CaseCellType::Work],
+        to_lifecycles: vec![CaseCellLifecycle::Resolved],
+    };
+    let request = CompilerRequest {
+        mode,
+        target: CompilationTarget::GenericJsonlV0,
+        case_space_id: native_case_space_id().to_owned(),
+        base_revision_id: accepted_revision.clone(),
+        plan_id: "plan:reviewed-topology-e2e".to_owned(),
+        node_plan_mappings: topology
+            .nodes
+            .iter()
+            .map(|node| NodePlanMapping {
+                node_id: node.node_id.clone(),
+                worker_binding_id: format!("worker_binding:{}", node.node_id),
+                success_evidence_requirement_ids: vec![format!(
+                    "evidence_requirement:{}",
+                    node.node_id
+                )],
+                allowed_transition_classes: vec![transition.clone()],
+            })
+            .collect(),
+        verification_policies: topology
+            .verification_policy_ids
+            .iter()
+            .map(|id| {
+                let mut value = json_file(repo_path(
+                    "schemas/experimental/verification.policy.example.json",
+                ));
+                value["verification_policy_id"] = json!(id);
+                (id.clone(), value)
+            })
+            .collect(),
+        budget_policies: topology
+            .budget_policy_ids
+            .iter()
+            .map(|id| (id.clone(), json!({"policy_id": id, "max_cost": 10})))
+            .collect(),
+        expansion_policies: Default::default(),
+    };
+    let bundle = compile_execution_topology(&topology, &request)
+        .expect("store-produced reviewed topology compiles");
+    assert_eq!(bundle.manifest.mode, "reviewed");
+
+    let run_disposition = |action: &str, base_revision: &str| {
+        let args = [
+            "topology-review",
+            action,
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--target-id",
+            "evidence:execution-topology",
+            "--input",
+            topology_path.to_str().expect("topology path"),
+            "--reviewer-id",
+            "reviewer:topology",
+            "--reason",
+            "Exercise the explicit topology review lifecycle.",
+            "--base-revision-id",
+            base_revision,
+            "--format",
+            "json",
+        ];
+        run_cli_with_mutation_gate(&args, "actor:native-mutation-cli")
+    };
+    let reopened = run_disposition("reopen", &accepted_revision);
+    assert!(reopened.status.success(), "stderr: {}", stderr(&reopened));
+    let reopened_revision = stdout_json(&reopened)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("reopened revision")
+        .to_owned();
+    let rejected = run_disposition("reject", &reopened_revision);
+    assert!(rejected.status.success(), "stderr: {}", stderr(&rejected));
+
+    let mut changed_topology = topology.clone();
+    changed_topology.nodes[0]
+        .purpose
+        .push_str(" changed after review");
+    let refusal = compile_execution_topology(&changed_topology, &request)
+        .expect_err("same claim id cannot authorize changed topology bytes");
+    assert!(refusal
+        .unsupported_semantics
+        .iter()
+        .any(|finding| finding.code == "reviewed_topology_hash_mismatch"));
 
     fs::remove_dir_all(directory).expect("remove temp directory");
 }

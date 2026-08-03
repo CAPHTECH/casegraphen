@@ -17,13 +17,14 @@ use casegraphen::{
         parse_runtime_node_report, ExpectedRuntimeNode, RuntimeGraphExpectation, RuntimeNodeReport,
     },
     streaming_reconciliation::{
-        derive_streaming_resource_permits, reconcile_stream, RuntimeStreamEvent,
-        StreamEventPayload, StreamRunStatus, StreamingReconciliationInput,
-        StreamingResourcePermits, STREAM_EVENT_SCHEMA,
+        derive_streaming_acceptance, derive_streaming_resource_permits, reconcile_stream,
+        RuntimeStreamEvent, StreamEventPayload, StreamRunStatus, StreamingAcceptance,
+        StreamingReconciliationInput, StreamingResourcePermits, STREAM_EVENT_SCHEMA,
     },
 };
 
 const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const REVISION: &str = "revision:native-contract-v1";
 
 fn setup() -> (
     casegraphen::execution_topology::ExecutionTopology,
@@ -33,9 +34,16 @@ fn setup() -> (
         "../schemas/experimental/execution.topology.file-review.example.json"
     ))
     .unwrap();
+    topology.case_space_id = "case_space:native-case-management-contract".into();
     for node in &mut topology.nodes {
         node.resource_claims.clear();
     }
+    topology
+        .nodes
+        .iter_mut()
+        .find(|node| node.node_id == "node:reduce")
+        .unwrap()
+        .work_cell_id = "work:review-native-contract".into();
     topology
         .nodes
         .iter_mut()
@@ -204,8 +212,23 @@ fn resources(
     node_id: &str,
 ) -> StreamingResourcePermits {
     let (resource_expectations, integration) = resource_integration(topology, expectation, node_id);
-    derive_streaming_resource_permits(topology, &resource_expectations, &integration)
-        .expect("topology-bound resource permits")
+    derive_streaming_resource_permits(
+        topology,
+        &resource_expectations,
+        &integration,
+        &acceptance(topology),
+    )
+    .expect("topology-bound resource permits")
+}
+
+fn acceptance(
+    topology: &casegraphen::execution_topology::ExecutionTopology,
+) -> StreamingAcceptance {
+    let case_space: casegraphen::native_model::CaseSpace = serde_json::from_str(include_str!(
+        "../schemas/casegraphen/native.case.space.example.json"
+    ))
+    .unwrap();
+    derive_streaming_acceptance(&case_space, topology).expect("canonical streaming acceptance")
 }
 
 #[test]
@@ -221,6 +244,7 @@ fn duplicate_delayed_and_out_of_order_delivery_is_deterministic() {
             events,
             terminal_reports: &[],
             observed_artifact_ids: &[],
+            expected_case_revision_id: REVISION,
             resource_permits: Some(&resources),
             acceptance: None,
             run_closed: false,
@@ -249,6 +273,7 @@ fn a_slow_sibling_allows_safe_progress_without_hiding_incompleteness() {
         events: &[event],
         terminal_reports: &[terminal],
         observed_artifact_ids: &[],
+        expected_case_revision_id: REVISION,
         resource_permits: Some(&resources),
         acceptance: None,
         run_closed: false,
@@ -259,6 +284,14 @@ fn a_slow_sibling_allows_safe_progress_without_hiding_incompleteness() {
         result.early_release_proposals[0].target_attempt_id,
         "attempt:node:reduce"
     );
+    let proposal = &result.early_release_proposals[0];
+    assert_eq!(
+        proposal.topology_content_hash,
+        expectation.runtime_graph_content_hash
+    );
+    assert_eq!(proposal.case_revision_id, REVISION);
+    assert_eq!(proposal.to_node_id, "node:reduce");
+    assert_eq!(proposal.resource_reconciliation_hash.len(), 64);
     assert!(result
         .unfinished_node_ids
         .contains(&"node:review-b".to_owned()));
@@ -273,20 +306,111 @@ fn resource_permits_refuse_cross_graph_and_cross_node_substitution() {
 
     let mut other_graph = topology.clone();
     other_graph.nodes[0].purpose.push_str(" other graph");
-    let graph_findings =
-        derive_streaming_resource_permits(&other_graph, &resource_expectations, &integration)
-            .expect_err("a reconciliation from another graph cannot grant a permit");
+    let graph_findings = derive_streaming_resource_permits(
+        &other_graph,
+        &resource_expectations,
+        &integration,
+        &acceptance(&topology),
+    )
+    .expect_err("a reconciliation from another graph cannot grant a permit");
     assert!(graph_findings
         .iter()
         .any(|finding| finding.code == "resource_permit_graph_mismatch"));
 
     let mut substituted = resource_expectations.clone();
     substituted[0].declaration.node_id = "node:verify".to_owned();
-    let node_findings = derive_streaming_resource_permits(&topology, &substituted, &integration)
-        .expect_err("a reconciliation cannot be associated with another node");
+    let node_findings = derive_streaming_resource_permits(
+        &topology,
+        &substituted,
+        &integration,
+        &acceptance(&topology),
+    )
+    .expect_err("a reconciliation cannot be associated with another node");
     assert!(node_findings
         .iter()
         .any(|finding| finding.code == "resource_permit_declaration_mismatch"));
+
+    let mut substituted_attempt = resource_expectations.clone();
+    substituted_attempt[0].reservation.attempt_id = "attempt:substituted".to_owned();
+    let attempt_findings = derive_streaming_resource_permits(
+        &topology,
+        &substituted_attempt,
+        &integration,
+        &acceptance(&topology),
+    )
+    .expect_err("a reconciliation cannot be associated with another attempt");
+    assert!(attempt_findings
+        .iter()
+        .any(|finding| finding.code == "resource_permit_reconciliation_join_mismatch"));
+
+    let mut substituted_result = integration.clone();
+    substituted_result.resource_reconciliations[0].actual_allocation_count += 1;
+    let result_findings = derive_streaming_resource_permits(
+        &topology,
+        &resource_expectations,
+        &substituted_result,
+        &acceptance(&topology),
+    )
+    .expect_err("modified reconciliation bytes cannot retain canonical provenance");
+    assert!(result_findings
+        .iter()
+        .any(|finding| finding.code == "resource_permit_missing_integration_provenance"));
+}
+
+#[test]
+fn acceptance_and_resource_permits_cannot_be_replayed_at_a_new_revision() {
+    let (topology, expectation) = setup();
+    let acceptance_at_a = acceptance(&topology);
+    let (resource_expectations, integration) =
+        resource_integration(&topology, &expectation, "node:reduce");
+    let permits_at_a = derive_streaming_resource_permits(
+        &topology,
+        &resource_expectations,
+        &integration,
+        &acceptance_at_a,
+    )
+    .unwrap();
+    let event = event(&expectation, "event:stale-revision", 0, 0);
+    let result = reconcile_stream(StreamingReconciliationInput {
+        topology: &topology,
+        expectation: &expectation,
+        events: &[event],
+        terminal_reports: &[],
+        observed_artifact_ids: &[],
+        expected_case_revision_id: "revision:native-contract-v2",
+        resource_permits: Some(&permits_at_a),
+        acceptance: Some(&acceptance_at_a),
+        run_closed: false,
+    });
+    assert!(result.early_release_proposals.is_empty());
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.code == "stale_streaming_acceptance"));
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.code == "early_release_blocked"));
+}
+
+#[test]
+fn an_empty_expected_revision_fails_closed() {
+    let (topology, expectation) = setup();
+    let result = reconcile_stream(StreamingReconciliationInput {
+        topology: &topology,
+        expectation: &expectation,
+        events: &[],
+        terminal_reports: &[],
+        observed_artifact_ids: &[],
+        expected_case_revision_id: "",
+        resource_permits: None,
+        acceptance: None,
+        run_closed: false,
+    });
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.code == "empty_expected_case_revision"));
 }
 
 #[test]
@@ -321,6 +445,7 @@ fn acceptance_gate_or_missing_resource_blocks_early_release() {
         events: &[event],
         terminal_reports: &[],
         observed_artifact_ids: &[],
+        expected_case_revision_id: REVISION,
         resource_permits: Some(&resources(&topology, &expectation, "node:reduce")),
         acceptance: None,
         run_closed: false,
@@ -346,6 +471,7 @@ fn terminal_completeness_is_owned_by_runtime_protocol() {
         events: &[],
         terminal_reports: &reports,
         observed_artifact_ids: &[],
+        expected_case_revision_id: REVISION,
         resource_permits: None,
         acceptance: None,
         run_closed: true,
@@ -367,6 +493,7 @@ fn topology_expectation_mismatch_blocks_release_even_when_event_joins_expectatio
         events: &[event(&expectation, "event:stale-topology", 0, 0)],
         terminal_reports: &[],
         observed_artifact_ids: &[],
+        expected_case_revision_id: REVISION,
         resource_permits: Some(&resources),
         acceptance: None,
         run_closed: false,
@@ -398,6 +525,7 @@ fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
         events: &[first, collision],
         terminal_reports: &[],
         observed_artifact_ids: &[],
+        expected_case_revision_id: REVISION,
         resource_permits: Some(&resources(&topology, &expectation, "node:reduce")),
         acceptance: None,
         run_closed: false,

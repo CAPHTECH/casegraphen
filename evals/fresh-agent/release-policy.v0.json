@@ -1,0 +1,26 @@
+{
+  "schema": "casegraphen.eval.fresh_agent_release_policy.v0",
+  "required_providers": ["codex", "claude"],
+  "required_scenario_ids": [
+    "independent-20-file-fanout",
+    "same-file-resource-edge",
+    "correlated-verifier-context",
+    "hierarchical-1000-fanin",
+    "missing-one-of-200-reports",
+    "dynamic-loop-dedupe-all-seen",
+    "evidence-requires-review",
+    "stale-revision-no-auto-rebase",
+    "tool-failure-versus-domain-halt",
+    "proposal-not-direct-mutation"
+  ],
+  "stable_promotion_threshold": {
+    "deterministic_failures": 0,
+    "timeouts": 0,
+    "runner_failures": 0,
+    "manual_judgments_must_be_resolved": true,
+    "cost_must_be_observed_or_explicitly_waived": true,
+    "minimum_successful_runs_per_provider": 1
+  },
+  "regression_rule": "Any newly failing deterministic evaluator blocks stable promotion; subjective judgments never override deterministic failure.",
+  "compatibility": "This policy evaluates experimental v0 behavior and does not promote a schema id."
+}

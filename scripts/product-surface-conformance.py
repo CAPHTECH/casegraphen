@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Keep the documented Graph Engineering product surface on one inventory."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+
+
+def main() -> int:
+    root = pathlib.Path(__file__).resolve().parents[1]
+    inventory = json.loads((root / "docs/product-surface.v0.json").read_text())
+    catalog = json.loads(
+        (root / "schemas/experimental/control_plane.catalog.v0.schema.json").read_text()
+    )["properties"]["tools"]["const"]
+    request_tools = json.loads(
+        (root / "schemas/experimental/control_plane.request.v0.schema.json").read_text()
+    )["properties"]["tool"]["enum"]
+    adr = (root / "docs/adr/0020-graph-engineering-product-surface.md").read_text()
+    failures: list[str] = []
+
+    if catalog != request_tools:
+        failures.append("control-plane catalog and request schema tool order differ")
+    if not (root / "src/bin/casegraphen-mcp-host.rs").is_file():
+        failures.append("operational host binary is missing")
+    cargo = (root / "Cargo.toml").read_text()
+    usage = (root / "src/cli_usage.txt").read_text()
+    readme = (root / "README.md").read_text()
+    if "casegraphen-mcp-host" not in cargo:
+        failures.append("operational host is absent from the package manifest")
+    if "casegraphen-mcp-host" not in usage:
+        failures.append("operational host is absent from CLI usage")
+    if "product-surface.v0.json" not in readme:
+        failures.append("README does not link the canonical product-surface inventory")
+
+    seen: set[str] = set()
+    for workflow in inventory["workflows"]:
+        name, tool, owner = workflow["workflow"], workflow["tool"], workflow["owner"]
+        if name in seen:
+            failures.append(f"duplicate workflow: {name}")
+        seen.add(name)
+        if tool not in catalog:
+            failures.append(f"{name}: {tool} is absent from the MCP catalog")
+        if not (root / owner).is_file():
+            failures.append(f"{name}: canonical owner does not exist: {owner}")
+        if tool not in adr:
+            failures.append(f"{name}: ADR omits {tool}")
+        for skill in workflow["skills"]:
+            skill_file = root / "skills" / skill / "SKILL.md"
+            if not skill_file.is_file() or tool not in skill_file.read_text():
+                failures.append(f"{name}: {skill} does not name {tool}")
+
+    expected = {
+        "compile", "integrate_reconcile", "simulate", "resource_reserve",
+        "resource_reconcile", "expansion", "streaming", "redesign",
+    }
+    if seen != expected:
+        failures.append(f"workflow inventory differs: {sorted(seen ^ expected)}")
+
+    if failures:
+        for failure in failures:
+            print(f"product-surface-conformance: {failure}", file=sys.stderr)
+        return 1
+    print(f"product-surface-conformance: ok ({len(seen)} workflows, {len(catalog)} tools)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

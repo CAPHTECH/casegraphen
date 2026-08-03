@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.topology.patch.v0",
+  "title": "Experimental CaseGraphen Topology Patch v0",
+  "description": "A strict replacement-style patch. Array order is not semantic; CaseGraphen canonicalizes every collection by identity before hashing and applying it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "added_nodes",
+    "removed_node_ids",
+    "updated_nodes",
+    "added_edges",
+    "removed_edge_ids"
+  ],
+  "properties": {
+    "schema": { "const": "casegraphen.experimental.topology.patch.v0" },
+    "schema_version": { "const": 0 },
+    "added_nodes": {
+      "type": "array",
+      "items": { "$ref": "casegraphen.experimental.execution.topology.v0#/$defs/node" }
+    },
+    "removed_node_ids": { "$ref": "#/$defs/id_list" },
+    "updated_nodes": {
+      "type": "array",
+      "items": { "$ref": "casegraphen.experimental.execution.topology.v0#/$defs/node" }
+    },
+    "added_edges": {
+      "type": "array",
+      "items": { "$ref": "casegraphen.experimental.execution.topology.v0#/$defs/edge" }
+    },
+    "removed_edge_ids": { "$ref": "#/$defs/id_list" }
+  },
+  "$defs": {
+    "id_list": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

@@ -8,6 +8,8 @@ provide an external runner command and output directory.
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -33,6 +35,108 @@ REQUIRED_SCENARIOS = {
     "proposal-not-direct-mutation",
 }
 EVALUATOR_KINDS = {"graph_lint", "json_schema", "completeness_oracle", "json_assert"}
+RUNNER_PROFILES = {
+    "codex": [
+        "codex",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+        "-",
+    ],
+    "claude": [
+        "claude",
+        "--print",
+        "--permission-mode",
+        "bypassPermissions",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ],
+}
+
+
+def utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def sha256_bytes(value: bytes) -> str:
+    return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def hash_tree(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    for item in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
+        digest.update(item.relative_to(path).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return "sha256:" + digest.hexdigest()
+
+
+def runner_identity(command: list[str], provider: str, model: str | None) -> dict[str, Any]:
+    executable = shutil.which(command[0])
+    if executable is None:
+        return {"provider": provider, "model": model, "available": False, "executable": command[0]}
+    try:
+        version = subprocess.run(
+            [executable, "--version"], capture_output=True, text=True, timeout=15, check=False
+        )
+        version_text = (version.stdout or version.stderr).strip()
+    except subprocess.TimeoutExpired:
+        version_text = "version probe timed out"
+    return {
+        "provider": provider,
+        "model": model,
+        "available": True,
+        "executable": str(pathlib.Path(executable).resolve()),
+        "version": version_text,
+        "command_hash": sha256_bytes(json.dumps(command, separators=(",", ":")).encode()),
+    }
+
+
+def secret_values(environment: dict[str, str]) -> list[str]:
+    markers = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "CREDENTIAL")
+    return [value for key, value in environment.items() if value and any(marker in key.upper() for marker in markers)]
+
+
+def redact(text: str, secrets: list[str]) -> str:
+    for secret in secrets:
+        text = text.replace(secret, "[REDACTED]")
+    return text
+
+
+def usage_observations(stdout: str) -> list[dict[str, Any]]:
+    """Retain provider-emitted usage/cost objects without interpreting them."""
+    observed: list[dict[str, Any]] = []
+    for line in stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        selected = {
+            key: value[key]
+            for key in ("usage", "token_usage", "cost", "total_cost_usd", "model")
+            if key in value
+        }
+        if selected:
+            observed.append(selected)
+    return observed
+
+
+def observed_cost_usd(results: list[dict[str, Any]]) -> tuple[float, bool]:
+    values: list[float] = []
+    for result in results:
+        for observation in result.get("usage_observations", []):
+            for key in ("total_cost_usd", "cost"):
+                value = observation.get(key)
+                if isinstance(value, (int, float)):
+                    values.append(float(value))
+    return sum(values), bool(values)
 
 
 def load_manifest(path: pathlib.Path) -> dict[str, Any]:
@@ -237,6 +341,8 @@ def run_scenario(
     output_root: pathlib.Path,
     timeout: int,
     casegraphen_bin: str,
+    identity: dict[str, Any],
+    model: str | None,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix=f"casegraphen-eval-{scenario['id']}-") as temporary:
         workspace = pathlib.Path(temporary) / "workspace"
@@ -249,6 +355,19 @@ def run_scenario(
             "{skill_path}": str(workspace / "skill" / scenario["skill"] / "SKILL.md"),
         }
         command = [replacements.get(token, token) for token in runner]
+        if model:
+            if identity["provider"] == "codex":
+                command[2:2] = ["--model", model]
+            elif identity["provider"] == "claude":
+                command.extend(["--model", model])
+        environment = {
+            **os.environ,
+            "CASEGRAPHEN_EVAL_WORKSPACE": str(workspace),
+            "CASEGRAPHEN_EVAL_SKILL": str(workspace / "skill" / scenario["skill"]),
+        }
+        secrets = secret_values(environment)
+        declared_input_hash = hash_tree(workspace)
+        started_at = utc_now()
         started = time.monotonic()
         timed_out = False
         try:
@@ -260,7 +379,7 @@ def run_scenario(
                 text=True,
                 timeout=timeout,
                 check=False,
-                env={**os.environ, "CASEGRAPHEN_EVAL_WORKSPACE": str(workspace), "CASEGRAPHEN_EVAL_SKILL": str(workspace / "skill" / scenario["skill"])},
+                env=environment,
             )
             returncode, stdout, stderr = process.returncode, process.stdout, process.stderr
         except subprocess.TimeoutExpired as error:
@@ -269,15 +388,29 @@ def run_scenario(
             stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else error.stdout or ""
             stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr or ""
         elapsed_ms = int((time.monotonic() - started) * 1000)
+        finished_at = utc_now()
+        stdout = redact(stdout, secrets)
+        stderr = redact(stderr, secrets)
         destination = output_root / scenario["id"]
         destination.mkdir(parents=True, exist_ok=False)
         (destination / "raw.stdout").write_text(stdout)
         (destination / "raw.stderr").write_text(stderr)
+        (destination / "prompt.md").write_text(prompt_file.read_text())
         shutil.copytree(workspace, destination / "workspace")
         evaluation = evaluate(scenario, workspace, casegraphen_bin)
         result = {
             "scenario_id": scenario["id"],
+            "provider": identity,
             "runner_argv": command,
+            "prompt_hash": sha256_bytes(prompt_file.read_bytes()),
+            "skill_hash": hash_tree(workspace / "skill" / scenario["skill"]),
+            "declared_input_hash": declared_input_hash,
+            "produced_workspace_hash": hash_tree(workspace),
+            "raw_stdout_hash": sha256_bytes(stdout.encode()),
+            "raw_stderr_hash": sha256_bytes(stderr.encode()),
+            "usage_observations": usage_observations(stdout),
+            "started_at": started_at,
+            "finished_at": finished_at,
             "returncode": returncode,
             "timed_out": timed_out,
             "elapsed_ms": elapsed_ms,
@@ -292,9 +425,12 @@ def main() -> int:
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--check-manifest", action="store_true")
     parser.add_argument("--runner-json", help="JSON array command; exact {workspace}, {prompt_file}, and {skill_path} tokens are replaced")
+    parser.add_argument("--runner-profile", choices=sorted(RUNNER_PROFILES))
+    parser.add_argument("--model", help="provider model id; recorded exactly as supplied")
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--scenario", action="append", default=[])
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--budget-usd", type=float, help="declared aggregate release-run budget")
     parser.add_argument("--casegraphen-bin", default="casegraphen")
     args = parser.parse_args()
     manifest = load_manifest(args.manifest.resolve())
@@ -306,9 +442,9 @@ def main() -> int:
     if args.check_manifest:
         print(f"validated {len(manifest['scenarios'])} fresh-agent scenarios")
         return 0
-    if not args.runner_json or args.output_dir is None:
-        parser.error("release evaluation requires --runner-json and --output-dir")
-    runner = json.loads(args.runner_json)
+    if bool(args.runner_json) == bool(args.runner_profile) or args.output_dir is None:
+        parser.error("release evaluation requires exactly one of --runner-json/--runner-profile and --output-dir")
+    runner = json.loads(args.runner_json) if args.runner_json else RUNNER_PROFILES[args.runner_profile]
     if not isinstance(runner, list) or not runner or not all(isinstance(token, str) and token for token in runner):
         parser.error("--runner-json must be a non-empty JSON array of command tokens")
     selected = set(args.scenario)
@@ -318,8 +454,40 @@ def main() -> int:
     scenarios = [scenario for scenario in manifest["scenarios"] if not selected or scenario["id"] in selected]
     output_root = args.output_dir.resolve()
     output_root.mkdir(parents=True, exist_ok=False)
-    results = [run_scenario(scenario, runner, output_root, args.timeout, args.casegraphen_bin) for scenario in scenarios]
-    summary = {"schema": "casegraphen.eval.fresh_agent_run.v0", "results": results}
+    provider = args.runner_profile or "custom"
+    if args.runner_profile and (args.budget_usd is None or args.budget_usd <= 0):
+        parser.error("real runner profiles require a positive --budget-usd")
+    identity = runner_identity(runner, provider, args.model)
+    if not identity["available"]:
+        unavailable = {
+            "schema": "casegraphen.eval.fresh_agent_run.v0",
+            "status": "provider_unavailable",
+            "provider": identity,
+            "results": [],
+        }
+        (output_root / "summary.json").write_text(json.dumps(unavailable, indent=2, sort_keys=True) + "\n")
+        return 3
+    results = [
+        run_scenario(scenario, runner, output_root, args.timeout, args.casegraphen_bin, identity, args.model)
+        for scenario in scenarios
+    ]
+    total_cost_usd, cost_observable = observed_cost_usd(results)
+    summary = {
+        "schema": "casegraphen.eval.fresh_agent_run.v0",
+        "status": "completed",
+        "provider": identity,
+        "manifest_hash": sha256_bytes(args.manifest.resolve().read_bytes()),
+        "budget": {
+            "maximum_usd": args.budget_usd,
+            "observed_usd": total_cost_usd if cost_observable else None,
+            "observable": cost_observable,
+            "per_scenario_timeout_seconds": args.timeout,
+        },
+        "results": results,
+    }
+    summary["content_hash"] = sha256_bytes(
+        json.dumps(summary, separators=(",", ":"), sort_keys=True).encode()
+    )
     (output_root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     failed = any(
         result["returncode"] != 0
@@ -327,6 +495,8 @@ def main() -> int:
         or any(item["status"] in {"fail", "unavailable"} for item in result["evaluations"])
         for result in results
     )
+    if args.budget_usd is not None and cost_observable and total_cost_usd > args.budget_usd:
+        failed = True
     return 1 if failed else 0
 
 

@@ -1,0 +1,35 @@
+{
+  "schema":"casegraphen.experimental.execution.topology.v0",
+  "schema_version":0,
+  "topology_id":"topology:pilot-worktree-isolation",
+  "case_space_id":"case_space:runtime-pilot",
+  "nodes":[
+    {
+      "node_id":"node:edit-a","work_cell_id":"work:edit-a","purpose":"Write variant A in an isolated local workspace",
+      "inputs":[{"name":"source","schema_id":"schema:pilot-source-tree","artifact_selector":"pilot/base"}],
+      "outputs":[{"name":"commit","schema_id":"schema:pilot-commit"}],"side_effects":"workspace",
+      "resource_claims":[{"resource":"file:shared.txt","mode":"write","rate_limit_group":null,"workspace_strategy":"isolated_worktree","network_scope":[],"secret_scope":[]}],
+      "executor_class":"local-file-drop-worker","verification_policy_id":"verification:pilot-tests","budget_policy_id":"budget:pilot",
+      "idempotency_key":"edit-a:<base-hash>","delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":20,
+      "provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    },
+    {
+      "node_id":"node:edit-b","work_cell_id":"work:edit-b","purpose":"Write variant B in an isolated local workspace",
+      "inputs":[{"name":"source","schema_id":"schema:pilot-source-tree","artifact_selector":"pilot/base"}],
+      "outputs":[{"name":"commit","schema_id":"schema:pilot-commit"}],"side_effects":"workspace",
+      "resource_claims":[{"resource":"file:shared.txt","mode":"write","rate_limit_group":null,"workspace_strategy":"isolated_worktree","network_scope":[],"secret_scope":[]}],
+      "executor_class":"local-file-drop-worker","verification_policy_id":"verification:pilot-tests","budget_policy_id":"budget:pilot",
+      "idempotency_key":"edit-b:<base-hash>","delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":20,
+      "provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    }
+  ],
+  "edges":[
+    {
+      "edge_id":"edge:shared-file-exclusion","from":"node:edit-a","to":"node:edit-b","kind":"resource_exclusion","output":null,"input":null,"schema_id":null,
+      "blocking_predicate":"the same physical workspace allocation is active","dependency_witness":"both nodes write shared.txt","removal_counterexample":"without isolated allocation proof, writes can collide","resource_scope":["file:shared.txt"],
+      "provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    }
+  ],
+  "verification_policy_ids":["verification:pilot-tests"],"budget_policy_ids":["budget:pilot"],"expansion_policy_ids":[],
+  "completeness_policy":"all_expected_nodes_reported","provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+}

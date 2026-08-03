@@ -27,6 +27,13 @@ This Skill does not schedule nodes, retry work, call models, or mutate a case.
 7. If the result halts `needs_review`, present every proposal at the review
    seam. Every proposal remains `unreviewed`; `accepted` remains false.
 
+For standalone operation, use the inventory-governed MCP tools:
+`compile_deployment_bundle`, `reconcile_run`, `reserve_resources`,
+`reconcile_resources`, and `reconcile_streaming_run`. They delegate to the same
+canonical modules described above. Reservation requires an explicit operation
+gate and observed revision; streaming re-derives canonical readiness and
+resource permits for that exact current revision.
+
 ## Non-negotiable boundary
 
 - A runtime-reported success, model, context, verifier, time, cost, allocation,

@@ -6,13 +6,20 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 pub const CONTROL_PLANE_REQUEST_SCHEMA: &str = "casegraphen.experimental.control_plane.request.v0";
 pub const CONTROL_PLANE_RESPONSE_SCHEMA: &str =
     "casegraphen.experimental.control_plane.response.v0";
 pub const CONTROL_PLANE_NOTIFICATION_SCHEMA: &str =
     "casegraphen.experimental.control_plane.notification.v0";
+/// Schema identity of the transport-neutral control-plane capability catalog.
+pub const CONTROL_PLANE_CATALOG_SCHEMA: &str = "casegraphen.experimental.control_plane.catalog.v0";
 
 pub const RESOURCE_TEMPLATES: &[&str] = &[
     "casegraphen://spaces/{id}/status",
@@ -35,7 +42,12 @@ pub const TOOLS: &[ControlPlaneTool] = &[
     ControlPlaneTool::Resume,
     ControlPlaneTool::SupersedeDispatch,
     ControlPlaneTool::ReserveResources,
+    ControlPlaneTool::ReconcileResources,
     ControlPlaneTool::ReleaseResources,
+    ControlPlaneTool::SimulateExecutionTopology,
+    ControlPlaneTool::EvaluateExpansionRound,
+    ControlPlaneTool::ReconcileStreamingRun,
+    ControlPlaneTool::ProposeTopologyRedesign,
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -52,10 +64,31 @@ pub enum ControlPlaneTool {
     Resume,
     SupersedeDispatch,
     ReserveResources,
+    ReconcileResources,
     ReleaseResources,
+    SimulateExecutionTopology,
+    EvaluateExpansionRound,
+    ReconcileStreamingRun,
+    ProposeTopologyRedesign,
 }
 
 impl ControlPlaneTool {
+    /// Whether the tool consumes or emits a case-bound artifact whose caller-
+    /// observed revision must be preserved even though it may not mutate the
+    /// acceptance ledger.
+    pub fn requires_base_revision(self) -> bool {
+        self.changes_managed_state()
+            || matches!(
+                self,
+                Self::CompileDeploymentBundle
+                    | Self::ReconcileRun
+                    | Self::ReconcileResources
+                    | Self::EvaluateExpansionRound
+                    | Self::ReconcileStreamingRun
+                    | Self::ProposeTopologyRedesign
+            )
+    }
+
     pub fn changes_managed_state(self) -> bool {
         matches!(
             self,
@@ -182,17 +215,140 @@ pub fn read_resource(
     delegate.read_resource(uri)
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PendingRequest {
+    request_digest: String,
+    semantic_digest: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ControlPlaneState {
     next_sequence: u64,
     by_request: BTreeMap<String, (String, ControlPlaneResponse)>,
     by_idempotency_key: BTreeMap<String, (String, ControlPlaneResponse)>,
     notifications: BTreeMap<String, (String, ControlPlaneNotification)>,
+    pending_by_idempotency_key: BTreeMap<String, PendingRequest>,
 }
 
 impl ControlPlaneState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Loads crash-safe protocol state. Missing files create an empty state;
+    /// malformed files are never adopted.
+    pub fn load_durable(path: &Path) -> io::Result<Self> {
+        match fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::new()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Executes with a write-ahead pending marker. A crash after a delegated
+    /// effect but before its response is durably committed becomes an explicit
+    /// ambiguity refusal on restart and is never invoked a second time.
+    pub fn execute_durable(
+        &mut self,
+        request: &ControlPlaneRequest,
+        delegate: &mut impl DecisionDelegate,
+        state_path: &Path,
+    ) -> ControlPlaneResponse {
+        let request_digest = digest(request);
+        let semantic_digest = request_semantic_digest(request);
+        if let Some(pending) = self
+            .pending_by_idempotency_key
+            .get(&request.idempotency_key)
+        {
+            return if pending.semantic_digest == semantic_digest
+                && pending.request_digest == request_digest
+            {
+                self.local_refusal(
+                    request,
+                    "ambiguous_prior_effect",
+                    "a previous process may have delegated this request before acknowledgement; operator reconciliation is required",
+                )
+            } else {
+                self.local_refusal(
+                    request,
+                    "idempotency_key_collision",
+                    "a pending idempotency key names different request content",
+                )
+            };
+        }
+        if self.by_request.contains_key(&request.request_id)
+            || self
+                .by_idempotency_key
+                .contains_key(&request.idempotency_key)
+        {
+            return self.execute(request, delegate);
+        }
+
+        self.pending_by_idempotency_key.insert(
+            request.idempotency_key.clone(),
+            PendingRequest {
+                request_digest,
+                semantic_digest,
+            },
+        );
+        if let Err(error) = self.persist_durable(state_path) {
+            self.pending_by_idempotency_key
+                .remove(&request.idempotency_key);
+            return self.local_refusal(
+                request,
+                "durable_state_unavailable",
+                &format!("request was not delegated because the write-ahead state failed: {error}"),
+            );
+        }
+
+        let response = self.execute(request, delegate);
+        let mut committed = self.clone();
+        committed
+            .pending_by_idempotency_key
+            .remove(&request.idempotency_key);
+        match committed.persist_durable(state_path) {
+            Ok(()) => {
+                *self = committed;
+                response
+            }
+            Err(error) => self.local_refusal(
+                request,
+                "durable_acknowledgement_failed",
+                &format!("delegation outcome was not acknowledged because durable commit failed: {error}"),
+            ),
+        }
+    }
+
+    /// Persists notification/replay state with same-directory atomic rename.
+    pub fn persist_durable(&self, path: &Path) -> io::Result<()> {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("control-plane.state");
+        let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+        let bytes = serde_json::to_vec(self)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        if let Ok(directory) = fs::File::open(parent) {
+            directory.sync_all()?;
+        }
+        Ok(())
     }
 
     pub fn execute(
@@ -246,6 +402,18 @@ impl ControlPlaneState {
                 request,
                 "explicit_mutation_context_required",
                 "state-changing tools require client-supplied base revision and operation gate",
+            );
+        }
+        if request.tool.requires_base_revision()
+            && request
+                .base_revision_id
+                .as_deref()
+                .map_or(true, str::is_empty)
+        {
+            return self.local_refusal(
+                request,
+                "explicit_revision_context_required",
+                "this tool requires the exact client-observed base revision",
             );
         }
 
@@ -326,6 +494,24 @@ impl ControlPlaneState {
             (content_digest, notification.clone()),
         );
         Ok(notification)
+    }
+
+    /// Publishes and durably commits a notification before returning it.
+    pub fn publish_notification_durable(
+        &mut self,
+        notification: ControlPlaneNotification,
+        state_path: &Path,
+    ) -> Result<ControlPlaneNotification, ControlPlaneRefusal> {
+        let previous = self.clone();
+        let published = self.publish_notification(notification)?;
+        if let Err(error) = self.persist_durable(state_path) {
+            *self = previous;
+            return Err(local_refusal(
+                "durable_state_unavailable",
+                &format!("notification was not acknowledged because persistence failed: {error}"),
+            ));
+        }
+        Ok(published)
     }
 
     fn local_refusal(

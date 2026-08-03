@@ -93,10 +93,7 @@ fn topology() -> ExecutionTopology {
 }
 
 fn artifact(content: &str) -> (String, String) {
-    let hash = Sha256::digest(content.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
     let id = format!("artifact:sha256-{hash}");
     (id.clone(), json!({"kind":"artifact","artifact_id":id,"media_type":"application/json","content":content}).to_string())
 }

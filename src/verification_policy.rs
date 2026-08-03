@@ -4,6 +4,16 @@
 //! runtime attestations, and properties CaseGraphen cannot observe. A policy
 //! result is not an evidence acceptance or a proof of independent minds.
 
+use crate::{
+    exec::records::{
+        ExecutionDispatchState, ExecutionTrace, EXECUTION_RECORD_SCHEMA_VERSION,
+        EXECUTION_TRACE_SCHEMA,
+    },
+    native_eval::evaluate_native_case,
+    native_hash::sha256_hex,
+    native_model::{CaseCellLifecycle, CaseCellType, CaseMorphismType, CaseSpace},
+};
+use higher_graphen_core::ReviewStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -75,10 +85,11 @@ pub struct VerifierRecord {
     pub runtime_attestations: Vec<String>,
 }
 
-/// A deterministic world-anchor observation. It is still only an input to the
-/// policy reconciler; normal CaseGraphen evidence review remains authoritative.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AnchorObservation {
+/// Caller-declared anchor metadata. It is intentionally reconciled under
+/// declaration-only vocabulary and can never satisfy a tool-observed policy.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeclaredAnchorObservation {
     SourceArtifactHash {
         anchor_id: String,
         expected_sha256: String,
@@ -91,7 +102,7 @@ pub enum AnchorObservation {
     },
 }
 
-impl AnchorObservation {
+impl DeclaredAnchorObservation {
     fn id(&self) -> &str {
         match self {
             Self::SourceArtifactHash { anchor_id, .. }
@@ -99,7 +110,7 @@ impl AnchorObservation {
         }
     }
 
-    fn deterministically_satisfied(&self) -> bool {
+    fn declaration_matches(&self) -> bool {
         match self {
             Self::SourceArtifactHash {
                 expected_sha256,
@@ -112,6 +123,333 @@ impl AnchorObservation {
                 ..
             } => is_sha256(command_hash) && *exit_code == 0,
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AnchorProofProvenance {
+    CaseArtifact {
+        case_space_id: String,
+        case_revision_id: String,
+        artifact_id: String,
+    },
+    CaseExecutionTrace {
+        case_space_id: String,
+        case_revision_id: String,
+        trace_id: String,
+        trace_content_hash: String,
+    },
+    TrustedReferenceAdapter {
+        adapter_id: String,
+        artifact_id: String,
+    },
+}
+
+/// Opaque proof that CaseGraphen or a crate-trusted reference adapter observed
+/// exact bytes. Normal evidence review remains the only acceptance authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolObservedAnchorProof {
+    anchor_id: String,
+    observed_content_hash: String,
+    provenance: AnchorProofProvenance,
+}
+
+impl ToolObservedAnchorProof {
+    fn id(&self) -> &str {
+        &self.anchor_id
+    }
+
+    fn provenance_is_well_formed(&self) -> bool {
+        is_sha256(&self.observed_content_hash)
+            && match &self.provenance {
+                AnchorProofProvenance::CaseArtifact {
+                    case_space_id,
+                    case_revision_id,
+                    artifact_id,
+                } => {
+                    !case_space_id.is_empty()
+                        && !case_revision_id.is_empty()
+                        && artifact_id == &format!("artifact:sha256-{}", self.observed_content_hash)
+                }
+                AnchorProofProvenance::CaseExecutionTrace {
+                    case_space_id,
+                    case_revision_id,
+                    trace_id,
+                    trace_content_hash,
+                } => {
+                    !case_space_id.is_empty()
+                        && !case_revision_id.is_empty()
+                        && !trace_id.is_empty()
+                        && trace_content_hash == &self.observed_content_hash
+                }
+                AnchorProofProvenance::TrustedReferenceAdapter {
+                    adapter_id,
+                    artifact_id,
+                } => {
+                    !adapter_id.is_empty()
+                        && artifact_id == &format!("artifact:sha256-{}", self.observed_content_hash)
+                }
+            }
+    }
+}
+
+/// Exact files that an anchored CaseGraphen execution trace commits to.
+pub struct AnchoredExecutionTraceBytes<'a> {
+    pub trace: &'a [u8],
+    pub worker_report: &'a [u8],
+    pub stdout: &'a [u8],
+    pub stderr: &'a [u8],
+}
+
+/// Capability held only by an explicitly trusted in-crate reference adapter.
+/// External callers cannot construct it or promote runtime declarations.
+pub struct TrustedReferenceAnchorAdapter {
+    adapter_id: String,
+}
+
+impl TrustedReferenceAnchorAdapter {
+    #[allow(dead_code)]
+    pub(crate) fn new(adapter_id: impl Into<String>) -> Self {
+        Self {
+            adapter_id: adapter_id.into(),
+        }
+    }
+}
+
+/// Derives a proof only when a canonical CaseGraphen space contains the exact
+/// content-addressed artifact cell and the supplied bytes match it.
+pub fn observe_case_artifact(
+    case_space: &CaseSpace,
+    anchor_id: &str,
+    artifact_id: &str,
+    artifact_bytes: &[u8],
+) -> Result<ToolObservedAnchorProof, Vec<PolicyFinding>> {
+    let mut findings = validate_observation_identity(anchor_id);
+    if evaluate_native_case(case_space).is_err() {
+        findings.push(finding(
+            "case_artifact_space_invalid",
+            ClaimLevel::LedgerVerifiable,
+            Some(anchor_id.to_owned()),
+            "artifact observation requires a canonically valid CaseGraphen space",
+        ));
+    }
+    let content_hash = sha256_hex(artifact_bytes);
+    let expected_id = format!("artifact:sha256-{content_hash}");
+    let cell_matches = case_space.case_cells.iter().any(|cell| {
+        cell.id.as_str() == artifact_id
+            && cell.space_id == case_space.space_id
+            && matches!(&cell.cell_type, CaseCellType::Custom(kind) if kind == "artifact")
+            && matches!(
+                cell.lifecycle,
+                CaseCellLifecycle::Resolved | CaseCellLifecycle::Accepted
+            )
+            && cell
+                .metadata
+                .get("content_hash")
+                .and_then(serde_json::Value::as_str)
+                == Some(content_hash.as_str())
+    });
+    if artifact_id != expected_id || !cell_matches {
+        findings.push(finding(
+            "case_artifact_content_mismatch",
+            ClaimLevel::LedgerVerifiable,
+            Some(anchor_id.to_owned()),
+            "artifact id, ledger cell, metadata hash, and observed bytes must match exactly",
+        ));
+    }
+    if findings.is_empty() {
+        Ok(ToolObservedAnchorProof {
+            anchor_id: anchor_id.to_owned(),
+            observed_content_hash: content_hash,
+            provenance: AnchorProofProvenance::CaseArtifact {
+                case_space_id: case_space.case_space_id.to_string(),
+                case_revision_id: case_space.revision.revision_id.to_string(),
+                artifact_id: artifact_id.to_owned(),
+            },
+        })
+    } else {
+        Err(findings)
+    }
+}
+
+/// Derives a proof only from a trace that is content-bound by an accepted
+/// CaseGraphen execution-trace anchor and whose committed output bytes match.
+pub fn observe_case_execution_trace(
+    case_space: &CaseSpace,
+    anchor_id: &str,
+    files: AnchoredExecutionTraceBytes<'_>,
+) -> Result<ToolObservedAnchorProof, Vec<PolicyFinding>> {
+    let mut findings = validate_observation_identity(anchor_id);
+    if evaluate_native_case(case_space).is_err() {
+        findings.push(finding(
+            "case_trace_space_invalid",
+            ClaimLevel::LedgerVerifiable,
+            Some(anchor_id.to_owned()),
+            "trace observation requires a canonically valid CaseGraphen space",
+        ));
+    }
+    let trace = match serde_json::from_slice::<ExecutionTrace>(files.trace) {
+        Ok(trace) => Some(trace),
+        Err(error) => {
+            findings.push(finding(
+                "invalid_execution_trace_bytes",
+                ClaimLevel::LedgerVerifiable,
+                Some(anchor_id.to_owned()),
+                error.to_string(),
+            ));
+            None
+        }
+    };
+    let trace_hash = sha256_hex(files.trace);
+    if let Some(trace) = &trace {
+        let schema_valid = trace.schema == EXECUTION_TRACE_SCHEMA
+            && trace.schema_version == EXECUTION_RECORD_SCHEMA_VERSION
+            && trace.dispatch_state == ExecutionDispatchState::Completed
+            && trace.case_space_id == case_space.case_space_id
+            && trace.operation_gate.operation_scope_id == case_space.case_space_id;
+        let outputs_valid = sha256_hex(files.worker_report) == trace.worker_report_content_hash
+            && sha256_hex(files.stdout) == trace.stdout_content_hash
+            && sha256_hex(files.stderr) == trace.stderr_content_hash;
+        let anchor_entry = case_space.morphism_log.iter().find(|entry| {
+            entry.morphism.morphism_type
+                == CaseMorphismType::Custom("execution_trace_anchor".to_owned())
+                && entry.morphism.review_status == ReviewStatus::Accepted
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace.trace_id.as_str())
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_content_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace_hash.as_str())
+        });
+        let ledger_join_valid = anchor_entry.is_some_and(|entry| {
+            trace.appended_entry_ids.contains(&entry.entry_id)
+                && trace.result_revision_id.as_ref() == Some(&entry.target_revision_id)
+        });
+        if !schema_valid || !outputs_valid || !ledger_join_valid {
+            findings.push(finding(
+                "execution_trace_provenance_mismatch",
+                ClaimLevel::LedgerVerifiable,
+                Some(anchor_id.to_owned()),
+                "trace schema, anchored identity, result revision, and committed output bytes must all match",
+            ));
+        }
+    }
+    if findings.is_empty() {
+        let trace = trace.expect("valid observation retained parsed trace");
+        Ok(ToolObservedAnchorProof {
+            anchor_id: anchor_id.to_owned(),
+            observed_content_hash: trace_hash.clone(),
+            provenance: AnchorProofProvenance::CaseExecutionTrace {
+                case_space_id: case_space.case_space_id.to_string(),
+                case_revision_id: case_space.revision.revision_id.to_string(),
+                trace_id: trace.trace_id.to_string(),
+                trace_content_hash: trace_hash,
+            },
+        })
+    } else {
+        Err(findings)
+    }
+}
+
+/// Crate-trusted deterministic reference adapter. Requiring exact bytes (not a
+/// caller-supplied observed hash) prevents a self-report from copying hashes
+/// into the stronger proof type.
+pub fn observe_trusted_reference_artifact(
+    adapter: &TrustedReferenceAnchorAdapter,
+    anchor_id: &str,
+    artifact_id: &str,
+    artifact_bytes: &[u8],
+) -> Result<ToolObservedAnchorProof, Vec<PolicyFinding>> {
+    let mut findings = validate_observation_identity(anchor_id);
+    let content_hash = sha256_hex(artifact_bytes);
+    if adapter.adapter_id.is_empty() || artifact_id != format!("artifact:sha256-{content_hash}") {
+        findings.push(finding(
+            "trusted_reference_artifact_mismatch",
+            ClaimLevel::LedgerVerifiable,
+            Some(anchor_id.to_owned()),
+            "trusted adapter identity and exact content-addressed bytes are required",
+        ));
+    }
+    if findings.is_empty() {
+        Ok(ToolObservedAnchorProof {
+            anchor_id: anchor_id.to_owned(),
+            observed_content_hash: content_hash,
+            provenance: AnchorProofProvenance::TrustedReferenceAdapter {
+                adapter_id: adapter.adapter_id.clone(),
+                artifact_id: artifact_id.to_owned(),
+            },
+        })
+    } else {
+        Err(findings)
+    }
+}
+
+fn validate_observation_identity(anchor_id: &str) -> Vec<PolicyFinding> {
+    if anchor_id.is_empty() {
+        vec![finding(
+            "empty_observed_anchor_id",
+            ClaimLevel::LedgerVerifiable,
+            None,
+            "tool-observed anchor id must not be empty",
+        )]
+    } else {
+        Vec::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeclaredAnchorReconciliation {
+    pub policy_id: String,
+    pub declared_anchors_match: bool,
+    pub findings: Vec<PolicyFinding>,
+}
+
+pub fn reconcile_declared_anchors(
+    policy: &VerificationPolicy,
+    declarations: &[DeclaredAnchorObservation],
+) -> DeclaredAnchorReconciliation {
+    let mut findings = validate_verification_policy(policy);
+    let mut declarations_by_id = std::collections::BTreeMap::new();
+    for declaration in declarations {
+        if declaration.id().is_empty()
+            || declarations_by_id
+                .insert(declaration.id(), declaration)
+                .is_some()
+        {
+            findings.push(finding(
+                "duplicate_or_empty_declared_anchor_id",
+                ClaimLevel::RuntimeAttested,
+                Some(declaration.id().to_owned()),
+                "declared anchor ids must be unique and non-empty",
+            ));
+        }
+    }
+    let declared_anchors_match = policy.required_anchors.iter().all(|required| {
+        declarations_by_id
+            .get(required.as_str())
+            .is_some_and(|declaration| declaration.declaration_matches())
+    });
+    if !declared_anchors_match {
+        findings.push(finding(
+            "declared_anchor_mismatch",
+            ClaimLevel::RuntimeAttested,
+            None,
+            "one or more caller-declared anchors are absent or internally inconsistent",
+        ));
+    }
+    findings.sort_by(|left, right| {
+        (&left.code, &left.subject_id).cmp(&(&right.code, &right.subject_id))
+    });
+    DeclaredAnchorReconciliation {
+        policy_id: policy.verification_policy_id.clone(),
+        declared_anchors_match,
+        findings,
     }
 }
 
@@ -226,7 +564,7 @@ pub fn reconcile_verification_policy(
     policy: &VerificationPolicy,
     producer: &ProducerLineage,
     verifiers: &[VerifierRecord],
-    anchors: &[AnchorObservation],
+    anchors: &[ToolObservedAnchorProof],
 ) -> VerificationPolicyResult {
     let mut findings = validate_verification_policy(policy);
     let producer_caps = producer
@@ -356,7 +694,7 @@ pub fn reconcile_verification_policy(
     let anchors_satisfied = policy.required_anchors.iter().all(|required| {
         anchors_by_id
             .get(required.as_str())
-            .is_some_and(|anchor| anchor.deterministically_satisfied())
+            .is_some_and(|proof| proof.provenance_is_well_formed())
     }) && anchor_identity_valid;
     if !anchors_satisfied {
         findings.push(finding(
@@ -428,7 +766,7 @@ fn finding(
 mod tests {
     use super::*;
 
-    const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const REFERENCE_BYTES: &[u8] = b"deterministic reference anchor\n";
 
     fn policy() -> VerificationPolicy {
         parse_verification_policy(include_str!(
@@ -454,12 +792,15 @@ mod tests {
         }
     }
 
-    fn anchor() -> AnchorObservation {
-        AnchorObservation::SourceArtifactHash {
-            anchor_id: "anchor:source".into(),
-            expected_sha256: HASH.into(),
-            observed_sha256: HASH.into(),
-        }
+    fn anchor() -> ToolObservedAnchorProof {
+        let artifact_id = format!("artifact:sha256-{}", sha256_hex(REFERENCE_BYTES));
+        observe_trusted_reference_artifact(
+            &TrustedReferenceAnchorAdapter::new("adapter:deterministic-test"),
+            "anchor:source",
+            &artifact_id,
+            REFERENCE_BYTES,
+        )
+        .expect("real deterministic reference anchor")
     }
 
     #[test]
@@ -517,11 +858,6 @@ mod tests {
 
     #[test]
     fn failed_anchor_or_quorum_fails_closed() {
-        let bad_anchor = AnchorObservation::ToolObservedTest {
-            anchor_id: "anchor:source".into(),
-            command_hash: HASH.into(),
-            exit_code: 1,
-        };
         let result = reconcile_verification_policy(
             &policy(),
             &producer(),
@@ -530,7 +866,7 @@ mod tests {
                 "actor:v1",
                 VerifierDisposition::Accept,
             )],
-            &[bad_anchor],
+            &[],
         );
         assert!(!result.policy_satisfied);
         assert!(!result.anchors_satisfied);
@@ -565,14 +901,7 @@ mod tests {
             verifier("review:2", "actor:same", VerifierDisposition::Accept),
             verifier("review:3", "actor:v3", VerifierDisposition::Accept),
         ];
-        let anchors = [
-            anchor(),
-            AnchorObservation::SourceArtifactHash {
-                anchor_id: "anchor:source".into(),
-                expected_sha256: HASH.into(),
-                observed_sha256: "f".repeat(64),
-            },
-        ];
+        let anchors = [anchor(), anchor()];
         let result = reconcile_verification_policy(&policy(), &producer(), &records, &anchors);
         assert!(!result.policy_satisfied);
         assert!(!result.quorum_satisfied);
@@ -585,5 +914,97 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.code == "duplicate_or_empty_anchor_id"));
+    }
+
+    #[test]
+    fn copied_hashes_remain_declarations_and_cannot_satisfy_observed_policy() {
+        let hash = "a".repeat(64);
+        let declaration = DeclaredAnchorObservation::SourceArtifactHash {
+            anchor_id: "anchor:source".into(),
+            expected_sha256: hash.clone(),
+            observed_sha256: hash,
+        };
+        let declared = reconcile_declared_anchors(&policy(), &[declaration]);
+        assert!(declared.declared_anchors_match);
+
+        let result = reconcile_verification_policy(
+            &policy(),
+            &producer(),
+            &[
+                verifier("review:1", "actor:v1", VerifierDisposition::Accept),
+                verifier("review:2", "actor:v2", VerifierDisposition::Accept),
+                verifier("review:3", "actor:v3", VerifierDisposition::Reject),
+            ],
+            &[],
+        );
+        assert!(!result.anchors_satisfied);
+        assert!(!result.policy_satisfied);
+    }
+
+    #[test]
+    fn trusted_reference_rejects_artifact_substitution() {
+        let original_id = format!("artifact:sha256-{}", sha256_hex(REFERENCE_BYTES));
+        let error = observe_trusted_reference_artifact(
+            &TrustedReferenceAnchorAdapter::new("adapter:deterministic-test"),
+            "anchor:source",
+            &original_id,
+            b"substituted bytes",
+        )
+        .expect_err("artifact bytes cannot be substituted under an old identity");
+        assert!(error
+            .iter()
+            .any(|finding| finding.code == "trusted_reference_artifact_mismatch"));
+    }
+
+    #[test]
+    fn missing_case_artifact_cannot_create_an_observed_proof() {
+        let case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .unwrap();
+        let bytes = b"artifact bytes not present in the ledger";
+        let artifact_id = format!("artifact:sha256-{}", sha256_hex(bytes));
+        let error = observe_case_artifact(&case_space, "anchor:source", &artifact_id, bytes)
+            .expect_err("missing ledger artifact must fail closed");
+        assert!(error
+            .iter()
+            .any(|finding| finding.code == "case_artifact_content_mismatch"));
+    }
+
+    #[test]
+    fn unanchored_or_substituted_trace_bytes_fail_closed() {
+        let case_space: CaseSpace = serde_json::from_str(include_str!(
+            "../schemas/casegraphen/native.case.space.example.json"
+        ))
+        .unwrap();
+        let error = observe_case_execution_trace(
+            &case_space,
+            "anchor:source",
+            AnchoredExecutionTraceBytes {
+                trace: include_bytes!("../schemas/casegraphen/execution.trace.example.json"),
+                worker_report: b"copied worker report",
+                stdout: b"copied stdout",
+                stderr: b"copied stderr",
+            },
+        )
+        .expect_err("a runtime self-report is not a CaseGraphen-anchored trace");
+        assert!(error
+            .iter()
+            .any(|finding| finding.code == "execution_trace_provenance_mismatch"));
+
+        let mut substituted =
+            include_bytes!("../schemas/casegraphen/execution.trace.example.json").to_vec();
+        substituted.push(b' ');
+        assert!(observe_case_execution_trace(
+            &case_space,
+            "anchor:source",
+            AnchoredExecutionTraceBytes {
+                trace: &substituted,
+                worker_report: b"copied worker report",
+                stdout: b"copied stdout",
+                stderr: b"copied stderr",
+            },
+        )
+        .is_err());
     }
 }

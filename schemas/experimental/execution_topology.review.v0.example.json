@@ -1,0 +1,10 @@
+{
+  "schema": "casegraphen.experimental.execution_topology_review.v0",
+  "schema_version": 0,
+  "topology_id": "topology:security-review",
+  "topology_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "case_space_id": "case_space:security-review",
+  "observed_base_revision_id": "revision:topology-proposed",
+  "claim_cell_id": "evidence:execution-topology",
+  "artifact_id": "artifact:sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

@@ -132,6 +132,19 @@ fn harness_uses_a_fresh_task_local_workspace_and_captures_raw_output() {
     assert!(!scenario.join("workspace/.git").exists());
     let result: Value =
         serde_json::from_str(&fs::read_to_string(scenario.join("result.json")).unwrap()).unwrap();
+    assert_eq!(result["provider"]["provider"], "custom");
+    assert!(result["prompt_hash"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
+    assert!(result["skill_hash"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
+    assert!(result["declared_input_hash"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
     assert!(result["evaluations"]
         .as_array()
         .unwrap()
@@ -143,6 +156,52 @@ fn harness_uses_a_fresh_task_local_workspace_and_captures_raw_output() {
         .iter()
         .any(|evaluation| evaluation["kind"] == "manual_judgment"
             && evaluation["status"] == "manual_required"));
+}
+
+#[test]
+fn unavailable_real_provider_is_reported_and_never_replaced_by_the_fake_runner() {
+    let output_root = TestOutputDirectory::new();
+    let run_root = output_root.path.join("unavailable");
+    let output = Command::new("/usr/bin/python3")
+        .args([
+            "scripts/fresh-agent-eval.py",
+            "--runner-profile",
+            "codex",
+            "--budget-usd",
+            "1",
+            "--output-dir",
+            run_root.to_str().unwrap(),
+        ])
+        .env("PATH", "/definitely/no/provider/bin")
+        .current_dir(root())
+        .output()
+        .expect("run unavailable-provider path");
+    assert_eq!(output.status.code(), Some(3));
+    let summary: Value =
+        serde_json::from_str(&fs::read_to_string(run_root.join("summary.json")).unwrap()).unwrap();
+    assert_eq!(summary["status"], "provider_unavailable");
+    assert_eq!(summary["provider"]["provider"], "codex");
+    assert_eq!(summary["results"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn release_policy_names_both_real_providers_and_all_scenarios() {
+    let policy: Value = serde_json::from_str(
+        &fs::read_to_string(root().join("evals/fresh-agent/release-policy.v0.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        policy["required_providers"],
+        serde_json::json!(["codex", "claude"])
+    );
+    assert_eq!(
+        policy["required_scenario_ids"].as_array().unwrap().len(),
+        10
+    );
+    assert_eq!(
+        policy["stable_promotion_threshold"]["deterministic_failures"],
+        0
+    );
 }
 
 struct TestOutputDirectory {

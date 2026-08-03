@@ -86,7 +86,8 @@ pub enum CompilationTarget {
 }
 
 /// Explicit mapping needed to create a real, still-unreviewed execution plan.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodePlanMapping {
     pub node_id: String,
     pub worker_binding_id: String,
@@ -204,7 +205,6 @@ pub struct DeploymentBundle {
 pub fn reviewed_compilation_mode(
     case_space: &CaseSpace,
     claim_cell_id: &str,
-    topology_content_hash: &str,
 ) -> Result<CompilationMode, CompilerFinding> {
     validate_native_case_space(case_space).map_err(|error| {
         compiler_finding(
@@ -226,34 +226,24 @@ pub fn reviewed_compilation_mode(
         })?;
     let is_topology_claim = match &claim.cell_type {
         CaseCellType::Evidence => true,
-        CaseCellType::Custom(kind) => kind == "artifact" || kind == "execution_topology",
+        CaseCellType::Custom(kind) => kind == "execution_topology",
         _ => false,
     };
     if !is_topology_claim {
         return Err(compiler_finding(
             "invalid_topology_claim_type",
             "$.mode.claim_cell_id",
-            "reviewed topology binding must target evidence, artifact, or execution_topology claim",
+            "reviewed topology binding must target evidence or execution_topology claim",
         ));
     }
-    if claim
-        .metadata
-        .get("execution_topology_content_hash")
-        .and_then(Value::as_str)
-        != Some(topology_content_hash)
-    {
-        return Err(compiler_finding(
-            "topology_claim_hash_mismatch",
-            "$.mode.claim_cell_id",
-            "claim metadata does not bind the requested topology content hash",
-        ));
-    }
-
     let latest = case_space
         .morphism_log
         .iter()
         .filter_map(|entry| canonical_review(&entry.morphism).map(|review| (entry, review)))
-        .rfind(|(_, review)| review.target_id.as_str() == claim_cell_id)
+        .rfind(|(_, review)| {
+            review.target_kind == NativeReviewTargetKind::ExecutionTopology
+                && review.target_id.as_str() == claim_cell_id
+        })
         .ok_or_else(|| {
             compiler_finding(
                 "topology_claim_unreviewed",
@@ -261,14 +251,28 @@ pub fn reviewed_compilation_mode(
                 "claim has no canonical review",
             )
         })?;
-    if latest.1.target_kind != NativeReviewTargetKind::Plan
+    if latest.1.target_kind != NativeReviewTargetKind::ExecutionTopology
         || latest.1.action != ReviewAction::Accept
         || latest.1.outcome != ReviewStatus::Accepted
     {
         return Err(compiler_finding(
             "topology_claim_not_accepted",
             "$.mode.claim_cell_id",
-            "latest canonical review is not a plan acceptance",
+            "latest canonical review is not an execution-topology acceptance",
+        ));
+    }
+    let target = latest.1.execution_topology.as_ref().ok_or_else(|| {
+        compiler_finding(
+            "malformed_topology_review_binding",
+            "$.mode.claim_cell_id",
+            "accepted execution-topology review does not retain its exact binding",
+        )
+    })?;
+    if target.claim_cell_id.as_str() != claim_cell_id {
+        return Err(compiler_finding(
+            "topology_review_claim_mismatch",
+            "$.mode.claim_cell_id",
+            "review target and requested claim differ",
         ));
     }
     let review_id = latest
@@ -283,14 +287,18 @@ pub fn reviewed_compilation_mode(
     Ok(CompilationMode::Reviewed(ReviewedTopologyBinding {
         claim_cell_id: claim_cell_id.to_owned(),
         review_id,
-        topology_content_hash: topology_content_hash.to_owned(),
-        case_space_id: case_space.case_space_id.to_string(),
-        base_revision_id: case_space.revision.revision_id.to_string(),
-        expansion_proposal_id: claim
-            .metadata
-            .get("expansion_proposal_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        topology_content_hash: target.topology_content_hash.clone(),
+        case_space_id: target.case_space_id.to_string(),
+        // The reviewer observed the topology at `observed_base_revision_id`,
+        // retained inside the canonical target. Deployment starts from the
+        // review morphism's target revision, where that acceptance actually
+        // exists; using the observed predecessor would generate a plan that
+        // the current ledger immediately rejects as stale.
+        base_revision_id: latest.0.target_revision_id.to_string(),
+        expansion_proposal_id: target
+            .expansion_proposal_id
+            .as_ref()
+            .map(ToString::to_string),
     }))
 }
 

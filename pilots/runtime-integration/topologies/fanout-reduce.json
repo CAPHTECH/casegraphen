@@ -1,0 +1,76 @@
+{
+  "schema": "casegraphen.experimental.execution.topology.v0",
+  "schema_version": 0,
+  "topology_id": "topology:pilot-fanout-reduce",
+  "case_space_id": "case_space:runtime-pilot",
+  "nodes": [
+    {
+      "node_id": "node:inspect-a",
+      "work_cell_id": "work:inspect-a",
+      "purpose": "Inspect input A in an independently scheduled local process",
+      "inputs": [{"name":"source","schema_id":"schema:pilot-input","artifact_selector":"pilot/input-a.txt"}],
+      "outputs": [{"name":"finding","schema_id":"schema:pilot-finding"}],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "local-process",
+      "verification_policy_id": null,
+      "budget_policy_id": "budget:pilot",
+      "idempotency_key": "inspect-a:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 20,
+      "provenance": {"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    },
+    {
+      "node_id": "node:inspect-b",
+      "work_cell_id": "work:inspect-b",
+      "purpose": "Inspect input B with one explicit failed attempt and retry",
+      "inputs": [{"name":"source","schema_id":"schema:pilot-input","artifact_selector":"pilot/input-b.txt"}],
+      "outputs": [{"name":"finding","schema_id":"schema:pilot-finding"}],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "local-process",
+      "verification_policy_id": null,
+      "budget_policy_id": "budget:pilot",
+      "idempotency_key": "inspect-b:<input-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 30,
+      "provenance": {"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    },
+    {
+      "node_id": "node:reduce",
+      "work_cell_id": "work:reduce",
+      "purpose": "Reduce both process outputs after the fan-out completes",
+      "inputs": [{"name":"findings","schema_id":"schema:pilot-finding","artifact_selector":"node:inspect-*#finding"}],
+      "outputs": [{"name":"summary","schema_id":"schema:pilot-summary"}],
+      "side_effects": "none",
+      "resource_claims": [],
+      "executor_class": "local-reducer",
+      "verification_policy_id": null,
+      "budget_policy_id": "budget:pilot",
+      "idempotency_key": "reduce:<input-set-hash>",
+      "delivery": "barrier",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 10,
+      "provenance": {"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    }
+  ],
+  "edges": [
+    {
+      "edge_id":"edge:a-reduce","from":"node:inspect-a","to":"node:reduce","kind":"data","output":"finding","input":"findings","schema_id":"schema:pilot-finding",
+      "blocking_predicate":"finding A is absent","dependency_witness":"the reducer consumes finding A","removal_counterexample":"the summary would silently omit input A","resource_scope":[],
+      "provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    },
+    {
+      "edge_id":"edge:b-reduce","from":"node:inspect-b","to":"node:reduce","kind":"data","output":"finding","input":"findings","schema_id":"schema:pilot-finding",
+      "blocking_predicate":"finding B is absent","dependency_witness":"the reducer consumes finding B","removal_counterexample":"the summary would silently omit input B","resource_scope":[],
+      "provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    }
+  ],
+  "verification_policy_ids": [],
+  "budget_policy_ids": ["budget:pilot"],
+  "expansion_policy_ids": [],
+  "completeness_policy": "all_expected_nodes_reported",
+  "provenance": {"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+}

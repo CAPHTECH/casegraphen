@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.deployment_bundle.v0",
+  "title": "Experimental deployment bundle manifest v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "compiler_version", "topology_id", "topology_content_hash", "case_space_id", "base_revision_id", "mode", "artifacts"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.deployment_bundle.v0"},
+    "compiler_version": {"$ref": "#/$defs/id"},
+    "topology_id": {"$ref": "#/$defs/id"},
+    "topology_content_hash": {"$ref": "#/$defs/hash"},
+    "case_space_id": {"$ref": "#/$defs/id"},
+    "base_revision_id": {"$ref": "#/$defs/id"},
+    "mode": {"enum": ["proposal", "reviewed"]},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "content_hash", "byte_length"],
+      "properties": {
+        "path": {"$ref": "#/$defs/id"},
+        "content_hash": {"$ref": "#/$defs/hash"},
+        "byte_length": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

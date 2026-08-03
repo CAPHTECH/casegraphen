@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate and check the casegraphen-operate consumer contract."""
+"""Generate and check the shipped CaseGraphen Skill contracts."""
 
 from __future__ import annotations
 
@@ -10,16 +10,55 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SKILL = ROOT / "skills/casegraphen-operate"
+SKILLS = {
+    name: ROOT / "skills" / name
+    for name in (
+        "casegraphen-design",
+        "casegraphen-audit",
+        "casegraphen-integrate",
+        "casegraphen-operate",
+    )
+}
+OPERATE_SKILL = SKILLS["casegraphen-operate"]
 USAGE = ROOT / "src/cli_usage.txt"
 REPORT_SCHEMA = ROOT / "schemas/casegraphen/native-cli.report.schema.json"
-GENERATED = SKILL / "capabilities.generated.md"
+GENERATED = OPERATE_SKILL / "capabilities.generated.md"
 REPORTING_SOURCE = ROOT / "src/native_cli_reporting.rs"
 ERROR_SOURCES = (ROOT / "src/native_cli.rs", ROOT / "src/native_store/types.rs")
 OBSOLETE = (
     "There is no fan-out.",
     "every revision writes a full snapshot",
     "One invocation advances at most one step.",
+)
+
+ROLE_CONTRACTS = {
+    "casegraphen-design": (
+        "Produces proposal artifacts only",
+        "Do not invoke any CaseGraphen mutation, review, acceptance",
+        "A topology and lint report are proposals, never accepted state.",
+    ),
+    "casegraphen-audit": (
+        "Audit without changing the topology, case ledger, runtime reports, or review state.",
+        "Never invoke a mutation, review, evidence, transition, worker, `run`, or",
+        "A runtime status or a 199/200 report set never proves completion.",
+    ),
+    "casegraphen-integrate": (
+        "stopping at unreviewed evidence/morphism proposals",
+        "Every proposal remains `unreviewed`; `accepted` remains false.",
+        "Never turn an ingest report into accepted evidence",
+    ),
+    "casegraphen-operate": (
+        "Every durable mutation needs a valid operation gate.",
+        "CaseGraphen decides",
+        "Carry the revision returned by each mutating command.",
+    ),
+}
+
+OVERCLAIMS = (
+    "MCP support is complete",
+    "MCP control plane is production ready",
+    "agent behavior eval is implemented",
+    "runtime output is accepted evidence",
 )
 
 
@@ -129,6 +168,45 @@ def validate_document(path: pathlib.Path) -> list[str]:
     all_flags = set().union(*command_flags.values())
     operation_statuses, halts, refusal_codes = schema_vocabularies()
     statuses = set(operation_statuses)
+
+    frontmatter_name = None
+    frontmatter = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if frontmatter:
+        name_match = re.search(r"^name:\s*([^\s]+)\s*$", frontmatter.group(1), re.MULTILINE)
+        if name_match:
+            frontmatter_name = name_match.group(1)
+
+    normalized_text = " ".join(text.split()).casefold()
+    if frontmatter_name in ROLE_CONTRACTS:
+        for required in ROLE_CONTRACTS[frontmatter_name]:
+            if " ".join(required.split()).casefold() not in normalized_text:
+                errors.append(
+                    line_error(path, 1, f"{frontmatter_name} responsibility contract is missing {required!r}")
+                )
+
+    for overclaim in OVERCLAIMS:
+        for match in re.finditer(re.escape(overclaim), text, re.IGNORECASE):
+            errors.append(
+                line_error(
+                    path,
+                    text.count("\n", 0, match.start()) + 1,
+                    f"unsupported product overclaim: {overclaim!r}",
+                )
+            )
+
+    for match in re.finditer(r"\[[^\]]+\]\(([^)]+)\)", text):
+        target = match.group(1).split("#", 1)[0]
+        if not target or "://" in target or target.startswith("mailto:"):
+            continue
+        resolved = (path.parent / target).resolve()
+        if not resolved.exists():
+            errors.append(
+                line_error(
+                    path,
+                    text.count("\n", 0, match.start()) + 1,
+                    f"referenced path does not exist: {target!r}",
+                )
+            )
 
     for obsolete in OBSOLETE:
         for match in re.finditer(re.escape(obsolete), text, re.IGNORECASE):
@@ -242,9 +320,14 @@ def check() -> list[str]:
             f"{GENERATED.relative_to(ROOT)}: generated surface is stale; "
             "run `python3 scripts/skill-conformance.py --write`"
         )
-    for path in sorted(SKILL.rglob("*.md")):
-        if path != GENERATED:
-            errors.extend(validate_document(path))
+    for skill in SKILLS.values():
+        if not skill.is_dir():
+            errors.append(f"{skill.relative_to(ROOT)}: shipped Skill directory is missing")
+            continue
+        for path in sorted(skill.rglob("*.md")):
+            if path != GENERATED:
+                errors.extend(validate_document(path))
+    errors.extend(validate_document(ROOT / "README.md"))
     return errors
 
 
@@ -263,7 +346,8 @@ def main() -> int:
     if errors:
         print("\n".join(f"FAIL {error}" for error in errors), file=sys.stderr)
         return 1
-    print("ok: casegraphen-operate matches the shipped CLI and schema surface")
+    checked = ", ".join(SKILLS)
+    print(f"ok: {checked} match the shipped CLI, path, and trust-boundary surface")
     return 0
 
 

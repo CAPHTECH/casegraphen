@@ -89,14 +89,16 @@ pub fn diff_topology_versions(
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedesignEvidenceRefs {
     pub audit_artifact_ids: Vec<String>,
     pub integration_proposal_ids: Vec<String>,
     pub expansion_proposal_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExpectedImpact {
     pub metric: String,
     pub expected_direction: String,
@@ -104,13 +106,15 @@ pub struct ExpectedImpact {
     pub rationale: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReviewerAuthorityRequirement {
     pub authority_policy_id: String,
     pub required_capability_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SimulationRefs {
     pub input_artifact_id: String,
     pub old_report_artifact_id: String,
@@ -134,12 +138,14 @@ pub struct RedesignProposal {
     pub simulation: SimulationRefs,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RedesignFinding {
     pub code: String,
     pub detail: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedesignProposalInput {
     pub evidence: RedesignEvidenceRefs,
     pub expected_impact: Vec<ExpectedImpact>,

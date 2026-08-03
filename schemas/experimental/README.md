@@ -5,6 +5,21 @@ integration boundaries before promotion into CaseGraphen's stable schema
 registry. A `v0` contract may change incompatibly after review of real runtime
 integrations.
 
+`contracts.v0.json` is the fail-closed inventory for this experimental surface.
+It binds every shipped `$id` to one public Rust schema constant, classifies the
+contract as input, record, or generated report, lists its examples and
+cross-contract dependencies, and records the narrow exemptions for reports
+whose fixtures are produced by Rust tests. `scripts/experimental-schema-conformance.py`
+validates that inventory, every example, external `$ref`, and Rust-serialized
+representative instances. Its negative fixtures prove that duplicate IDs,
+orphan files, stale versions, and unresolved references cannot silently pass.
+
+Passing this gate means the checked-out experimental contracts agree with one
+another. It does **not** grant stable compatibility: only contracts promoted to
+`schemas/casegraphen` enter the stable schema policy. Experimental `v0` IDs may
+still change incompatibly before promotion, but any such change must update its
+Rust owner, examples, references, and inventory atomically.
+
 - `runtime.stream_event.v0.schema.json` defines stable attempt/sequence and
   logical-order observations for idempotent external streaming reconciliation.
   Its early-release outputs are proposals, never accepted log entries.

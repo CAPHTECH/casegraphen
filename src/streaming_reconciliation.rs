@@ -9,6 +9,7 @@ use crate::{
         execution_topology_content_hash, DeliveryMode, EdgeKind, ExecutionTopology,
     },
     native_eval::evaluate_native_case,
+    native_hash::sha256_hex,
     native_model::CaseSpace,
     resource_protocol::validate_resource_declaration,
     runtime_integration::{RuntimeIntegrationReport, RuntimeResourceExpectation},
@@ -75,6 +76,9 @@ pub struct EarlyReleaseProposal {
     pub to_node_id: String,
     pub artifact_id: String,
     pub target_attempt_id: String,
+    pub topology_content_hash: String,
+    pub case_revision_id: String,
+    pub resource_reconciliation_hash: String,
     pub source_event_id: String,
     pub accepted: bool,
 }
@@ -84,8 +88,16 @@ pub struct EarlyReleaseProposal {
 /// downstream node.
 #[derive(Debug)]
 pub struct StreamingResourcePermits {
+    permits_by_target: BTreeMap<String, StreamingResourcePermit>,
+}
+
+#[derive(Debug)]
+struct StreamingResourcePermit {
     topology_content_hash: String,
-    target_attempts: BTreeMap<String, String>,
+    case_revision_id: String,
+    target_node_id: String,
+    target_attempt_id: String,
+    resource_reconciliation_hash: String,
 }
 
 /// Derives streaming permits from the exact topology-bound resource
@@ -95,6 +107,7 @@ pub fn derive_streaming_resource_permits(
     topology: &ExecutionTopology,
     expectations: &[RuntimeResourceExpectation],
     integration: &RuntimeIntegrationReport,
+    acceptance: &StreamingAcceptance,
 ) -> Result<StreamingResourcePermits, Vec<StreamFinding>> {
     let topology_hash = execution_topology_content_hash(topology)
         .expect("typed execution topology serializes deterministically");
@@ -108,6 +121,13 @@ pub fn derive_streaming_resource_permits(
             "resource integration result must join the exact streaming topology",
         ));
     }
+    if acceptance.topology_content_hash != topology_hash || acceptance.case_revision_id.is_empty() {
+        findings.push(finding(
+            "resource_permit_acceptance_mismatch",
+            None,
+            "resource permits require canonical readiness for the exact topology and case revision",
+        ));
+    }
     if integration
         .ingest_findings
         .iter()
@@ -119,7 +139,7 @@ pub fn derive_streaming_resource_permits(
             "resource integration findings prevent streaming permits",
         ));
     }
-    let mut targets = BTreeMap::new();
+    let mut permits_by_target = BTreeMap::new();
     let mut matched_reconciliations = BTreeSet::new();
     for expectation in expectations {
         for resource_finding in validate_resource_declaration(topology, &expectation.declaration) {
@@ -129,34 +149,13 @@ pub fn derive_streaming_resource_permits(
                 format!("{}: {}", resource_finding.code, resource_finding.detail),
             ));
         }
-        if targets
-            .insert(
-                expectation.declaration.node_id.clone(),
-                expectation.reservation.attempt_id.clone(),
-            )
-            .is_some()
-        {
+        if permits_by_target.contains_key(&expectation.declaration.node_id) {
             findings.push(finding(
                 "duplicate_resource_permit_target",
                 None,
                 format!(
                     "{} has more than one resource expectation",
                     expectation.declaration.node_id
-                ),
-            ));
-        }
-        if !integration.has_canonical_resource_binding(
-            &expectation.declaration.node_id,
-            &expectation.declaration.declaration_id,
-            &expectation.reservation.reservation_id,
-            &expectation.reservation.attempt_id,
-        ) {
-            findings.push(finding(
-                "resource_permit_missing_integration_provenance",
-                None,
-                format!(
-                    "{}/{} was not reconciled from this topology-bound expectation",
-                    expectation.declaration.node_id, expectation.reservation.attempt_id
                 ),
             ));
         }
@@ -183,6 +182,25 @@ pub fn derive_streaming_resource_permits(
         }
         let (index, reconciliation) = matches[0];
         matched_reconciliations.insert(index);
+        let canonical = serde_json::to_vec(reconciliation)
+            .expect("typed resource reconciliation serializes deterministically");
+        let reconciliation_hash = sha256_hex(&canonical);
+        if !integration.has_canonical_resource_binding(
+            &expectation.declaration.node_id,
+            &expectation.declaration.declaration_id,
+            &expectation.reservation.reservation_id,
+            &expectation.reservation.attempt_id,
+            &reconciliation_hash,
+        ) {
+            findings.push(finding(
+                "resource_permit_missing_integration_provenance",
+                None,
+                format!(
+                    "{}/{} was not reconciled from this topology-bound expectation",
+                    expectation.declaration.node_id, expectation.reservation.attempt_id
+                ),
+            ));
+        }
         if !reconciliation.complete || !reconciliation.findings.is_empty() {
             findings.push(finding(
                 "resource_permit_reconciliation_incomplete",
@@ -192,6 +210,17 @@ pub fn derive_streaming_resource_permits(
                     expectation.declaration.node_id, expectation.reservation.attempt_id
                 ),
             ));
+        } else {
+            permits_by_target.insert(
+                expectation.declaration.node_id.clone(),
+                StreamingResourcePermit {
+                    topology_content_hash: topology_hash.clone(),
+                    case_revision_id: acceptance.case_revision_id.clone(),
+                    target_node_id: expectation.declaration.node_id.clone(),
+                    target_attempt_id: expectation.reservation.attempt_id.clone(),
+                    resource_reconciliation_hash: reconciliation_hash,
+                },
+            );
         }
     }
     if matched_reconciliations.len() != integration.resource_reconciliations.len() {
@@ -209,10 +238,7 @@ pub fn derive_streaming_resource_permits(
         ))
     });
     if findings.is_empty() {
-        Ok(StreamingResourcePermits {
-            topology_content_hash: topology_hash,
-            target_attempts: targets,
-        })
+        Ok(StreamingResourcePermits { permits_by_target })
     } else {
         Err(findings)
     }
@@ -274,6 +300,9 @@ pub struct StreamingReconciliationInput<'a> {
     pub events: &'a [RuntimeStreamEvent],
     pub terminal_reports: &'a [RuntimeNodeReport],
     pub observed_artifact_ids: &'a [String],
+    /// Exact case revision for which this stream prefix is being reconciled.
+    /// It must join both canonical readiness and every resource permit.
+    pub expected_case_revision_id: &'a str,
     /// Opaque projection derived from topology-bound canonical resource
     /// reconciliation. Required for every early release.
     pub resource_permits: Option<&'a StreamingResourcePermits>,
@@ -285,6 +314,22 @@ pub struct StreamingReconciliationInput<'a> {
 
 pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingReconciliation {
     let mut findings = Vec::new();
+    if input.expected_case_revision_id.is_empty() {
+        findings.push(finding(
+            "empty_expected_case_revision",
+            None,
+            "stream reconciliation requires an exact non-empty case revision",
+        ));
+    }
+    if let Some(acceptance) = input.acceptance {
+        if acceptance.case_revision_id != input.expected_case_revision_id {
+            findings.push(finding(
+                "stale_streaming_acceptance",
+                None,
+                "canonical readiness was derived for a different case revision",
+            ));
+        }
+    }
     let topology_join_valid = input.topology.topology_id == input.expectation.runtime_graph_id
         && execution_topology_content_hash(input.topology)
             .is_ok_and(|hash| hash == input.expectation.runtime_graph_content_hash);
@@ -445,12 +490,14 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
         let streams = nodes
             .get(edge.from.as_str())
             .is_some_and(|node| node.delivery == DeliveryMode::Streaming);
-        let target_attempt_id = input.resource_permits.and_then(|permits| {
-            (permits.topology_content_hash == input.expectation.runtime_graph_content_hash)
-                .then(|| permits.target_attempts.get(&edge.to))
-                .flatten()
+        let resource_permit = input.resource_permits.and_then(|permits| {
+            permits.permits_by_target.get(&edge.to).filter(|permit| {
+                permit.topology_content_hash == input.expectation.runtime_graph_content_hash
+                    && permit.case_revision_id == input.expected_case_revision_id
+                    && permit.target_node_id == edge.to
+            })
         });
-        let resources = target_attempt_id.is_some();
+        let resources = resource_permit.is_some();
         let has_acceptance_gate = input.topology.edges.iter().any(|candidate| {
             candidate.to == edge.to
                 && matches!(
@@ -461,7 +508,7 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
         let acceptance_satisfied = !has_acceptance_gate
             || input.acceptance.is_some_and(|acceptance| {
                 acceptance.topology_content_hash == input.expectation.runtime_graph_content_hash
-                    && !acceptance.case_revision_id.is_empty()
+                    && acceptance.case_revision_id == input.expected_case_revision_id
                     && nodes.get(edge.to.as_str()).is_some_and(|target| {
                         acceptance
                             .ready_work_cell_ids
@@ -479,8 +526,15 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
                 from_node_id: edge.from.clone(),
                 to_node_id: edge.to.clone(),
                 artifact_id: artifact_id.clone(),
-                target_attempt_id: target_attempt_id
-                    .expect("resource condition established target attempt")
+                target_attempt_id: resource_permit
+                    .expect("resource condition established target permit")
+                    .target_attempt_id
+                    .clone(),
+                topology_content_hash: input.expectation.runtime_graph_content_hash.clone(),
+                case_revision_id: input.expected_case_revision_id.to_owned(),
+                resource_reconciliation_hash: resource_permit
+                    .expect("resource condition established target permit")
+                    .resource_reconciliation_hash
                     .clone(),
                 source_event_id: event.event_id.clone(),
                 accepted: false,

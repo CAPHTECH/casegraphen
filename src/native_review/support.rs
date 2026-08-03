@@ -62,6 +62,7 @@ pub(crate) struct CanonicalReview {
     pub(crate) target_id: Id,
     pub(crate) action: ReviewAction,
     pub(crate) outcome: ReviewStatus,
+    pub(crate) execution_topology: Option<super::ExecutionTopologyReviewTarget>,
 }
 
 pub(crate) fn canonical_review(morphism: &CaseMorphism) -> Option<CanonicalReview> {
@@ -101,11 +102,51 @@ pub(crate) fn canonical_review(morphism: &CaseMorphism) -> Option<CanonicalRevie
     if outcome != outcome_status(action) {
         return None;
     }
+    let execution_topology = if target_kind == NativeReviewTargetKind::ExecutionTopology {
+        if morphism
+            .metadata
+            .get("execution_topology_review_schema")?
+            .as_str()?
+            != super::EXECUTION_TOPOLOGY_REVIEW_SCHEMA
+            || morphism
+                .metadata
+                .get("execution_topology_review_schema_version")?
+                .as_u64()?
+                != u64::from(super::EXECUTION_TOPOLOGY_REVIEW_SCHEMA_VERSION)
+        {
+            return None;
+        }
+        let binding: super::ExecutionTopologyReviewTarget =
+            serde_json::from_value(morphism.metadata.get("execution_topology_binding")?.clone())
+                .ok()?;
+        let hash_is_canonical = binding.topology_content_hash.len() == 64
+            && binding
+                .topology_content_hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        let artifact_is_addressed = binding
+            .artifact_id
+            .as_str()
+            .strip_prefix("artifact:sha256-")
+            .is_some_and(|hash| {
+                hash.len() == 64
+                    && hash
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            });
+        if binding.claim_cell_id != target_id || !hash_is_canonical || !artifact_is_addressed {
+            return None;
+        }
+        Some(binding)
+    } else {
+        None
+    };
     Some(CanonicalReview {
         target_kind,
         target_id,
         action,
         outcome,
+        execution_topology,
     })
 }
 
@@ -274,6 +315,7 @@ pub(super) fn target_kind_stem(target_kind: NativeReviewTargetKind) -> &'static 
     match target_kind {
         NativeReviewTargetKind::Completion => "completion",
         NativeReviewTargetKind::Evidence => "evidence",
+        NativeReviewTargetKind::ExecutionTopology => "execution-topology",
         NativeReviewTargetKind::Morphism => "morphism",
         NativeReviewTargetKind::Plan => "plan",
         NativeReviewTargetKind::ResidualRisk => "residual-risk",

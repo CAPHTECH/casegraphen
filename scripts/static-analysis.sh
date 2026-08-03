@@ -20,10 +20,33 @@ say() { printf '\n== %s\n' "$1"; }
 # when deliberately testing another toolchain.
 pinned=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null || true)
 active=$(rustc --version 2>/dev/null | cut -d' ' -f2)
+cargo_msrv=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml 2>/dev/null || true)
+normalized_pin=${pinned%.0}
+if [ -z "$pinned" ] || [ -z "$cargo_msrv" ] || [ "$normalized_pin" != "$cargo_msrv" ]; then
+  printf 'error: rust-toolchain.toml (%s) and Cargo.toml rust-version (%s) disagree.\n' \
+    "${pinned:-missing}" "${cargo_msrv:-missing}" >&2
+  exit 1
+fi
+for workflow in .github/workflows/*.yml; do
+  workflow_pins=$(sed -n 's/.*uses: dtolnay\/rust-toolchain@\([^[:space:]]*\).*/\1/p' "$workflow")
+  for workflow_pin in $workflow_pins; do
+    if [ "$workflow_pin" != "$pinned" ]; then
+      printf 'error: %s pins Rust %s but rust-toolchain.toml pins %s.\n' \
+        "$workflow" "$workflow_pin" "$pinned" >&2
+      exit 1
+    fi
+  done
+done
 if [ -n "$pinned" ] && [ -n "$active" ] && [ "$pinned" != "$active" ]; then
   printf 'warning: rust %s is active but rust-toolchain.toml pins %s.\n' "$active" "$pinned"
-  printf '         CI runs %s; re-run with RUSTUP_TOOLCHAIN=%s to match it.\n' "$pinned" "$pinned"
+  printf '         CI runs %s; re-run with `rustup run %s sh scripts/static-analysis.sh`.\n' \
+    "$pinned" "$pinned"
 fi
+
+say 'toolchain contract'
+printf 'declared MSRV: %s (toolchain pin %s)\n' "$cargo_msrv" "$pinned"
+rustc --version --verbose
+cargo clippy --version
 
 say 'formatting'
 cargo fmt --all --check
@@ -31,8 +54,11 @@ cargo fmt --all --check
 say 'installer smoke test'
 sh scripts/install-smoke-test.sh
 
-say 'casegraphen-operate conformance'
+say 'Skill conformance'
 python3 scripts/skill-conformance.py --check
+
+say 'Graph Engineering product-surface conformance'
+python3 scripts/product-surface-conformance.py
 
 say 'lints (warnings are failures)'
 cargo clippy --all-targets --locked -- -D warnings
@@ -103,6 +129,9 @@ if problems:
 
 print(f"ok: {len(list(schema_dir.glob('*.schema.json')))} schemas, aliases resolve")
 PY
+
+say 'experimental contract conformance'
+python3 scripts/experimental-schema-conformance.py --check --self-test
 
 say 'size report (informational)'
 find src -name '*.rs' | xargs wc -l | tail -1

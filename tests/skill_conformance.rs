@@ -106,6 +106,58 @@ fn executable_skill_example_runs_against_a_temporary_store() {
     }
 }
 
+#[test]
+fn every_skill_refuses_a_removed_responsibility_boundary() {
+    let mutations = [
+        (
+            "casegraphen-design",
+            "Produces proposal artifacts only",
+            "Produces artifacts only",
+        ),
+        (
+            "casegraphen-audit",
+            "Never invoke a mutation, review, evidence, transition, worker, `run`, or",
+            "Never invoke a worker",
+        ),
+        (
+            "casegraphen-integrate",
+            "Every proposal remains `unreviewed`; `accepted` remains false.",
+            "Every proposal is processed.",
+        ),
+        (
+            "casegraphen-operate",
+            "Every durable mutation needs a valid operation gate.",
+            "Durable mutations normally use a gate.",
+        ),
+    ];
+
+    for (skill, from, to) in mutations {
+        let temporary = TemporaryDirectory::new();
+        let source_path = root().join("skills").join(skill).join("SKILL.md");
+        let source = fs::read_to_string(&source_path).expect("read shipped Skill");
+        assert!(source.contains(from), "mutation source missing in {skill}");
+        let fixture_path = temporary.path().join(format!("{skill}.md"));
+        fs::write(&fixture_path, source.replacen(from, to, 1)).expect("write mutated Skill");
+
+        let output = Command::new("python3")
+            .arg("scripts/skill-conformance.py")
+            .arg("--check-document")
+            .arg(&fixture_path)
+            .current_dir(root())
+            .output()
+            .expect("run Skill responsibility checker");
+        assert!(
+            !output.status.success(),
+            "mutated {skill} unexpectedly passed"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("responsibility contract is missing"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 fn checker(fixture: &str) -> std::process::Output {
     Command::new("python3")
         .args(["scripts/skill-conformance.py", "--check-document", fixture])

@@ -1,0 +1,24 @@
+{
+  "schema":"casegraphen.experimental.execution.topology.v0",
+  "schema_version":0,
+  "topology_id":"topology:pilot-resource-collision",
+  "case_space_id":"case_space:runtime-pilot",
+  "nodes":[
+    {
+      "node_id":"node:unsafe-a","work_cell_id":"work:unsafe-a","purpose":"Unsafe shared writer A","inputs":[],
+      "outputs":[{"name":"result","schema_id":"schema:pilot-result"}],"side_effects":"workspace",
+      "resource_claims":[{"resource":"file:shared.txt","mode":"write","rate_limit_group":null,"workspace_strategy":"shared","network_scope":[],"secret_scope":[]}],
+      "executor_class":"local-worker","verification_policy_id":"verification:pilot-tests","budget_policy_id":"budget:pilot","idempotency_key":"unsafe-a",
+      "delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":10,"provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    },
+    {
+      "node_id":"node:unsafe-b","work_cell_id":"work:unsafe-b","purpose":"Unsafe shared writer B","inputs":[],
+      "outputs":[{"name":"result","schema_id":"schema:pilot-result"}],"side_effects":"workspace",
+      "resource_claims":[{"resource":"file:shared.txt","mode":"write","rate_limit_group":null,"workspace_strategy":"shared","network_scope":[],"secret_scope":[]}],
+      "executor_class":"local-worker","verification_policy_id":"verification:pilot-tests","budget_policy_id":"budget:pilot","idempotency_key":"unsafe-b",
+      "delivery":"barrier","expansion_policy_id":null,"estimated_duration_ms":10,"provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+    }
+  ],
+  "edges":[],"verification_policy_ids":["verification:pilot-tests"],"budget_policy_ids":["budget:pilot"],"expansion_policy_ids":[],
+  "completeness_policy":"all_expected_nodes_reported","provenance":{"source":"pilot:issue-58","created_by":"actor:pilot-author"}
+}

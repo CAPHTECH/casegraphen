@@ -1,0 +1,50 @@
+{
+  "schema": "casegraphen.experimental.topology.patch.v0",
+  "schema_version": 0,
+  "added_nodes": [
+    {
+      "node_id": "node:review-c",
+      "work_cell_id": "work:review-c",
+      "purpose": "Review source file C",
+      "inputs": [
+        {
+          "name": "source",
+          "schema_id": "schema:source-file",
+          "artifact_selector": "src/c.rs"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "findings",
+          "schema_id": "schema:findings"
+        }
+      ],
+      "side_effects": "none",
+      "resource_claims": [
+        {
+          "resource": "file:src/c.rs",
+          "mode": "read",
+          "rate_limit_group": null,
+          "workspace_strategy": "shared",
+          "network_scope": [],
+          "secret_scope": []
+        }
+      ],
+      "executor_class": "llm-reviewer",
+      "verification_policy_id": "verification:independent",
+      "budget_policy_id": "budget:small",
+      "idempotency_key": "review-c:<source-hash>",
+      "delivery": "streaming",
+      "expansion_policy_id": null,
+      "estimated_duration_ms": 1000,
+      "provenance": {
+        "source": "expansion:fixture",
+        "created_by": "actor:designer"
+      }
+    }
+  ],
+  "removed_node_ids": [],
+  "updated_nodes": [],
+  "added_edges": [],
+  "removed_edge_ids": []
+}

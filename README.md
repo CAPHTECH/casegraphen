@@ -57,6 +57,39 @@ never the profile name or path. The profile cannot supply `--enable-worker`,
 [`operation-gate-profiles` schema](schemas/casegraphen/operation-gate-profiles.schema.json)
 and [example](schemas/casegraphen/operation-gate-profiles.example.json).
 
+## Graph Engineering Plane
+
+CaseGraphen now separates three graphs instead of treating runtime deployment
+as accepted case meaning:
+
+1. The stable **Case Graph / Acceptance Ledger** records goals, work,
+   evidence, authority, review, revisions, and accepted change.
+2. The experimental **Execution Topology v0** describes deployable nodes,
+   typed handoffs, resource claims, verification/expansion policy, and the
+   dependencies that constrain safe parallelism.
+3. The experimental **Runtime Run Graph** is reconstructed from untrusted node
+   reports, attempts, artifacts, allocations, and streaming events.
+
+The compiler, linter, runtime reconciler, resource protocol, verification
+policy, bounded expansion, streaming reconciliation, simulation, and redesign
+modules connect those layers without merging their authority. Parsing,
+compiling, linting, simulating, or reconciling a topology never accepts it or a
+runtime claim. See the [positioning ADR](docs/adr/0002-graph-engineering-positioning.md),
+[topology design](docs/design/execution-topology-contract.md), and
+[experimental contract inventory](schemas/experimental/README.md).
+
+These contracts remain `experimental` and `v0`: real-runtime pilots may cause
+breaking changes. They are not yet eligible for stable-schema compatibility
+claims. The supported standalone experimental workflow matrix is
+machine-readable in [`docs/product-surface.v0.json`](docs/product-surface.v0.json).
+The durable, authenticated `casegraphen-mcp-host` delegates compile, runtime
+reconciliation, simulation, resource reservation/reconciliation, bounded
+expansion, streaming reconciliation, and redesign proposals to their canonical
+library owners. Its persistence/authentication boundary is described in
+[ADR 0019](docs/adr/0019-external-mcp-control-plane.md), and the
+[operational walkthrough](docs/guides/graph-engineering-product-surface.md)
+shows the review-seamed end-to-end path.
+
 ## Execution control
 
 `run --step` advances exactly one work item per invocation. `run --frontier`
@@ -110,6 +143,10 @@ cargo install casegraphen
 
 From a checkout, `install.sh` installs the binary and the agent skills that
 drive it in one step — see [Driving it from an agent](#driving-it-from-an-agent).
+The supported compiler contract is Rust 1.80: `Cargo.toml` declares the MSRV,
+`rust-toolchain.toml` pins 1.80.0 with rustfmt and Clippy, and the Quality
+workflow runs the same pin. `sh scripts/static-analysis.sh` reports the active
+versions and fails if the two repository declarations drift.
 
 ```sh
 cargo test
@@ -120,13 +157,14 @@ Integration tests validate the JSON contracts with `python3 -m jsonschema`.
 
 ## Command surface
 
-All commands take `--format json` and optionally `--output <path>`. `space
-reason` alone also accepts `--format text` for a terminal view of the same
-evaluation.
+Commands declare their supported renderer explicitly. Case-space operations
+use JSON by default; `space reason` also provides a text terminal projection,
+and `graph lint` supports JSON or text without creating a second decision rule.
 
 ```text
 casegraphen lift native|workflow|case-graph      # native and graph lifts
 casegraphen lift github-issues                   # bounded GitHub issue snapshot lift
+casegraphen graph lint                           # experimental topology analysis; json|text
 casegraphen space new|list|inspect|history|replay|validate|reason|frontier|evidence|project|topology
 casegraphen space rebuild [--adopt-existing-log]  # adoption is a human trust assertion
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
@@ -166,11 +204,17 @@ original command and report shape.
 
 ## Driving it from an agent
 
-[`skills/casegraphen-operate`](skills/) is an agent skill for operating a case
-space: the revision and gate discipline every mutating command needs, how to
-model readiness so it comes out right, how to read the refusals, and — when an
-agent runtime executes the graph — what to record as evidence and at which
-granularity.
+Four separately constrained Skills ship under [`skills/`](skills/):
+
+- `casegraphen-design` creates linted, unreviewed topology proposals and never
+  mutates, reviews, accepts, or runs them.
+- `casegraphen-audit` performs read-only static/run audits and preserves the
+  distinction between deterministic findings and review-required inference.
+- `casegraphen-integrate` imports generic JSONL runtime artifacts and reports
+  as untrusted observations, reconciles them through the canonical library,
+  and stops at the review seam.
+- `casegraphen-operate` owns the revision/gate/refusal protocol for mutations
+  of the acceptance ledger.
 
 [`install.sh`](install.sh) installs the binary and the skill together, because a
 skill for a CLI is useless without the CLI it documents:
@@ -184,9 +228,12 @@ other ways to install the skill.
 
 ## Contracts
 
-Wire formats live in [`schemas/casegraphen/`](schemas/casegraphen/) and are
-strict: unknown fields are rejected and breaking changes require a new schema
-id. The one deliberate exception is a record that mirrors another system's
+Stable wire formats live in [`schemas/casegraphen/`](schemas/casegraphen/) and
+are strict: unknown fields are rejected and breaking changes require a new
+schema id. Experimental Graph Engineering Plane proposals live separately in
+[`schemas/experimental/`](schemas/experimental/) and may change incompatibly
+while carrying their `v0` identities; they are inventoried and tested without
+being promoted. The one deliberate exception in the stable set is a record that mirrors another system's
 output rather than stating something to this tool — the `gh --json` objects
 inside the GitHub issue snapshot, whose field set is GitHub's to grow. Those
 accept unknown fields and declare them as information loss; the CaseGraphen
@@ -214,6 +261,14 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0002: positioning within graph engineering](docs/adr/0002-graph-engineering-positioning.md) —
   CaseGraphen is the acceptance ledger of a graph-engineered system, not its
   runtime
+- [Execution Topology contract](docs/design/execution-topology-contract.md) and
+  [resource-reservation protocol](docs/design/resource-reservation-protocol.md)
+- [ADR 0019: external MCP control-plane boundary](docs/adr/0019-external-mcp-control-plane.md)
+- [ADR 0020: Graph Engineering product surface](docs/adr/0020-graph-engineering-product-surface.md)
+- [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
+  the ten-scenario harness, real-provider matrix, captured evidence, and
+  stable-promotion threshold. A [retained Codex/Claude smoke report](docs/evals/fresh-agent/2026-08-03-real-provider-smoke.md)
+  demonstrates the review seam, but is explicitly not the full promotion matrix
 - [ADR 0007: is a capability scoped to an operation?](docs/adr/0007-capability-operation-scope.md) —
   proposed; the gate checks who holds a capability, not what it authorizes
 - [Worker execution security and approval policy](docs/security/worker-execution-policy.md)

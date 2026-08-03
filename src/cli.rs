@@ -229,10 +229,14 @@ struct SuccessfulRun {
 }
 
 pub(crate) fn exit_with_code(outcome: CliOutcome, strict: bool) -> CliExitCode {
+    CliExitCode::from(exit_code_value(outcome, strict))
+}
+
+fn exit_code_value(outcome: CliOutcome, strict: bool) -> u8 {
     match outcome {
-        CliOutcome::ToolFailure => CliExitCode::FAILURE,
-        CliOutcome::DomainFinding if strict => CliExitCode::from(2_u8),
-        CliOutcome::Success | CliOutcome::DomainFinding => CliExitCode::SUCCESS,
+        CliOutcome::ToolFailure => 1,
+        CliOutcome::DomainFinding if strict => 2,
+        CliOutcome::Success | CliOutcome::DomainFinding => 0,
     }
 }
 
@@ -250,7 +254,8 @@ impl Command {
             Some(
                 segment @ ("lift" | "graph" | "space" | "obstruction" | "completion" | "projection"
                 | "equivalence" | "invariant" | "morphism" | "plan" | "binding" | "run"
-                | "operate" | "review" | "evidence" | "cell" | "packet"),
+                | "operate" | "review" | "topology-review" | "evidence" | "cell"
+                | "packet"),
             ) => NativeCliCommand::parse(segment, args)
                 .map(|command| Self::Native(Box::new(command)))
                 .map_err(CliError::from),
@@ -309,22 +314,16 @@ mod tests {
                     CliOutcome::ToolFailure,
                 ])?;
                 let strict = bool::arbitrary(u)?;
-                let code = exit_with_code(outcome, strict);
+                let code = exit_code_value(outcome, strict);
 
-                assert!(
-                    matches!(code, CliExitCode::SUCCESS | CliExitCode::FAILURE)
-                        || code == CliExitCode::from(2_u8)
-                );
+                assert!(matches!(code, 0..=2));
                 if !strict && outcome != CliOutcome::ToolFailure {
-                    assert_eq!(code, CliExitCode::SUCCESS);
+                    assert_eq!(code, 0);
                 }
                 if outcome == CliOutcome::ToolFailure {
-                    assert_eq!(code, CliExitCode::FAILURE);
+                    assert_eq!(code, 1);
                 }
-                assert_eq!(
-                    code == CliExitCode::from(2_u8),
-                    strict && outcome == CliOutcome::DomainFinding
-                );
+                assert_eq!(code == 2, strict && outcome == CliOutcome::DomainFinding);
                 Ok(())
             },
         );
@@ -381,10 +380,7 @@ mod tests {
 
                 // Exit code is computed from `CliOutcome` alone, never from
                 // the error: proving that holds for every shape above.
-                assert_eq!(
-                    exit_with_code(CliOutcome::ToolFailure, false),
-                    CliExitCode::FAILURE
-                );
+                assert_eq!(exit_code_value(CliOutcome::ToolFailure, false), 1);
                 Ok(())
             },
         );

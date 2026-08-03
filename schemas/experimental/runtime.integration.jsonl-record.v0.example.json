@@ -1,0 +1,6 @@
+{
+  "kind": "artifact",
+  "artifact_id": "artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "media_type": "text/plain",
+  "content": "example runtime artifact"
+}

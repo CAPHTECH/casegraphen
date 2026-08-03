@@ -56,6 +56,10 @@ commands and flags reach the shipped parser.
 | `casegraphen space topology` | `--case-space-id`, `--format`, `--higher-order`, `--max-dimension`, `--min-persistence`, `--output`, `--store` |
 | `casegraphen space topology diff` | `--format`, `--higher-order`, `--left-case-space-id`, `--left-store`, `--max-dimension`, `--min-persistence`, `--output`, `--right-case-space-id`, `--right-store` |
 | `casegraphen space validate` | `--case-space-id`, `--format`, `--output`, `--store` |
+| `casegraphen topology-review accept` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--input`, `--operation-scope-id`, `--output`, `--reason`, `--reviewer-id`, `--source-boundary-id`, `--store`, `--target-id` |
+| `casegraphen topology-review inspect` | `--case-space-id`, `--format`, `--output`, `--store`, `--target-id` |
+| `casegraphen topology-review reject` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--input`, `--operation-scope-id`, `--output`, `--reason`, `--reviewer-id`, `--source-boundary-id`, `--store`, `--target-id` |
+| `casegraphen topology-review reopen` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--input`, `--operation-scope-id`, `--output`, `--reason`, `--reviewer-id`, `--source-boundary-id`, `--store`, `--target-id` |
 | `casegraphen version` | — |
 
 ## Operation statuses

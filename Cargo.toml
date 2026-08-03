@@ -22,6 +22,10 @@ path = "src/main.rs"
 name = "casegraphen-mcp"
 path = "src/bin/casegraphen-mcp.rs"
 
+[[bin]]
+name = "casegraphen-mcp-host"
+path = "src/bin/casegraphen-mcp-host.rs"
+
 [dependencies]
 higher-graphen-core = "0.7.1"
 higher-graphen-structure = "0.7.1"

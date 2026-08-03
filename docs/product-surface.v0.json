@@ -1,0 +1,22 @@
+{
+  "schema": "casegraphen.product_surface.inventory.v0",
+  "status": "experimental",
+  "host_binary": "casegraphen-mcp-host",
+  "wire_response_schema": "casegraphen.experimental.control_plane.response.v0",
+  "workflows": [
+    {"workflow":"compile","entry_point":"operational_mcp_host","tool":"compile_deployment_bundle","owner":"src/graph_compiler.rs","skills":["casegraphen-design","casegraphen-integrate"]},
+    {"workflow":"integrate_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_run","owner":"src/runtime_integration.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"simulate","entry_point":"operational_mcp_host","tool":"simulate_execution_topology","owner":"src/graph_simulation.rs","skills":["casegraphen-audit"]},
+    {"workflow":"resource_reserve","entry_point":"operational_mcp_host","tool":"reserve_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"resource_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"expansion","entry_point":"operational_mcp_host","tool":"evaluate_expansion_round","owner":"src/dynamic_expansion.rs","skills":["casegraphen-design","casegraphen-audit"]},
+    {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"redesign","entry_point":"operational_mcp_host","tool":"propose_topology_redesign","owner":"src/topology_redesign.rs","skills":["casegraphen-audit"]}
+  ],
+  "invariants": {
+    "runtime_reports_are_untrusted": true,
+    "proposals_are_never_auto_accepted": true,
+    "client_observed_revisions_are_not_replaced": true,
+    "mutations_require_operation_gates": true
+  }
+}

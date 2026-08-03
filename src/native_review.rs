@@ -23,10 +23,56 @@ const REVIEW_SCHEMA_VERSION: u32 = 1;
 pub enum NativeReviewTargetKind {
     Completion,
     Evidence,
+    ExecutionTopology,
     Morphism,
     Plan,
     ResidualRisk,
     Waiver,
+}
+
+pub const EXECUTION_TOPOLOGY_REVIEW_SCHEMA: &str =
+    "casegraphen.experimental.execution_topology_review.v0";
+pub const EXECUTION_TOPOLOGY_REVIEW_SCHEMA_VERSION: u32 = 0;
+
+/// Standalone experimental artifact used to exchange an exact topology review target.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionTopologyReviewArtifact {
+    pub schema: String,
+    pub schema_version: u32,
+    #[serde(flatten)]
+    pub target: ExecutionTopologyReviewTarget,
+}
+
+/// Exact, review-time identity of an execution-topology proposal.
+///
+/// This value is validated against the current case revision, an immutable
+/// content-addressed artifact cell, and the claim -> artifact lineage before
+/// it can enter a canonical review record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionTopologyReviewTarget {
+    pub topology_id: Id,
+    pub topology_content_hash: String,
+    pub case_space_id: Id,
+    pub observed_base_revision_id: Id,
+    pub claim_cell_id: Id,
+    pub artifact_id: Id,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expansion_proposal_id: Option<Id>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionTopologyReviewRequest {
+    pub target: ExecutionTopologyReviewTarget,
+    pub action: ReviewAction,
+    pub reviewer_id: Id,
+    pub reviewed_at: String,
+    pub reason: String,
+    pub evidence_ids: Vec<Id>,
+    pub source_ids: Vec<Id>,
+    pub target_revision_id: Id,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -154,6 +200,43 @@ pub fn defer_review_morphism(
     build_review_morphism(case_space, ReviewAction::Defer, request)
 }
 
+pub fn execution_topology_review_morphism(
+    case_space: &CaseSpace,
+    request: ExecutionTopologyReviewRequest,
+    topology_artifact_bytes: &[u8],
+) -> NativeReviewResult<CaseMorphism> {
+    require_execution_topology_review_target(case_space, &request.target, topology_artifact_bytes)?;
+    let action = request.action;
+    let target = request.target.clone();
+    let generic = NativeReviewRequest {
+        target_kind: NativeReviewTargetKind::ExecutionTopology,
+        target_id: target.claim_cell_id.clone(),
+        action,
+        reviewer_id: request.reviewer_id,
+        reviewed_at: request.reviewed_at,
+        reason: request.reason,
+        evidence_ids: request.evidence_ids,
+        source_ids: request.source_ids,
+        target_revision_id: request.target_revision_id,
+    };
+    // The generic entry point deliberately refuses this target kind. Only
+    // this function may construct it after validating the full binding.
+    let mut morphism = build_review_morphism_validated(case_space, action, generic)?;
+    morphism.metadata.insert(
+        "execution_topology_review_schema".to_owned(),
+        serde_json::json!(EXECUTION_TOPOLOGY_REVIEW_SCHEMA),
+    );
+    morphism.metadata.insert(
+        "execution_topology_review_schema_version".to_owned(),
+        serde_json::json!(EXECUTION_TOPOLOGY_REVIEW_SCHEMA_VERSION),
+    );
+    morphism.metadata.insert(
+        "execution_topology_binding".to_owned(),
+        serde_json::to_value(target).expect("typed topology review target serializes"),
+    );
+    Ok(morphism)
+}
+
 pub fn build_review_morphism(
     case_space: &CaseSpace,
     action: ReviewAction,
@@ -161,6 +244,14 @@ pub fn build_review_morphism(
 ) -> NativeReviewResult<CaseMorphism> {
     request.action = action;
     require_review_request(case_space, &request)?;
+    build_review_morphism_validated(case_space, action, request)
+}
+
+fn build_review_morphism_validated(
+    case_space: &CaseSpace,
+    action: ReviewAction,
+    request: NativeReviewRequest,
+) -> NativeReviewResult<CaseMorphism> {
     let outcome_review_status = outcome_status(action);
     let morphism_type = morphism_type_for_review(request.target_kind, action);
     let mut source_ids = dedupe_ids(
@@ -693,6 +784,9 @@ fn require_review_request(
             CaseCellType::Evidence,
             "evidence",
         ),
+        NativeReviewTargetKind::ExecutionTopology => Err(error(
+            "execution topology reviews require the dedicated content-bound review API",
+        )),
         NativeReviewTargetKind::Morphism => {
             if case_space
                 .morphism_log
@@ -727,6 +821,115 @@ fn require_review_request(
             }
         }
     }
+}
+
+fn require_execution_topology_review_target(
+    case_space: &CaseSpace,
+    target: &ExecutionTopologyReviewTarget,
+    topology_artifact_bytes: &[u8],
+) -> NativeReviewResult<()> {
+    if target.case_space_id != case_space.case_space_id {
+        return Err(error("execution topology review case_space_id mismatch"));
+    }
+    if target.observed_base_revision_id != case_space.revision.revision_id {
+        return Err(error(
+            "execution topology review observed revision is stale",
+        ));
+    }
+    if target.topology_content_hash.len() != 64
+        || !target
+            .topology_content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(error(
+            "execution topology content hash must be lowercase sha256",
+        ));
+    }
+    let topology: crate::execution_topology::ExecutionTopology =
+        serde_json::from_slice(topology_artifact_bytes)
+            .map_err(|source| error(format!("invalid execution topology artifact: {source}")))?;
+    let actual_artifact_hash = crate::native_hash::sha256_hex(topology_artifact_bytes);
+    if target.artifact_id.as_str() != format!("artifact:sha256-{actual_artifact_hash}") {
+        return Err(error(
+            "execution topology artifact bytes do not match artifact_id",
+        ));
+    }
+    let actual_topology_hash =
+        crate::execution_topology::execution_topology_content_hash(&topology)
+            .map_err(|source| error(source.to_string()))?;
+    if topology.topology_id != target.topology_id.as_str()
+        || topology.case_space_id != target.case_space_id.as_str()
+        || actual_topology_hash != target.topology_content_hash
+    {
+        return Err(error(
+            "execution topology artifact identity does not match the review target",
+        ));
+    }
+    let claim = case_space
+        .case_cells
+        .iter()
+        .find(|cell| cell.id == target.claim_cell_id)
+        .ok_or_else(|| error("execution topology claim does not exist"))?;
+    let claim_type_ok = matches!(claim.cell_type, CaseCellType::Evidence)
+        || matches!(&claim.cell_type, CaseCellType::Custom(kind) if kind == "execution_topology");
+    if !claim_type_ok {
+        return Err(error(
+            "execution topology claim has an unsupported cell type",
+        ));
+    }
+    for (field, expected) in [
+        ("topology_id", target.topology_id.as_str()),
+        (
+            "execution_topology_content_hash",
+            target.topology_content_hash.as_str(),
+        ),
+        ("artifact_id", target.artifact_id.as_str()),
+        ("case_space_id", target.case_space_id.as_str()),
+    ] {
+        if claim.metadata.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(error(format!(
+                "execution topology claim metadata.{field} does not match the review target"
+            )));
+        }
+    }
+    if claim
+        .metadata
+        .get("expansion_proposal_id")
+        .and_then(Value::as_str)
+        != target.expansion_proposal_id.as_ref().map(Id::as_str)
+    {
+        return Err(error(
+            "execution topology claim expansion_proposal_id does not match the review target",
+        ));
+    }
+    let artifact = case_space
+        .case_cells
+        .iter()
+        .find(|cell| cell.id == target.artifact_id)
+        .ok_or_else(|| error("execution topology artifact does not exist"))?;
+    if !crate::native_model::is_artifact_cell(artifact)
+        || artifact
+            .metadata
+            .get("content_hash")
+            .and_then(Value::as_str)
+            != target.artifact_id.as_str().strip_prefix("artifact:sha256-")
+    {
+        return Err(error(
+            "execution topology artifact is not a valid content-addressed artifact",
+        ));
+    }
+    let joined = case_space.case_relations.iter().any(|relation| {
+        relation.relation_type == crate::native_model::CaseRelationType::DerivesFrom
+            && relation.from_id == target.claim_cell_id
+            && relation.to_id == target.artifact_id
+    });
+    if !joined {
+        return Err(error(
+            "execution topology claim is not joined to the artifact by validated lineage",
+        ));
+    }
+    Ok(())
 }
 
 fn require_completion_target(case_space: &CaseSpace, target_id: &Id) -> NativeReviewResult<()> {

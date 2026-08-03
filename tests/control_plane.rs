@@ -11,7 +11,11 @@ use casegraphen::{
     graph_lint::lint_execution_topology,
 };
 use serde_json::{json, Value};
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 struct CountingDelegate {
     calls: usize,
@@ -57,7 +61,7 @@ fn request(tool: ControlPlaneTool, id: &str) -> ControlPlaneRequest {
         idempotency_key: format!("idempotency:{id}"),
         tool,
         base_revision_id: tool
-            .changes_managed_state()
+            .requires_base_revision()
             .then(|| "revision:observed".to_owned()),
         operation_gate: tool.changes_managed_state().then(gate),
         payload: json!({}),
@@ -67,7 +71,7 @@ fn request(tool: ControlPlaneTool, id: &str) -> ControlPlaneRequest {
 #[test]
 fn catalog_contains_the_required_mcp_compatible_surface() {
     assert_eq!(RESOURCE_TEMPLATES.len(), 7);
-    assert_eq!(TOOLS.len(), 12);
+    assert_eq!(TOOLS.len(), 17);
     assert_eq!(NOTIFICATIONS.len(), 7);
     for required in [
         "casegraphen://spaces/{id}/status",
@@ -86,6 +90,17 @@ fn catalog_contains_the_required_mcp_compatible_surface() {
         .as_array()
         .unwrap()
         .contains(&json!("apply_evidence_packet")));
+    for workflow in [
+        "compile_deployment_bundle",
+        "reconcile_run",
+        "reconcile_resources",
+        "simulate_execution_topology",
+        "evaluate_expansion_round",
+        "reconcile_streaming_run",
+        "propose_topology_redesign",
+    ] {
+        assert!(tools.as_array().unwrap().contains(&json!(workflow)));
+    }
 }
 
 #[test]
@@ -249,6 +264,58 @@ fn notifications_are_idempotent_and_never_authorize_action() {
     let second = state.publish_notification(notification).unwrap();
     assert!(!first.authorizes_action);
     assert_eq!(first, second);
+}
+
+struct AckSabotageDelegate {
+    state_path: PathBuf,
+    pending_bytes: Vec<u8>,
+    calls: usize,
+}
+
+impl DecisionDelegate for AckSabotageDelegate {
+    fn invoke(&mut self, _request: &ControlPlaneRequest) -> Result<Value, ControlPlaneRefusal> {
+        self.calls += 1;
+        self.pending_bytes = fs::read(&self.state_path).expect("capture pending journal");
+        fs::remove_file(&self.state_path).expect("remove journal before acknowledgement");
+        fs::create_dir(&self.state_path).expect("make acknowledgement rename fail");
+        Ok(json!({"delegated": true}))
+    }
+}
+
+#[test]
+fn durable_restart_never_duplicates_an_ambiguous_delegated_effect() {
+    let directory = std::env::temp_dir().join(format!(
+        "casegraphen-control-plane-durable-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let state_path = directory.join("state.json");
+    let mut state = ControlPlaneState::new();
+    let mut delegate = AckSabotageDelegate {
+        state_path: state_path.clone(),
+        pending_bytes: Vec::new(),
+        calls: 0,
+    };
+    let request = request(ControlPlaneTool::AttachRuntimeReport, "request:ambiguous");
+    let first = state.execute_durable(&request, &mut delegate, &state_path);
+    assert_eq!(delegate.calls, 1);
+    assert_eq!(
+        first.refusal.unwrap().code,
+        "durable_acknowledgement_failed"
+    );
+
+    fs::remove_dir(&state_path).unwrap();
+    fs::write(&state_path, &delegate.pending_bytes).unwrap();
+    let mut restarted = ControlPlaneState::load_durable(&state_path).unwrap();
+    let mut should_not_run = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    let replay = restarted.execute_durable(&request, &mut should_not_run, &state_path);
+    assert_eq!(should_not_run.calls, 0);
+    assert_eq!(replay.refusal.unwrap().code, "ambiguous_prior_effect");
+    fs::remove_dir_all(directory).unwrap();
 }
 
 fn root() -> &'static Path {

@@ -93,6 +93,10 @@ impl NativeCliCommand {
                 Self::parse_morphism(required_segment(&mut args, "morphism operation")?, args)
             }
             "plan" => Self::parse_plan(required_segment(&mut args, "plan operation")?, args),
+            "topology-review" => Self::parse_topology_review(
+                required_segment(&mut args, "topology-review operation")?,
+                args,
+            ),
             "binding" => {
                 Self::parse_binding(required_segment(&mut args, "binding operation")?, args)
             }
@@ -536,6 +540,53 @@ impl NativeCliCommand {
                 output: options.output,
             }),
             Some(_) | None => Err(NativeCliError::usage("unsupported native binding command")),
+        }
+    }
+
+    fn parse_topology_review(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let operation = operation
+            .to_str()
+            .ok_or_else(|| NativeCliError::usage("topology-review operation must be UTF-8"))?;
+        let options = NativeOptions::parse("topology-review", args)?;
+        match operation {
+            "inspect" => Ok(Self::TopologyReviewInspect {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                claim_cell_id: options.require_id("--target-id")?,
+                output: options.output,
+            }),
+            "accept" | "reject" | "reopen" => {
+                let gate_options =
+                    options.resolve_operation_gate_options(OperationGateRequirement::Required {
+                        command: "execution topology review",
+                        actor_command: Some("execution topology review"),
+                    })?;
+                Ok(Self::TopologyReview {
+                    action: match operation {
+                        "accept" => ReviewAction::Accept,
+                        "reject" => ReviewAction::Reject,
+                        "reopen" => ReviewAction::Reopen,
+                        _ => unreachable!(),
+                    },
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    claim_cell_id: options.require_id("--target-id")?,
+                    topology_input: options.require_path("--input")?,
+                    reviewer_id: options.require_id("--reviewer-id")?,
+                    reason: options.require_string("--reason")?,
+                    base_revision_id: options.base_revision_id.clone().ok_or_else(|| {
+                        NativeCliError::usage("--base-revision-id <id> is required")
+                    })?,
+                    gate_options,
+                    output: options.output,
+                })
+            }
+            _ => Err(NativeCliError::usage(
+                "unsupported native topology-review command",
+            )),
         }
     }
 

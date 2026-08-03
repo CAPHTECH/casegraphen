@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_compiler.report.v0",
+  "title": "Experimental graph compiler report v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "compiler_version", "status", "mode", "target", "topology_id", "topology_content_hash", "case_space_id", "base_revision_id", "reviewed_claim_cell_id", "accepted_review_id", "generated_plan_review_status", "unsupported_semantics", "information_loss"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_compiler.report.v0"},
+    "compiler_version": {"$ref": "#/$defs/id"},
+    "status": {"enum": ["compiled", "refused"]},
+    "mode": {"enum": ["proposal", "reviewed"]},
+    "target": {"const": "generic_jsonl_v0"},
+    "topology_id": {"$ref": "#/$defs/id"},
+    "topology_content_hash": {"$ref": "#/$defs/hash"},
+    "case_space_id": {"$ref": "#/$defs/id"},
+    "base_revision_id": {"$ref": "#/$defs/id"},
+    "reviewed_claim_cell_id": {"$ref": "#/$defs/nullable_id"},
+    "accepted_review_id": {"$ref": "#/$defs/nullable_id"},
+    "generated_plan_review_status": {"const": "unreviewed"},
+    "unsupported_semantics": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+    "information_loss": {"type": "array", "items": {"$ref": "#/$defs/loss"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "nullable_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "location", "detail"],
+      "properties": {"code": {"$ref": "#/$defs/id"}, "location": {"$ref": "#/$defs/id"}, "detail": {"$ref": "#/$defs/id"}}
+    },
+    "loss": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "severity", "source_ids", "detail"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "severity": {"enum": ["representational", "safety_affecting", "acceptance_affecting"]},
+        "source_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+        "detail": {"$ref": "#/$defs/id"}
+      }
+    }
+  }
+}

@@ -44,6 +44,11 @@ different boundaries.
    questions, and next review/observation operations. Report corrections as
    proposals only.
 
+The operational host exposes the canonical read-only report boundaries as
+`simulate_execution_topology`, `evaluate_expansion_round`, and
+`propose_topology_redesign`. Simulation and redesign output remains unreviewed;
+do not interpret the existence of an MCP result as review or acceptance.
+
 ## Non-negotiable boundary
 
 - Never invoke a mutation, review, evidence, transition, worker, `run`, or

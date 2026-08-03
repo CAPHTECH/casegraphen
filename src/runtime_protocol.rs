@@ -109,14 +109,16 @@ pub struct RuntimeNodeReport {
 }
 
 /// One independently supplied node expectation from `execution.topology.v0`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExpectedRuntimeNode {
     pub node_id: String,
     pub expected_output_schema_id: String,
 }
 
 /// The content-addressed graph boundary against which reports are reconciled.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeGraphExpectation {
     pub runtime_graph_id: String,
     pub runtime_graph_content_hash: String,
@@ -655,7 +657,6 @@ fn parse_canonical_utc_timestamp(value: &str) -> Option<(u16, u8, u8, u8, u8, u8
     if year == 0 || !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 59 {
         return None;
     }
-    #[allow(clippy::manual_is_multiple_of)]
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let days = match month {
         2 if leap => 29,

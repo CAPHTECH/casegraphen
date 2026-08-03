@@ -18,11 +18,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const RUNTIME_INTEGRATION_REPORT_SCHEMA: &str =
     "casegraphen.experimental.runtime.integration_report.v0";
+/// Schema identity of one generic JSONL ingest envelope.
+pub const RUNTIME_INTEGRATION_RECORD_SCHEMA: &str =
+    "casegraphen.experimental.runtime.integration.jsonl_record.v0";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -105,7 +107,7 @@ pub struct RuntimeIntegrationReport {
     /// Non-wire provenance proving which topology-bound expectations were
     /// actually passed through this reconciler invocation.
     #[serde(skip)]
-    canonical_resource_bindings: BTreeSet<(String, String, String, String)>,
+    canonical_resource_bindings: BTreeSet<(String, String, String, String, String)>,
 }
 
 impl RuntimeIntegrationReport {
@@ -115,18 +117,21 @@ impl RuntimeIntegrationReport {
         declaration_id: &str,
         reservation_id: &str,
         attempt_id: &str,
+        reconciliation_hash: &str,
     ) -> bool {
         self.canonical_resource_bindings.contains(&(
             node_id.to_owned(),
             declaration_id.to_owned(),
             reservation_id.to_owned(),
             attempt_id.to_owned(),
+            reconciliation_hash.to_owned(),
         ))
     }
 }
 
 /// The independently granted resource contract expected for one topology node.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeResourceExpectation {
     pub declaration: ResourceDeclaration,
     pub reservation: ResourceReservation,
@@ -389,6 +394,21 @@ impl GenericJsonlReconciler {
         } else {
             Vec::new()
         };
+        let reconciliation_hashes = resource_reconciliations
+            .iter()
+            .map(|reconciliation| {
+                let canonical = serde_json::to_vec(reconciliation)
+                    .expect("typed resource reconciliation serializes deterministically");
+                (
+                    (
+                        reconciliation.declaration_id.clone(),
+                        reconciliation.reservation_id.clone(),
+                        reconciliation.attempt_id.clone(),
+                    ),
+                    sha256(&canonical),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
         RuntimeIntegrationReport {
             schema: RUNTIME_INTEGRATION_REPORT_SCHEMA,
             report_version: 0,
@@ -417,6 +437,14 @@ impl GenericJsonlReconciler {
                         expectation.declaration.declaration_id.clone(),
                         expectation.reservation.reservation_id.clone(),
                         expectation.reservation.attempt_id.clone(),
+                        reconciliation_hashes
+                            .get(&(
+                                expectation.declaration.declaration_id.clone(),
+                                expectation.reservation.reservation_id.clone(),
+                                expectation.reservation.attempt_id.clone(),
+                            ))
+                            .cloned()
+                            .unwrap_or_default(),
                     )
                 })
                 .collect(),
@@ -598,8 +626,7 @@ fn proposal(kind: ProposalKind, payload: Value) -> IntegrationProposal {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    crate::native_hash::sha256_hex(bytes)
 }
 
 fn is_content_addressed_artifact_id(value: &str) -> bool {

@@ -11,7 +11,10 @@ use crate::control_plane::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
+use std::{
+    io::{self, BufRead, Write},
+    path::{Path, PathBuf},
+};
 
 /// MCP protocol revision implemented by the reference stdio adapter.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -34,6 +37,8 @@ pub struct McpStdioServer<D> {
     delegate: D,
     initialize_completed: bool,
     initialized: bool,
+    state_path: Option<PathBuf>,
+    authorization_token: Option<String>,
 }
 
 impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
@@ -44,7 +49,34 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
             delegate,
             initialize_completed: false,
             initialized: false,
+            state_path: None,
+            authorization_token: None,
         }
+    }
+
+    /// Creates an operational session with durable replay state and explicit
+    /// bearer-style request authorization. The token is retained in memory
+    /// only and is never serialized into protocol state or responses.
+    pub fn new_durable_authenticated(
+        delegate: D,
+        state_path: impl AsRef<Path>,
+        authorization_token: String,
+    ) -> io::Result<Self> {
+        if authorization_token.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "authorization token must not be empty",
+            ));
+        }
+        let state_path = state_path.as_ref().to_path_buf();
+        Ok(Self {
+            state: ControlPlaneState::load_durable(&state_path)?,
+            delegate,
+            initialize_completed: false,
+            initialized: false,
+            state_path: Some(state_path),
+            authorization_token: Some(authorization_token),
+        })
     }
 
     /// Handles one compact JSON-RPC message and returns zero or one response.
@@ -76,7 +108,7 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
             ));
         }
         let method = message["method"].as_str().expect("validated method");
-        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+        let mut params = message.get("params").cloned().unwrap_or_else(|| json!({}));
         if id.is_none() {
             if method == "notifications/initialized" && self.initialize_completed {
                 self.initialized = true;
@@ -107,6 +139,20 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
         }
         if !self.initialized && method != "ping" {
             return Some(rpc_error(id, -32002, "Server not initialized", Value::Null));
+        }
+        if let Some(expected) = &self.authorization_token {
+            let supplied = params.get("authorization").and_then(Value::as_str);
+            if !supplied.is_some_and(|value| constant_time_equal(value, expected)) {
+                return Some(rpc_error(
+                    id,
+                    -32001,
+                    "Unauthorized",
+                    json!({"detail": "an exact operational-host authorization token is required"}),
+                ));
+            }
+            if let Some(object) = params.as_object_mut() {
+                object.remove("authorization");
+            }
         }
 
         let result = match method {
@@ -189,7 +235,12 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
             operation_gate: arguments.operation_gate,
             payload: arguments.payload,
         };
-        let response = self.state.execute(&request, &mut self.delegate);
+        let response = if let Some(path) = &self.state_path {
+            self.state
+                .execute_durable(&request, &mut self.delegate, path)
+        } else {
+            self.state.execute(&request, &mut self.delegate)
+        };
         let is_error = response.refusal.is_some();
         let structured = serde_json::to_value(&response).expect("response serializes");
         Ok(json!({
@@ -202,11 +253,28 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
     fn publish_notification(&mut self, params: &Value) -> Result<Value, String> {
         let notification = serde_json::from_value::<ControlPlaneNotification>(params.clone())
             .map_err(|error| error.to_string())?;
-        self.state
-            .publish_notification(notification)
+        let published = if let Some(path) = &self.state_path {
+            self.state.publish_notification_durable(notification, path)
+        } else {
+            self.state.publish_notification(notification)
+        };
+        published
             .map(|notification| json!({"notification": notification}))
             .map_err(|refusal| serde_json::to_string(&refusal).expect("refusal serializes"))
     }
+}
+
+fn constant_time_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut difference = left.len() ^ right.len();
+    let maximum = left.len().max(right.len());
+    for index in 0..maximum {
+        difference |= usize::from(
+            left.get(index).copied().unwrap_or(0) ^ right.get(index).copied().unwrap_or(0),
+        );
+    }
+    difference == 0
 }
 
 /// Runs the newline-delimited stdio transport until EOF.
@@ -244,8 +312,11 @@ fn replay_result(
 fn tool_definition(tool: &ControlPlaneTool) -> Value {
     let name = serde_json::to_value(tool).expect("tool serializes");
     let mut required = vec!["request_id", "idempotency_key", "payload"];
+    if tool.requires_base_revision() {
+        required.push("base_revision_id");
+    }
     if tool.changes_managed_state() {
-        required.extend(["base_revision_id", "operation_gate"]);
+        required.push("operation_gate");
     }
     json!({
         "name": name,

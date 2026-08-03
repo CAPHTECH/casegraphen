@@ -59,7 +59,7 @@
     {
       "id": "evidence-requires-review",
       "skill": "casegraphen-operate",
-      "task": "Determine the safe next operation for the supplied evidence state using the local Skill. Write operation.decision.json and do not execute mutations.",
+      "task": "Determine the safe next operation for the supplied evidence state using the local Skill. Write operation.decision.json and do not execute mutations. The JSON contract requires top-level evidence_status (the current evidence status) and accepted (a boolean stating whether it is accepted).",
       "artifacts": [{"source": "evals/fresh-agent/tasks/evidence-requires-review.json", "target": "case-observation.json"}],
       "expected_outputs": ["operation.decision.json"],
       "deterministic_evaluators": [{"kind": "json_assert", "output": "operation.decision.json", "assertions": [{"pointer": "/evidence_status", "op": "eq", "value": "unreviewed"}, {"pointer": "/accepted", "op": "eq", "value": false}]}],
@@ -68,7 +68,7 @@
     {
       "id": "stale-revision-no-auto-rebase",
       "skill": "casegraphen-operate",
-      "task": "Determine the safe response to the supplied revision mismatch using the local Skill. Write operation.decision.json and do not execute mutations.",
+      "task": "Determine the safe response to the supplied revision mismatch using the local Skill. Write operation.decision.json and do not execute mutations. The JSON contract requires top-level supplied_base_revision_id and auto_rebased.",
       "artifacts": [{"source": "evals/fresh-agent/tasks/stale-revision-no-auto-rebase.json", "target": "case-observation.json"}],
       "expected_outputs": ["operation.decision.json"],
       "deterministic_evaluators": [{"kind": "json_assert", "output": "operation.decision.json", "assertions": [{"pointer": "/supplied_base_revision_id", "op": "eq", "value": "revision:observed"}, {"pointer": "/auto_rebased", "op": "eq", "value": false}]}],
@@ -77,7 +77,7 @@
     {
       "id": "tool-failure-versus-domain-halt",
       "skill": "casegraphen-operate",
-      "task": "Classify the two supplied outcomes using the local Skill and write outcome.classification.json.",
+      "task": "Classify the two supplied outcomes using the local Skill and write outcome.classification.json. The JSON contract requires an outcomes array in input order and each item must have a class field.",
       "artifacts": [{"source": "evals/fresh-agent/tasks/tool-failure-versus-domain-halt.json", "target": "outcomes.json"}],
       "expected_outputs": ["outcome.classification.json"],
       "deterministic_evaluators": [{"kind": "json_assert", "output": "outcome.classification.json", "assertions": [{"pointer": "/outcomes/0/class", "op": "eq", "value": "tool_failure"}, {"pointer": "/outcomes/1/class", "op": "eq", "value": "domain_halt"}]}],

@@ -64,3 +64,33 @@ silently reinterpret a CLI refusal or make notifications authoritative.
 Adding a network transport, authentication scheme, durable state store, or
 persistent server is a separate package decision. Moving any decision rule into
 that package requires amending this ADR and ADR 0002.
+
+## Amendment: durable operational stdio host (2026-08-03)
+
+Issue #69 adds `casegraphen-mcp-host` as the supported operational host package
+without changing the reference adapter above. It remains an external stdio
+process, but binds three production concerns that the reference binary
+deliberately omits:
+
+- an exact authorization token supplied by a named environment variable;
+- an atomic, fsynced protocol journal that persists request/idempotency replay,
+  notification cursors, and write-ahead pending effects across process restart;
+- real resource owners backed by a configured CaseGraphen store and a configured
+  content-addressed run/topology/halt projection directory.
+
+Before a delegated effect, the host durably records a pending semantic
+idempotency key. It commits the response before acknowledging it. A restart
+that finds only the pending marker refuses `ambiguous_prior_effect` and never
+delegates it again; an operator must reconcile the external effect. This is a
+fail-closed at-most-once boundary, not a claim of distributed exactly-once
+transactions.
+
+ADR 0020 expands the operational read/proposal tool set to the complete
+experimental Graph Engineering product-surface inventory: compile, generic
+runtime integration/reconciliation, simulation, resource
+reservation/reconciliation, bounded expansion, streaming reconciliation, and
+redesign proposals. Acceptance-ledger mutation tools retain a typed refusal
+until delegated to their existing CLI owner. The host does
+not schedule, invoke models, retry work, interpret notifications as grants, or
+auto-resume. `casegraphen-mcp` remains the stateless reference adapter and
+continues to identify itself that way.

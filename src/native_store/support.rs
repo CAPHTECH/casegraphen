@@ -717,13 +717,16 @@ mod tests {
                         }
                         Step::ForeignWrite => {
                             let token_bytes: Vec<u8> = u.arbitrary()?;
-                            let forged = format!(
-                                "token=foreign-{}\n",
-                                token_bytes
-                                    .iter()
-                                    .map(|byte| format!("{byte:02x}"))
-                                    .collect::<String>()
+                            let token_hex = token_bytes.iter().fold(
+                                String::with_capacity(token_bytes.len() * 2),
+                                |mut output, byte| {
+                                    use std::fmt::Write as _;
+                                    write!(&mut output, "{byte:02x}")
+                                        .expect("writing to a String cannot fail");
+                                    output
+                                },
                             );
+                            let forged = format!("token=foreign-{token_hex}\n");
                             fs::write(&lock_path, &forged)
                                 .expect("forge a foreign lock file's content");
                             on_disk = Some(forged);

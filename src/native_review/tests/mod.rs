@@ -90,6 +90,172 @@ fn invalid_review_target_is_rejected() {
 }
 
 #[test]
+fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
+    let mut space = fixture_space();
+    let (topology_bytes, target) = topology_review_target(&space);
+    let artifact_id = target.artifact_id.to_string();
+    let artifact_hash = artifact_id.trim_start_matches("artifact:sha256-");
+    let mut claim = cell(
+        "evidence:execution-topology",
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+        SourceKind::Document,
+        ReviewStatus::Unreviewed,
+    );
+    claim.metadata.extend([
+        ("topology_id".to_owned(), json!("topology:review-fixture")),
+        (
+            "execution_topology_content_hash".to_owned(),
+            json!(target.topology_content_hash),
+        ),
+        ("artifact_id".to_owned(), json!(artifact_id)),
+        (
+            "case_space_id".to_owned(),
+            json!(space.case_space_id.clone()),
+        ),
+    ]);
+    let mut artifact = cell(
+        &artifact_id,
+        CaseCellType::Custom("artifact".to_owned()),
+        CaseCellLifecycle::Resolved,
+        SourceKind::Custom("tool_captured_artifact".to_owned()),
+        ReviewStatus::Unreviewed,
+    );
+    artifact
+        .metadata
+        .insert("content_hash".to_owned(), json!(artifact_hash));
+    space.case_cells.extend([claim, artifact]);
+    space.case_relations.push(relation(
+        "relation:execution-topology-artifact",
+        CaseRelationType::DerivesFrom,
+        "evidence:execution-topology",
+        &artifact_id,
+    ));
+
+    let morphism = execution_topology_review_morphism(
+        &space,
+        ExecutionTopologyReviewRequest {
+            target: target.clone(),
+            action: ReviewAction::Accept,
+            reviewer_id: id("reviewer:native"),
+            reviewed_at: "2026-08-03T00:00:00Z".to_owned(),
+            reason: "Exact topology bytes reviewed.".to_owned(),
+            evidence_ids: Vec::new(),
+            source_ids: vec![id("source:test")],
+            target_revision_id: id("revision:execution-topology-reviewed"),
+        },
+        &topology_bytes,
+    )
+    .expect("dedicated topology review");
+    let canonical = canonical_review(&morphism).expect("canonical topology review");
+    assert_eq!(
+        canonical.target_kind,
+        NativeReviewTargetKind::ExecutionTopology
+    );
+    assert_eq!(canonical.execution_topology, Some(target));
+
+    let error = accept_review_morphism(
+        &space,
+        request(
+            NativeReviewTargetKind::ExecutionTopology,
+            "evidence:execution-topology",
+            ReviewAction::Accept,
+            "revision:generic-topology-review",
+        ),
+    )
+    .expect_err("generic review cannot mint topology authority");
+    assert!(error.message.contains("dedicated content-bound review API"));
+}
+
+#[test]
+fn execution_topology_review_refuses_stale_revision_and_changed_binding() {
+    let mut space = fixture_space();
+    let (topology_bytes, mut target) = topology_review_target(&space);
+    let artifact_id = target.artifact_id.to_string();
+    let artifact_hash = artifact_id.trim_start_matches("artifact:sha256-");
+    let mut claim = cell(
+        "evidence:execution-topology",
+        CaseCellType::Evidence,
+        CaseCellLifecycle::Active,
+        SourceKind::Document,
+        ReviewStatus::Unreviewed,
+    );
+    claim.metadata.extend([
+        ("topology_id".to_owned(), json!("topology:review-fixture")),
+        (
+            "execution_topology_content_hash".to_owned(),
+            json!(target.topology_content_hash),
+        ),
+        ("artifact_id".to_owned(), json!(artifact_id)),
+        (
+            "case_space_id".to_owned(),
+            json!(space.case_space_id.clone()),
+        ),
+    ]);
+    let mut artifact = cell(
+        &artifact_id,
+        CaseCellType::Custom("artifact".to_owned()),
+        CaseCellLifecycle::Resolved,
+        SourceKind::Custom("tool_captured_artifact".to_owned()),
+        ReviewStatus::Unreviewed,
+    );
+    artifact
+        .metadata
+        .insert("content_hash".to_owned(), json!(artifact_hash));
+    space.case_cells.extend([claim, artifact]);
+    space.case_relations.push(relation(
+        "relation:execution-topology-artifact",
+        CaseRelationType::DerivesFrom,
+        "evidence:execution-topology",
+        &artifact_id,
+    ));
+    let request = ExecutionTopologyReviewRequest {
+        target: {
+            target.observed_base_revision_id = id("revision:stale");
+            target
+        },
+        action: ReviewAction::Accept,
+        reviewer_id: id("reviewer:native"),
+        reviewed_at: "2026-08-03T00:00:00Z".to_owned(),
+        reason: "Changed topology must refuse.".to_owned(),
+        evidence_ids: Vec::new(),
+        source_ids: vec![id("source:test")],
+        target_revision_id: id("revision:execution-topology-reviewed"),
+    };
+    let error = execution_topology_review_morphism(&space, request, &topology_bytes)
+        .expect_err("stale review target refuses");
+    assert!(error.message.contains("observed revision is stale"));
+}
+
+fn topology_review_target(space: &CaseSpace) -> (Vec<u8>, ExecutionTopologyReviewTarget) {
+    let mut value: Value = serde_json::from_str(include_str!(
+        "../../../schemas/experimental/execution.topology.file-review.example.json"
+    ))
+    .expect("topology fixture");
+    value["topology_id"] = json!("topology:review-fixture");
+    value["case_space_id"] = json!(space.case_space_id.clone());
+    let bytes = serde_json::to_vec(&value).expect("topology fixture bytes");
+    let topology: crate::execution_topology::ExecutionTopology =
+        serde_json::from_slice(&bytes).expect("typed topology fixture");
+    let topology_content_hash =
+        crate::execution_topology::execution_topology_content_hash(&topology)
+            .expect("topology fixture hash");
+    let artifact_hash = crate::native_hash::sha256_hex(&bytes);
+    (
+        bytes,
+        ExecutionTopologyReviewTarget {
+            topology_id: id("topology:review-fixture"),
+            topology_content_hash,
+            case_space_id: space.case_space_id.clone(),
+            observed_base_revision_id: space.revision.revision_id.clone(),
+            claim_cell_id: id("evidence:execution-topology"),
+            artifact_id: id(&format!("artifact:sha256-{artifact_hash}")),
+            expansion_proposal_id: None,
+        },
+    )
+}
+
+#[test]
 fn generated_completion_review_does_not_preserve_virtual_target_id() {
     let mut space = fixture_space();
     space.case_cells.push(cell(

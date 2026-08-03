@@ -1,0 +1,10 @@
+{
+  "schema": "casegraphen.experimental.deployment_bundle.v0",
+  "compiler_version": "casegraphen-graph-compiler/0",
+  "topology_id": "topology:example",
+  "topology_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "case_space_id": "case-space:example",
+  "base_revision_id": "revision:example",
+  "mode": "proposal",
+  "artifacts": []
+}
