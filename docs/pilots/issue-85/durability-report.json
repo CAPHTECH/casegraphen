@@ -12,7 +12,7 @@
     "runtime.node_report.schema.json": "63c88359227227be25fe72b5925118016071756f5101b29e77012c0f7c43b0f5"
   },
   "failure_disposition": "audit_or_redesign_proposal_only",
-  "harness_content_hash": "f4c0720d845d7aad141ed859e564de7309c8c85a2815070b83999c04bd4c3f14",
+  "harness_content_hash": "bcfc0ac54bccbb4365fc5d84328022694451f4d8411d9a67db6f1427b719e2f7",
   "promotion_eligible": false,
   "proposals": [
     {
@@ -61,7 +61,7 @@
     "remote": {
       "accepted": false,
       "duplicate_delivery_count": 2,
-      "elapsed_ms": 83,
+      "elapsed_ms": 85,
       "events": [
         "disconnect_observed",
         "duplicate_delivery_resumed",
@@ -129,7 +129,7 @@
   },
   "schema": "casegraphen.experimental.runtime_durability_pilot.report.v0",
   "schema_version": 0,
-  "source_revision": "3e92aace57f9bbe44d41de12a13e6d5280a978dc",
-  "source_worktree_dirty": true,
+  "source_revision": "64d66154f2000e479a221811bc1210acaf4827ad",
+  "source_worktree_dirty": false,
   "topology_content_hash": "2818e1605fbf6a463d0e0644ce8562f1e3d749e63d020498c05deaca40e3facc"
 }
