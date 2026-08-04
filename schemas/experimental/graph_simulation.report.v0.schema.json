@@ -3,7 +3,7 @@
   "$id": "casegraphen.experimental.graph_simulation.report.v0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "report_version", "topology_id", "topology_content_hash", "request_content_hash", "seed", "iterations", "latency_ms", "cost_microunits", "total_tokens", "successful_iterations", "failed_iterations", "maximum_observed_parallelism", "resource_wait_events", "unknowns", "budget_violations", "routing_proposal"],
+  "required": ["schema", "report_version", "topology_id", "topology_content_hash", "request_content_hash", "seed", "iterations", "release_semantics", "producer_consumer_overlap_ms", "latency_ms", "cost_microunits", "total_tokens", "successful_iterations", "failed_iterations", "maximum_observed_parallelism", "resource_wait_events", "unknowns", "budget_violations", "routing_proposal"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.graph_simulation.report.v0"},
     "report_version": {"const": 0},
@@ -12,6 +12,11 @@
     "request_content_hash": {"$ref": "#/$defs/hash"},
     "seed": {"type": "integer", "minimum": 0},
     "iterations": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "release_semantics": {"const": "terminal_artifact_stage_pipelining_v0"},
+    "producer_consumer_overlap_ms": {
+      "description": "Theoretical direct producer/consumer execution overlap. It is zero because v0 releases only terminal, byte-observed artifacts; independent stages may still overlap.",
+      "$ref": "#/$defs/zero_summary"
+    },
     "latency_ms": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
     "cost_microunits": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
     "total_tokens": {"oneOf": [{"$ref": "#/$defs/summary"}, {"type": "null"}]},
@@ -43,6 +48,16 @@
         "minimum": {"type": "integer", "minimum": 0},
         "p50": {"type": "integer", "minimum": 0},
         "maximum": {"type": "integer", "minimum": 0}
+      }
+    },
+    "zero_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "p50", "maximum"],
+      "properties": {
+        "minimum": {"const": 0},
+        "p50": {"const": 0},
+        "maximum": {"const": 0}
       }
     },
     "unknown": {

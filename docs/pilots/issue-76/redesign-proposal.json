@@ -12,11 +12,12 @@
     "runtime_claim_accepted": false,
     "schema": "casegraphen.experimental.topology.redesign_proposal.v0",
     "source_runtime_finding_codes": [
+      "edge_terminal_attempt_missing",
       "output_schema_mismatch"
     ],
     "source_topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
     "source_topology_id": "topology:pilot-fanout-reduce"
   },
-  "proposal_id": "proposal:sha256-b1b8d038b9259dd1376f98274a9d3089a767e726544128239650c28600b74fdf",
+  "proposal_id": "proposal:sha256-42002e8c99a8ac48c76dd577dffbba0d38c70ac87b763d683e2f08652192844e",
   "review_status": "unreviewed"
 }

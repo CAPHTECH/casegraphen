@@ -1,0 +1,135 @@
+{
+  "accepted": false,
+  "all_thresholds_passed": true,
+  "blockers": [
+    "#76 provider-specific broker-signed host/session attestations are absent"
+  ],
+  "contract_content_hashes": {
+    "execution.topology.v0.schema.json": "6fad4ea5377225b31dd7033ec588bf41fb2cc71f1122a3672827b5041d4674cd",
+    "resource.allocator_event.v0.schema.json": "2f369c94c5061d0c53734e09b8506fbbb506ba94311414ea47759e54e30ec813",
+    "runtime.graph_expectation.v0.schema.json": "38b9d6f1d128edc2557b1f028c650fbfc3438b9262580daf008e7a3edf77dfc6",
+    "runtime.integration_report.v0.schema.json": "a0e20d083b5aa3e1dcdaad8a00b6822a7f0c0629de37c8fcdb9f017b1346e182",
+    "runtime.node_report.schema.json": "63c88359227227be25fe72b5925118016071756f5101b29e77012c0f7c43b0f5"
+  },
+  "failure_disposition": "audit_or_redesign_proposal_only",
+  "harness_content_hash": "f4c0720d845d7aad141ed859e564de7309c8c85a2815070b83999c04bd4c3f14",
+  "promotion_eligible": false,
+  "proposals": [
+    {
+      "accepted": false,
+      "finding_codes": [],
+      "kind": "runtime_durability_audit",
+      "review_status": "unreviewed"
+    }
+  ],
+  "reports": {
+    "allocator": {
+      "accepted": false,
+      "active_after_release_count": 0,
+      "append_elapsed_ms": 36604,
+      "append_threshold_ms": 60000,
+      "authority_boundary": "unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
+      "checkpoint_compaction": {
+        "finding": "full replay is O(event_count); checkpoint/compaction remains required before long-lived production allocation",
+        "implemented": false
+      },
+      "concurrent_grant_count": 1,
+      "crash_after_publication_refused": true,
+      "crash_before_publication_ignored": true,
+      "event_threshold": 512,
+      "halt": "operator_review_required",
+      "journal_event_count": 512,
+      "passed": true,
+      "release_observed": true,
+      "restart_observed": true,
+      "restart_replay_ms": 75,
+      "restart_replay_threshold_ms": 5000,
+      "schema": "casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
+      "supersede_active_successor": true
+    },
+    "binary": {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2",
+      "byte_length": 65536,
+      "canonical_edge_proof_set_hash": "d868040781f77074a2e9c4f89a0ede348a5b1f1c6fc6ed6829758b9cc55ee194",
+      "content_hash": "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2",
+      "halt": "operator_review_required",
+      "media_type": "application/octet-stream",
+      "non_utf8_observed": true,
+      "passed": true
+    },
+    "remote": {
+      "accepted": false,
+      "duplicate_delivery_count": 2,
+      "elapsed_ms": 83,
+      "events": [
+        "disconnect_observed",
+        "duplicate_delivery_resumed",
+        "timeout_observed",
+        "process_restarted",
+        "reconnected",
+        "journal_resumed"
+      ],
+      "halt": "operator_review_required",
+      "journal_record_count": 2,
+      "passed": true,
+      "threshold_ms": 10000
+    },
+    "reviewed_resource": {
+      "accepted": false,
+      "accepted_review_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology:3",
+      "failure_disposition": "review_proposals_only",
+      "halt": "needs_review",
+      "passed": true,
+      "proposal_count": 2,
+      "reconciliation_complete": true,
+      "reviewed_deployment_binding": {
+        "accepted_review_id": "review:morphism-review-execution-topology-evidence-execution-topology-accept-revision-execution-topology-review-evidence-3aexecution-topology-3",
+        "accepted_review_revision": "revision:execution-topology-review:evidence~3aexecution-topology:3",
+        "attempt_id": "attempt:e2e-review-a:1",
+        "case_space_id": "case_space:native-case-management-contract",
+        "claim_cell_id": "evidence:execution-topology",
+        "deployment_bundle_hash": "83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+        "node_id": "node:review-a",
+        "policy_manifest_hash": "0fe5926b96d5dd4dd0377d0c8bfaad6cc4195865be05414361decee9829854b4",
+        "resource_declaration_hash": "4333cf94938cbbf73ae47c34b62a32c4c5829911bc00af37da3194c44c18a6a8",
+        "reviewed_topology_hash": "29fbcfe68deb20e180f13a2c9444a2fddcde57646e8c880d90fbd0a7c53409bb",
+        "schema": "casegraphen.experimental.resource.reviewed_deployment_binding.v0",
+        "schema_version": 0
+      },
+      "reviewed_deployment_hash": "83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+      "schema": "casegraphen.experimental.reviewed_resource_pilot.report.v0",
+      "topology_content_hash": "29fbcfe68deb20e180f13a2c9444a2fddcde57646e8c880d90fbd0a7c53409bb"
+    },
+    "scale": {
+      "accepted": false,
+      "complete": true,
+      "dataflow_complete": true,
+      "edge_count": 511,
+      "edge_proof_set_hash": "d868040781f77074a2e9c4f89a0ede348a5b1f1c6fc6ed6829758b9cc55ee194",
+      "halt": "operator_review_required",
+      "node_complete": true,
+      "node_count": 512,
+      "passed": true,
+      "peak_memory_bytes": 7651328,
+      "proven_edge_count": 511,
+      "reconciliation_ms": 5,
+      "report_count": 640,
+      "retry_count": 128,
+      "thresholds": {
+        "peak_memory_bytes": 134217728,
+        "reconciliation_ms": 5000
+      }
+    }
+  },
+  "reviewed_deployment_hash": "83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+  "runtime_versions": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "python": "3.11.14"
+  },
+  "schema": "casegraphen.experimental.runtime_durability_pilot.report.v0",
+  "schema_version": 0,
+  "source_revision": "3e92aace57f9bbe44d41de12a13e6d5280a978dc",
+  "source_worktree_dirty": true,
+  "topology_content_hash": "2818e1605fbf6a463d0e0644ce8562f1e3d749e63d020498c05deaca40e3facc"
+}

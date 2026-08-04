@@ -48,6 +48,9 @@ claim cell, and exact accepted-review revision. The host verifies every bundle
 artifact, re-derives authority from the CaseGraphen store, and journals the
 topology, policy manifest, bundle, review, node, attempt, and declaration
 hashes. Bearer authentication alone cannot reserve arbitrary topology work.
+Bundle verification includes deterministic recompile from the retained
+`compiler.inputs.json`; a content-addressed but compiler-inconsistent artifact
+directory cannot mint reviewed deployment authority.
 
 `compile_deployment_bundle` is proposal-only. After topology and policy
 artifacts are attached and accepted through `casegraphen topology-review`, use

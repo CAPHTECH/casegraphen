@@ -17,7 +17,26 @@
     "reviewed_claim_cell_id": {"$ref": "#/$defs/nullable_id"},
     "accepted_review_id": {"$ref": "#/$defs/nullable_id"},
     "accepted_review_revision_id": {"$ref": "#/$defs/nullable_id"},
-    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+    "artifacts": {
+      "type": "array",
+      "minItems": 12,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/artifact"},
+      "allOf": [
+        {"contains": {"properties": {"path": {"const": "execution.topology.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "topology.content-hash"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "compiler.inputs.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "compiler.report.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "case.mapping.genesis.proposal.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "execution.plan.proposal.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "runtime.deployment.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "resource.manifest.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "verification.policies.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "budget.policies.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "expansion.policies.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"path": {"const": "graph.analysis.report.json"}}, "required": ["path"]}, "minContains": 1, "maxContains": 1}
+      ]
+    }
   },
   "$defs": {
     "id": {"type": "string", "minLength": 1},

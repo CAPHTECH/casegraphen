@@ -6,8 +6,9 @@
 
 use crate::{
     exec::records::{
-        ExecutionDispatchState, ExecutionTrace, EXECUTION_RECORD_SCHEMA_VERSION,
-        EXECUTION_TRACE_SCHEMA,
+        ExecutionDispatchState, ExecutionTrace, WorkerOutputName, WorkerReport,
+        EXECUTION_RECORD_SCHEMA_VERSION, EXECUTION_TRACE_SCHEMA, WORKER_REPORT_SCHEMA,
+        WORKER_REPORT_TRUST_BOUNDARY,
     },
     native_eval::{
         evaluate_native_case, latest_evidence_review_entries, latest_evidence_review_status,
@@ -119,7 +120,9 @@ struct LedgerLineageBinding {
     /// later ledger revision that records each authority morphism.
     case_revision_id: String,
     claim_cell_id: String,
-    topology_content_hash: String,
+    subject_kind: LedgerLineageSubjectKind,
+    subject_content_hash: String,
+    topology_content_hash: Option<String>,
     node_id: String,
     attempt_id: String,
     actor_id: String,
@@ -129,6 +132,28 @@ struct LedgerLineageBinding {
     runtime_report_content_hash: String,
     execution_trace_content_hash: String,
     authority_morphism_id: String,
+    native_cli_provenance: Option<NativeCliLineageProvenance>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerLineageSubjectKind {
+    ExecutionTopology,
+    NativeExecutionTrace,
+}
+
+/// Ledger-owned provenance for the shipped CLI run/review workflow. This is
+/// private so callers cannot promote a worker report or review declaration by
+/// constructing the stronger binding directly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum NativeCliLineageProvenance {
+    Producer {
+        trace_id: String,
+        worker_report_id: String,
+        evidence_attach_morphism_id: String,
+        stdout_content_hash: String,
+    },
+    Verifier,
 }
 
 /// Opaque proof that a producer identity was derived from the exact current
@@ -163,6 +188,19 @@ pub struct LedgerLineageDerivation<'a> {
     pub authority_morphism_id: &'a str,
     pub runtime_report_bytes: &'a [u8],
     pub execution_trace_bytes: &'a [u8],
+}
+
+/// Exact retained files used to derive producer lineage from the normal
+/// `casegraphen run --step` path. Identity, gate, node/attempt, and authority
+/// are derived from these bytes and the replayed ledger rather than supplied
+/// separately by the caller.
+pub struct NativeCliRunLineageDerivation<'a> {
+    pub case_space: &'a CaseSpace,
+    pub claim_cell_id: &'a str,
+    pub worker_report_bytes: &'a [u8],
+    pub execution_trace_bytes: &'a [u8],
+    pub stdout_bytes: &'a [u8],
+    pub stderr_bytes: &'a [u8],
 }
 
 /// Caller-declared anchor metadata. It is intentionally reconciled under
@@ -546,7 +584,10 @@ pub struct LedgerDerivedLineageScope {
     pub case_space_id: String,
     pub case_revision_id: String,
     pub claim_cell_id: String,
-    pub topology_content_hash: String,
+    pub subject_kind: LedgerLineageSubjectKind,
+    pub subject_content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topology_content_hash: Option<String>,
     pub node_id: String,
     pub attempt_id: String,
 }
@@ -722,7 +763,7 @@ fn lineage_metadata_matches(
         ("claim_cell_id", binding.claim_cell_id.as_str()),
         (
             "topology_content_hash",
-            binding.topology_content_hash.as_str(),
+            binding.topology_content_hash.as_deref().unwrap_or_default(),
         ),
         ("node_id", binding.node_id.as_str()),
         ("attempt_id", binding.attempt_id.as_str()),
@@ -874,7 +915,9 @@ fn derive_lineage_binding(
             })
             .unwrap_or_default(),
         claim_cell_id: input.claim_cell_id.to_owned(),
-        topology_content_hash: input.topology_content_hash.to_owned(),
+        subject_kind: LedgerLineageSubjectKind::ExecutionTopology,
+        subject_content_hash: input.topology_content_hash.to_owned(),
+        topology_content_hash: Some(input.topology_content_hash.to_owned()),
         node_id: input.node_id.to_owned(),
         attempt_id: input.attempt_id.to_owned(),
         actor_id: input.operation_gate.actor_id.to_string(),
@@ -889,6 +932,7 @@ fn derive_lineage_binding(
         runtime_report_content_hash: sha256_hex(input.runtime_report_bytes),
         execution_trace_content_hash: sha256_hex(input.execution_trace_bytes),
         authority_morphism_id: input.authority_morphism_id.to_owned(),
+        native_cli_provenance: None,
     };
     let claim_matches = input.case_space.case_cells.iter().any(|cell| {
         cell.id.as_str() == input.claim_cell_id
@@ -969,6 +1013,299 @@ pub fn derive_ledger_producer_proof(
         .map(|(binding, _)| LedgerDerivedProducerProof { binding })
 }
 
+fn worker_output_matches(report: &WorkerReport, name: WorkerOutputName, bytes: &[u8]) -> bool {
+    report.outputs.iter().any(|output| {
+        output.name == name
+            && !output.incomplete
+            && output.content_hash == sha256_hex(bytes)
+            && output.byte_len == bytes.len() as u64
+    })
+}
+
+/// Derives producer authority from artifacts emitted by the normal shell
+/// worker CLI. Unlike the generic runtime adapter, this path consumes a
+/// `WorkerReport`; it does not require callers to translate that report into a
+/// synthetic `RuntimeNodeReport` or invent topology metadata on the evidence
+/// cell.
+pub fn derive_native_cli_run_producer_proof(
+    input: NativeCliRunLineageDerivation<'_>,
+) -> Result<LedgerDerivedProducerProof, Vec<PolicyFinding>> {
+    let mut findings = Vec::new();
+    if evaluate_native_case(input.case_space).is_err() {
+        findings.push(finding(
+            "native_cli_lineage_case_invalid",
+            ClaimLevel::LedgerVerifiable,
+            None,
+            "native CLI lineage requires a canonically valid replayed case space",
+        ));
+    }
+    let report = match serde_json::from_slice::<WorkerReport>(input.worker_report_bytes) {
+        Ok(report) => Some(report),
+        Err(error) => {
+            findings.push(finding(
+                "native_cli_worker_report_invalid",
+                ClaimLevel::LedgerVerifiable,
+                None,
+                error.to_string(),
+            ));
+            None
+        }
+    };
+    let trace = match serde_json::from_slice::<ExecutionTrace>(input.execution_trace_bytes) {
+        Ok(trace) => Some(trace),
+        Err(error) => {
+            findings.push(finding(
+                "native_cli_execution_trace_invalid",
+                ClaimLevel::LedgerVerifiable,
+                None,
+                error.to_string(),
+            ));
+            None
+        }
+    };
+    let trace_hash = sha256_hex(input.execution_trace_bytes);
+    let report_hash = sha256_hex(input.worker_report_bytes);
+    let stdout_hash = sha256_hex(input.stdout_bytes);
+    let stderr_hash = sha256_hex(input.stderr_bytes);
+
+    if let (Some(report), Some(trace)) = (&report, &trace) {
+        let files_match = report.schema == WORKER_REPORT_SCHEMA
+            && report.schema_version == EXECUTION_RECORD_SCHEMA_VERSION
+            && report.trust_boundary == WORKER_REPORT_TRUST_BOUNDARY
+            && trace.schema == EXECUTION_TRACE_SCHEMA
+            && trace.schema_version == EXECUTION_RECORD_SCHEMA_VERSION
+            && trace.dispatch_state == ExecutionDispatchState::Completed
+            && trace.case_space_id == input.case_space.case_space_id
+            && trace.worker_report_id == report.report_id
+            && trace.worker_report_content_hash == report_hash
+            && trace.stdout_content_hash == stdout_hash
+            && trace.stderr_content_hash == stderr_hash
+            && trace.plan_id == report.plan_id
+            && trace.step_id == report.step_id
+            && trace.work_cell_id == report.work_cell_id
+            && trace.binding_id == report.binding_id
+            && trace.binding_content_hash == report.binding_content_hash
+            && worker_output_matches(report, WorkerOutputName::Stdout, input.stdout_bytes)
+            && worker_output_matches(report, WorkerOutputName::Stderr, input.stderr_bytes);
+        if !files_match {
+            findings.push(finding(
+                "native_cli_run_artifact_mismatch",
+                ClaimLevel::LedgerVerifiable,
+                Some(trace.trace_id.to_string()),
+                "worker report, execution trace, stdout, and stderr must be the exact mutually bound files emitted by one completed CLI run",
+            ));
+        }
+        if check_operation_gate(input.case_space, &trace.operation_gate, "dispatch").is_err() {
+            findings.push(finding(
+                "native_cli_dispatch_gate_invalid",
+                ClaimLevel::LedgerVerifiable,
+                Some(trace.operation_gate.actor_id.to_string()),
+                "the trace's dispatch gate must still be authorized by the replayed ledger",
+            ));
+        }
+        let claim_matches = input.case_space.case_cells.iter().any(|cell| {
+            cell.id.as_str() == input.claim_cell_id
+                && cell.cell_type == CaseCellType::Evidence
+                && cell
+                    .metadata
+                    .get("worker_report_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(report.report_id.as_str())
+                && cell
+                    .metadata
+                    .get("trace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace.trace_id.as_str())
+                && cell
+                    .metadata
+                    .get("content_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(stdout_hash.as_str())
+        });
+        let evidence_attach = input.case_space.morphism_log.iter().find(|entry| {
+            entry.morphism.morphism_type == CaseMorphismType::EvidenceAttach
+                && entry
+                    .morphism
+                    .added_ids
+                    .iter()
+                    .any(|id| id.as_str() == input.claim_cell_id)
+                && entry
+                    .morphism
+                    .source_ids
+                    .iter()
+                    .any(|id| id == &report.report_id)
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace.trace_id.as_str())
+                && trace.appended_entry_ids.contains(&entry.entry_id)
+        });
+        let anchor = input.case_space.morphism_log.iter().find(|entry| {
+            entry.morphism.morphism_type
+                == CaseMorphismType::Custom("execution_trace_anchor".to_owned())
+                && entry.morphism.review_status == ReviewStatus::Accepted
+                && entry.actor_id == trace.operation_gate.actor_id
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace.trace_id.as_str())
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_content_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace_hash.as_str())
+                && trace.appended_entry_ids.contains(&entry.entry_id)
+                && trace.result_revision_id.as_ref() == Some(&entry.target_revision_id)
+        });
+        if !claim_matches || evidence_attach.is_none() || anchor.is_none() {
+            findings.push(finding(
+                "native_cli_run_ledger_join_mismatch",
+                ClaimLevel::LedgerVerifiable,
+                Some(input.claim_cell_id.to_owned()),
+                "the replayed ledger must contain the exact worker evidence attachment and tool-minted trace anchor for these retained bytes",
+            ));
+        }
+        if findings.is_empty() {
+            let gate_hash = sha256_hex(
+                &serde_json::to_vec(&trace.operation_gate)
+                    .expect("operation gate serialization cannot fail"),
+            );
+            return Ok(LedgerDerivedProducerProof {
+                binding: LedgerLineageBinding {
+                    case_space_id: input.case_space.case_space_id.to_string(),
+                    observed_case_revision_id: input.case_space.revision.revision_id.to_string(),
+                    case_revision_id: trace.base_revision_id.to_string(),
+                    claim_cell_id: input.claim_cell_id.to_owned(),
+                    subject_kind: LedgerLineageSubjectKind::NativeExecutionTrace,
+                    subject_content_hash: trace_hash,
+                    topology_content_hash: None,
+                    node_id: trace.step_id.to_string(),
+                    attempt_id: trace.trace_id.to_string(),
+                    actor_id: trace.operation_gate.actor_id.to_string(),
+                    capability_ids: trace
+                        .operation_gate
+                        .capability_ids
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    operation_gate: trace.operation_gate.clone(),
+                    operation_gate_content_hash: gate_hash,
+                    runtime_report_content_hash: report_hash,
+                    execution_trace_content_hash: sha256_hex(input.execution_trace_bytes),
+                    authority_morphism_id: anchor
+                        .expect("validated anchor")
+                        .morphism_id
+                        .to_string(),
+                    native_cli_provenance: Some(NativeCliLineageProvenance::Producer {
+                        trace_id: trace.trace_id.to_string(),
+                        worker_report_id: report.report_id.to_string(),
+                        evidence_attach_morphism_id: evidence_attach
+                            .expect("validated evidence attach")
+                            .morphism_id
+                            .to_string(),
+                        stdout_content_hash: stdout_hash,
+                    }),
+                },
+            });
+        }
+    }
+    Err(findings)
+}
+
+/// Derives verifier authority directly from the canonical review execution
+/// record. The normal review command does not run a worker, so requiring a
+/// fabricated `ExecutionTrace` here would weaken the boundary rather than
+/// strengthen it.
+pub fn derive_native_cli_review_verifier_proof(
+    case_space: &CaseSpace,
+    producer: &LedgerDerivedProducerProof,
+    review_morphism_id: &str,
+) -> Result<LedgerDerivedVerifierProof, Vec<PolicyFinding>> {
+    if !matches!(
+        producer.binding.native_cli_provenance,
+        Some(NativeCliLineageProvenance::Producer { .. })
+    ) {
+        return Err(vec![finding(
+            "native_cli_verifier_requires_native_producer",
+            ClaimLevel::LedgerVerifiable,
+            Some(review_morphism_id.to_owned()),
+            "canonical CLI review lineage must extend a native CLI run producer proof",
+        )]);
+    }
+    let entry = case_space
+        .morphism_log
+        .iter()
+        .find(|entry| entry.morphism_id.as_str() == review_morphism_id);
+    let Some(entry) = entry else {
+        return Err(vec![finding(
+            "native_cli_review_authority_missing",
+            ClaimLevel::LedgerVerifiable,
+            Some(review_morphism_id.to_owned()),
+            "review morphism is absent from the replayed ledger",
+        )]);
+    };
+    let review = canonical_review(&entry.morphism);
+    let gate = entry
+        .morphism
+        .metadata
+        .get("operation_gate")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<NativeOperationGate>(value).ok());
+    let latest = latest_evidence_review_entries(case_space)
+        .get(producer.binding.claim_cell_id.as_str())
+        .copied();
+    let valid = review.as_ref().is_some_and(|review| {
+        review.target_id.as_str() == producer.binding.claim_cell_id
+            && matches!(review.action, ReviewAction::Accept | ReviewAction::Reject)
+    }) && gate.as_ref().is_some_and(|gate| {
+        entry.actor_id == gate.actor_id && check_operation_gate(case_space, gate, "review").is_ok()
+    }) && latest.map(|latest| &latest.morphism_id) == Some(&entry.morphism_id);
+    if !valid {
+        return Err(vec![finding(
+            "native_cli_review_authority_invalid",
+            ClaimLevel::LedgerVerifiable,
+            Some(review_morphism_id.to_owned()),
+            "the exact latest canonical evidence review and its authorized review gate are required",
+        )]);
+    }
+    let review = review.expect("validated canonical review");
+    let gate = gate.expect("validated review operation gate");
+    let mut binding = producer.binding.clone();
+    binding.observed_case_revision_id = case_space.revision.revision_id.to_string();
+    binding.actor_id = gate.actor_id.to_string();
+    binding.capability_ids = gate
+        .capability_ids
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    binding.operation_gate_content_hash =
+        sha256_hex(&serde_json::to_vec(&gate).expect("operation gate serialization cannot fail"));
+    binding.operation_gate = gate;
+    binding.authority_morphism_id = entry.morphism_id.to_string();
+    binding.native_cli_provenance = Some(NativeCliLineageProvenance::Verifier);
+    Ok(LedgerDerivedVerifierProof {
+        binding,
+        verifier_report_id: entry
+            .morphism
+            .metadata
+            .get("review_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("canonical review has review_id")
+            .to_owned(),
+        disposition: match review.action {
+            ReviewAction::Accept => VerifierDisposition::Accept,
+            ReviewAction::Reject => VerifierDisposition::Reject,
+            _ => unreachable!("validated review action"),
+        },
+        runtime_attestations: Vec::new(),
+    })
+}
+
 pub fn derive_ledger_verifier_proof(
     input: LedgerLineageDerivation<'_>,
     producer: &LedgerDerivedProducerProof,
@@ -981,6 +1318,8 @@ pub fn derive_ledger_verifier_proof(
     )?;
     if binding.case_space_id != producer.binding.case_space_id
         || binding.claim_cell_id != producer.binding.claim_cell_id
+        || binding.subject_kind != producer.binding.subject_kind
+        || binding.subject_content_hash != producer.binding.subject_content_hash
         || binding.topology_content_hash != producer.binding.topology_content_hash
         || binding.node_id != producer.binding.node_id
         || binding.attempt_id != producer.binding.attempt_id
@@ -1058,12 +1397,43 @@ fn current_lineage_findings(
         ));
     }
     let claim_matches = case_space.case_cells.iter().any(|cell| {
-        cell.id.as_str() == binding.claim_cell_id
-            && cell
-                .metadata
-                .get("execution_topology_content_hash")
-                .and_then(serde_json::Value::as_str)
-                == Some(binding.topology_content_hash.as_str())
+        if cell.id.as_str() != binding.claim_cell_id {
+            return false;
+        }
+        match &binding.native_cli_provenance {
+            Some(NativeCliLineageProvenance::Producer {
+                trace_id,
+                worker_report_id,
+                stdout_content_hash,
+                ..
+            }) => {
+                cell.cell_type == CaseCellType::Evidence
+                    && cell
+                        .metadata
+                        .get("trace_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(trace_id.as_str())
+                    && cell
+                        .metadata
+                        .get("worker_report_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(worker_report_id.as_str())
+                    && cell
+                        .metadata
+                        .get("content_hash")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(stdout_content_hash.as_str())
+            }
+            // A verifier binding inherits the producer subject fields. The
+            // exact claim is protected by its canonical review target below.
+            Some(NativeCliLineageProvenance::Verifier) => cell.cell_type == CaseCellType::Evidence,
+            None => {
+                cell.metadata
+                    .get("execution_topology_content_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == binding.topology_content_hash.as_deref()
+            }
+        }
     });
     if !claim_matches {
         findings.push(finding(
@@ -1077,9 +1447,48 @@ fn current_lineage_findings(
         .morphism_log
         .iter()
         .find(|entry| entry.morphism_id.as_str() == binding.authority_morphism_id);
-    if !authority
-        .is_some_and(|entry| lineage_authority_matches(entry, binding, expected_morphism, None))
-    {
+    let authority_matches = authority.is_some_and(|entry| match &binding.native_cli_provenance {
+        Some(NativeCliLineageProvenance::Producer {
+            trace_id,
+            evidence_attach_morphism_id,
+            ..
+        }) => {
+            let evidence_attach_present = case_space.morphism_log.iter().any(|candidate| {
+                candidate.morphism_id.as_str() == evidence_attach_morphism_id
+                    && candidate.morphism.morphism_type == CaseMorphismType::EvidenceAttach
+                    && candidate
+                        .morphism
+                        .added_ids
+                        .iter()
+                        .any(|id| id.as_str() == binding.claim_cell_id)
+            });
+            entry.morphism.morphism_type
+                == CaseMorphismType::Custom("execution_trace_anchor".to_owned())
+                && entry.morphism.review_status == ReviewStatus::Accepted
+                && entry.actor_id.as_str() == binding.actor_id
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(trace_id.as_str())
+                && entry
+                    .morphism
+                    .metadata
+                    .get("trace_content_hash")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(binding.execution_trace_content_hash.as_str())
+                && evidence_attach_present
+        }
+        Some(NativeCliLineageProvenance::Verifier) => {
+            canonical_review(&entry.morphism).is_some_and(|review| {
+                review.target_id.as_str() == binding.claim_cell_id
+                    && matches!(review.action, ReviewAction::Accept | ReviewAction::Reject)
+            }) && entry.actor_id.as_str() == binding.actor_id
+        }
+        None => lineage_authority_matches(entry, binding, expected_morphism, None),
+    });
+    if !authority_matches {
         findings.push(finding(
             "lineage_current_authority_invalid",
             ClaimLevel::LedgerVerifiable,
@@ -1215,6 +1624,8 @@ fn reconcile_bound_verification_policy(
         let same_binding = verifier.binding.case_space_id == producer.binding.case_space_id
             && verifier.binding.case_revision_id == producer.binding.case_revision_id
             && verifier.binding.claim_cell_id == producer.binding.claim_cell_id
+            && verifier.binding.subject_kind == producer.binding.subject_kind
+            && verifier.binding.subject_content_hash == producer.binding.subject_content_hash
             && verifier.binding.topology_content_hash == producer.binding.topology_content_hash
             && verifier.binding.node_id == producer.binding.node_id
             && verifier.binding.attempt_id == producer.binding.attempt_id;
@@ -1333,6 +1744,8 @@ fn reconcile_bound_verification_policy(
             case_space_id: producer.binding.case_space_id.clone(),
             case_revision_id: producer.binding.case_revision_id.clone(),
             claim_cell_id: producer.binding.claim_cell_id.clone(),
+            subject_kind: producer.binding.subject_kind,
+            subject_content_hash: producer.binding.subject_content_hash.clone(),
             topology_content_hash: producer.binding.topology_content_hash.clone(),
             node_id: producer.binding.node_id.clone(),
             attempt_id: producer.binding.attempt_id.clone(),
@@ -1388,7 +1801,9 @@ mod tests {
             observed_case_revision_id: "revision:observed".into(),
             case_revision_id: "revision:test".into(),
             claim_cell_id: "claim:test".into(),
-            topology_content_hash: "a".repeat(64),
+            subject_kind: LedgerLineageSubjectKind::ExecutionTopology,
+            subject_content_hash: "a".repeat(64),
+            topology_content_hash: Some("a".repeat(64)),
             node_id: "node:test".into(),
             attempt_id: "attempt:test:1".into(),
             actor_id: actor.into(),
@@ -1405,6 +1820,7 @@ mod tests {
             runtime_report_content_hash: "c".repeat(64),
             execution_trace_content_hash: "d".repeat(64),
             authority_morphism_id: "morphism:test".into(),
+            native_cli_provenance: None,
         }
     }
 

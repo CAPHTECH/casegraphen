@@ -1,0 +1,10 @@
+{
+  "accepted": false,
+  "blockers": [
+    "#76 provider-specific broker-signed host/session attestations are absent"
+  ],
+  "durability_thresholds_passed": true,
+  "promotion_recommended": false,
+  "review_seam": "operator_review_required",
+  "workflow_count": 10
+}

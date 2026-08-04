@@ -143,6 +143,23 @@ fn operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review() 
         .as_array()
         .is_some_and(|values| !values.is_empty()));
 
+    if let Ok(path) = std::env::var("CASEGRAPHEN_REVIEWED_RESOURCE_PILOT_REPORT") {
+        let retained = json!({
+            "schema":"casegraphen.experimental.reviewed_resource_pilot.report.v0",
+            "passed":true,
+            "accepted":false,
+            "halt":"needs_review",
+            "topology_content_hash":topology_hash,
+            "reviewed_deployment_hash":bundle_hash,
+            "accepted_review_revision_id":accepted_revision,
+            "reviewed_deployment_binding":reviewed_binding,
+            "reconciliation_complete":result["reconciliation_complete"],
+            "proposal_count":result["proposals"].as_array().map_or(0, Vec::len),
+            "failure_disposition":"review_proposals_only"
+        });
+        fs::write(path, serde_json::to_vec_pretty(&retained).unwrap()).unwrap();
+    }
+
     let reopened = gated_cli(
         &directory.join("store"),
         &[

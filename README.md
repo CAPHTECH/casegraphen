@@ -78,6 +78,11 @@ runtime claim. See the [positioning ADR](docs/adr/0002-graph-engineering-positio
 [topology design](docs/design/execution-topology-contract.md), and
 [experimental contract inventory](schemas/experimental/README.md).
 
+The v0 workflow named `streaming` implements terminal-artifact stage
+pipelining: a downstream stage may be proposed after its canonical producer
+has terminated and its final artifact bytes are observed, without waiting for
+the whole graph. It does not provide chunk-level producer/consumer overlap.
+
 These contracts remain `experimental` and `v0`: real-runtime pilots may cause
 breaking changes. They are not yet eligible for stable-schema compatibility
 claims. The supported standalone experimental workflow matrix is
@@ -279,6 +284,12 @@ this tool live in [`docs/specs/`](docs/specs/).
   [resource-reservation protocol](docs/design/resource-reservation-protocol.md)
 - [ADR 0019: external MCP control-plane boundary](docs/adr/0019-external-mcp-control-plane.md)
 - [ADR 0020: Graph Engineering product surface](docs/adr/0020-graph-engineering-product-surface.md)
+- [ADR 0024: deterministic streaming order](docs/adr/0024-streaming-events-have-logical-order.md)
+- [ADR 0025: runtime edge-handoff completeness](docs/adr/0025-runtime-completeness-requires-edge-handoffs.md)
+- ADR identifiers are contiguous, immutable four-digit decision identities;
+  filenames and headings carry the same identifier. The next available
+  identifier is **0026**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and
   stable-promotion threshold. A [retained Codex/Claude smoke report](docs/evals/fresh-agent/2026-08-03-real-provider-smoke.md)

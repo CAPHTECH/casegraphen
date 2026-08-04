@@ -1,0 +1,24 @@
+{
+  "accepted": false,
+  "active_after_release_count": 0,
+  "append_elapsed_ms": 36604,
+  "append_threshold_ms": 60000,
+  "authority_boundary": "unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
+  "checkpoint_compaction": {
+    "finding": "full replay is O(event_count); checkpoint/compaction remains required before long-lived production allocation",
+    "implemented": false
+  },
+  "concurrent_grant_count": 1,
+  "crash_after_publication_refused": true,
+  "crash_before_publication_ignored": true,
+  "event_threshold": 512,
+  "halt": "operator_review_required",
+  "journal_event_count": 512,
+  "passed": true,
+  "release_observed": true,
+  "restart_observed": true,
+  "restart_replay_ms": 75,
+  "restart_replay_threshold_ms": 5000,
+  "schema": "casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
+  "supersede_active_successor": true
+}

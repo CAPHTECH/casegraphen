@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_compiler.inputs.v0",
+  "title": "Retained graph compiler inputs v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "compiler_version", "mode", "target", "case_space_id", "base_revision_id", "plan_id", "node_plan_mappings", "verification_policies", "budget_policies", "expansion_policies"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_compiler.inputs.v0"},
+    "compiler_version": {"const": "casegraphen-graph-compiler/0"},
+    "mode": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "proposal"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "claim_cell_id", "review_id", "topology_content_hash", "policy_manifest_content_hash", "case_space_id", "base_revision_id", "expansion_proposal_id"],
+          "properties": {
+            "kind": {"const": "reviewed"},
+            "claim_cell_id": {"type": "string", "minLength": 1},
+            "review_id": {"type": "string", "minLength": 1},
+            "topology_content_hash": {"$ref": "#/$defs/sha256"},
+            "policy_manifest_content_hash": {"$ref": "#/$defs/sha256"},
+            "case_space_id": {"type": "string", "minLength": 1},
+            "base_revision_id": {"type": "string", "minLength": 1},
+            "expansion_proposal_id": {"type": ["string", "null"]}
+          }
+        }
+      ]
+    },
+    "target": {"const": "generic_jsonl_v0"},
+    "case_space_id": {"type": "string", "minLength": 1},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "node_plan_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "worker_binding_id", "success_evidence_requirement_ids", "allowed_transition_classes"],
+        "properties": {
+          "node_id": {"type": "string", "minLength": 1},
+          "worker_binding_id": {"type": "string", "minLength": 1},
+          "success_evidence_requirement_ids": {"type": "array", "items": {"type": "string"}},
+          "allowed_transition_classes": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    },
+    "verification_policies": {"type": "object"},
+    "budget_policies": {"type": "object"},
+    "expansion_policies": {"type": "object"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

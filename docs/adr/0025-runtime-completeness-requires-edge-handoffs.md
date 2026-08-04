@@ -1,4 +1,4 @@
-# ADR 0023: Runtime completeness requires edge handoff proof
+# ADR 0025: Runtime completeness requires edge handoff proof
 
 ## Status
 

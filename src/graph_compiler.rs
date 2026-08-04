@@ -30,6 +30,8 @@ pub const GRAPH_COMPILER_VERSION: &str = "casegraphen-graph-compiler/0";
 pub const DEPLOYMENT_BUNDLE_SCHEMA: &str = "casegraphen.experimental.deployment_bundle.v0";
 /// Schema identity of compiler reports.
 pub const COMPILER_REPORT_SCHEMA: &str = "casegraphen.experimental.graph_compiler.report.v0";
+/// Schema identity of the retained canonical inputs used to prove compiler provenance.
+pub const COMPILER_INPUTS_SCHEMA: &str = "casegraphen.experimental.graph_compiler.inputs.v0";
 
 /// Compilation for inspection, or compilation tied to a canonical accepted review.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,6 +112,43 @@ pub struct CompilerRequest {
     pub verification_policies: BTreeMap<String, Value>,
     pub budget_policies: BTreeMap<String, Value>,
     pub expansion_policies: BTreeMap<String, Value>,
+}
+
+/// Serializable authority-free representation of the compiler mode. Reviewed
+/// fields are retained so verification can reproduce the exact compiler run;
+/// deserializing this value does not itself mint an opaque review proof.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RetainedCompilationMode {
+    Proposal,
+    Reviewed {
+        claim_cell_id: String,
+        review_id: String,
+        topology_content_hash: String,
+        policy_manifest_content_hash: String,
+        case_space_id: String,
+        base_revision_id: String,
+        expansion_proposal_id: Option<String>,
+    },
+}
+
+/// Canonical compiler inputs retained inside every bundle. This record is
+/// untrusted until the verifier deterministically recompiles it and compares
+/// every generated artifact byte.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CompilerInputsArtifact {
+    schema: String,
+    compiler_version: String,
+    mode: RetainedCompilationMode,
+    target: CompilationTarget,
+    case_space_id: String,
+    base_revision_id: String,
+    plan_id: String,
+    node_plan_mappings: Vec<NodePlanMapping>,
+    verification_policies: BTreeMap<String, Value>,
+    budget_policies: BTreeMap<String, Value>,
+    expansion_policies: BTreeMap<String, Value>,
 }
 
 /// Severity of semantics that could not be preserved during lowering.
@@ -210,8 +249,8 @@ pub struct DeploymentBundle {
     pub manifest_content_hash: String,
 }
 
-/// Opaque proof that manifest bytes, artifact inventory, and every artifact
-/// byte string agree with one content-addressed compiler bundle.
+/// Opaque proof that a bundle is byte-integral and exactly reproducible by the
+/// canonical deterministic compiler from its retained inputs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedDeploymentBundle {
     bundle: DeploymentBundle,
@@ -240,10 +279,12 @@ impl VerifiedDeploymentBundle {
     }
 }
 
-const REQUIRED_DEPLOYMENT_ARTIFACTS: [&str; 10] = [
+const REQUIRED_DEPLOYMENT_ARTIFACTS: [&str; 12] = [
     "execution.topology.json",
     "topology.content-hash",
+    "compiler.inputs.json",
     "compiler.report.json",
+    "case.mapping.genesis.proposal.json",
     "execution.plan.proposal.json",
     "runtime.deployment.json",
     "resource.manifest.json",
@@ -345,7 +386,106 @@ pub fn verify_deployment_bundle(
             "topology artifact identity or content hash differs from the manifest",
         ));
     }
+
+    let inputs_bytes = bundle
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == "compiler.inputs.json")
+        .expect("required inventory was checked")
+        .bytes
+        .as_slice();
+    let retained: CompilerInputsArtifact =
+        serde_json::from_slice(inputs_bytes).map_err(|error| {
+            compiler_finding(
+                "deployment_bundle_semantic_mismatch",
+                "$.artifacts[compiler.inputs.json]",
+                error.to_string(),
+            )
+        })?;
+    let request = retained_compiler_request(retained).map_err(|detail| {
+        compiler_finding(
+            "deployment_bundle_semantic_mismatch",
+            "$.artifacts[compiler.inputs.json]",
+            detail,
+        )
+    })?;
+    let reproduced = compile_execution_topology(&topology, &request).map_err(|report| {
+        compiler_finding(
+            "deployment_bundle_semantic_mismatch",
+            "$.artifacts",
+            format!(
+                "retained inputs do not produce a deployable bundle: {}",
+                serde_json::to_string(&report).expect("compiler report serializes")
+            ),
+        )
+    })?;
+    if !deployment_bundles_match(&bundle, &reproduced) {
+        return Err(compiler_finding(
+            "deployment_bundle_semantic_mismatch",
+            "$.artifacts",
+            "bundle artifact bytes or manifest differ from deterministic compiler output",
+        ));
+    }
     Ok(VerifiedDeploymentBundle { bundle, topology })
+}
+
+fn retained_compiler_request(retained: CompilerInputsArtifact) -> Result<CompilerRequest, String> {
+    if retained.schema != COMPILER_INPUTS_SCHEMA {
+        return Err("compiler input schema is unsupported".to_owned());
+    }
+    if retained.compiler_version != GRAPH_COMPILER_VERSION {
+        return Err("compiler input version differs from this verifier".to_owned());
+    }
+    let mode = match retained.mode {
+        RetainedCompilationMode::Proposal => CompilationMode::Proposal,
+        RetainedCompilationMode::Reviewed {
+            claim_cell_id,
+            review_id,
+            topology_content_hash,
+            policy_manifest_content_hash,
+            case_space_id,
+            base_revision_id,
+            expansion_proposal_id,
+        } => CompilationMode::Reviewed(ReviewedTopologyBinding {
+            claim_cell_id,
+            review_id,
+            topology_content_hash,
+            policy_manifest_content_hash,
+            case_space_id,
+            base_revision_id,
+            expansion_proposal_id,
+        }),
+    };
+    Ok(CompilerRequest {
+        mode,
+        target: retained.target,
+        case_space_id: retained.case_space_id,
+        base_revision_id: retained.base_revision_id,
+        plan_id: retained.plan_id,
+        node_plan_mappings: retained.node_plan_mappings,
+        verification_policies: retained.verification_policies,
+        budget_policies: retained.budget_policies,
+        expansion_policies: retained.expansion_policies,
+    })
+}
+
+fn deployment_bundles_match(left: &DeploymentBundle, right: &DeploymentBundle) -> bool {
+    let artifact_map = |bundle: &DeploymentBundle| {
+        bundle
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                (
+                    artifact.path.clone(),
+                    (artifact.content_hash.clone(), artifact.bytes.clone()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    left.manifest == right.manifest
+        && left.manifest_bytes == right.manifest_bytes
+        && left.manifest_content_hash == right.manifest_content_hash
+        && artifact_map(left) == artifact_map(right)
 }
 
 /// Opaque proof that a persisted deployment bundle is exactly the output
@@ -650,7 +790,11 @@ pub fn compile_execution_topology(
     })?;
     debug_assert_eq!(plan.review_status, ReviewStatus::Unreviewed);
 
-    let artifact_values = build_artifact_values(topology, request, &analysis, &plan, &report);
+    let mut artifact_values = build_artifact_values(topology, request, &analysis, &plan, &report);
+    artifact_values.insert(
+        "compiler.inputs.json",
+        serde_json::to_value(retained_compiler_inputs(request)).expect("compiler inputs serialize"),
+    );
     let mut artifacts = Vec::new();
     for (path, value) in artifact_values {
         let bytes = canonical_json_bytes(&value).expect("compiler-owned JSON serializes");
@@ -709,6 +853,36 @@ pub fn compile_execution_topology(
         manifest_bytes,
         manifest_content_hash,
     })
+}
+
+fn retained_compiler_inputs(request: &CompilerRequest) -> CompilerInputsArtifact {
+    let mode = match &request.mode {
+        CompilationMode::Proposal => RetainedCompilationMode::Proposal,
+        CompilationMode::Reviewed(binding) => RetainedCompilationMode::Reviewed {
+            claim_cell_id: binding.claim_cell_id.clone(),
+            review_id: binding.review_id.clone(),
+            topology_content_hash: binding.topology_content_hash.clone(),
+            policy_manifest_content_hash: binding.policy_manifest_content_hash.clone(),
+            case_space_id: binding.case_space_id.clone(),
+            base_revision_id: binding.base_revision_id.clone(),
+            expansion_proposal_id: binding.expansion_proposal_id.clone(),
+        },
+    };
+    let mut node_plan_mappings = request.node_plan_mappings.clone();
+    node_plan_mappings.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    CompilerInputsArtifact {
+        schema: COMPILER_INPUTS_SCHEMA.to_owned(),
+        compiler_version: GRAPH_COMPILER_VERSION.to_owned(),
+        mode,
+        target: request.target,
+        case_space_id: request.case_space_id.clone(),
+        base_revision_id: request.base_revision_id.clone(),
+        plan_id: request.plan_id.clone(),
+        node_plan_mappings,
+        verification_policies: request.verification_policies.clone(),
+        budget_policies: request.budget_policies.clone(),
+        expansion_policies: request.expansion_policies.clone(),
+    }
 }
 
 fn validate_reviewed_policy_binding(
@@ -1382,6 +1556,51 @@ mod tests {
                 .code,
             "deployment_bundle_integrity_failure"
         );
+    }
+
+    fn readdress_artifact_after_substitution(bundle: &mut DeploymentBundle, path: &str) {
+        let artifact = bundle
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.path == path)
+            .expect("test artifact exists");
+        artifact.bytes.push(b' ');
+        artifact.content_hash = crate::native_hash::sha256_hex(&artifact.bytes);
+        let entry = bundle
+            .manifest
+            .artifacts
+            .iter_mut()
+            .find(|entry| entry.path == path)
+            .expect("manifest entry exists");
+        entry.content_hash = artifact.content_hash.clone();
+        entry.byte_length = artifact.bytes.len() as u64;
+        bundle.manifest_bytes =
+            canonical_json_bytes(&bundle.manifest).expect("manifest serializes");
+        bundle.manifest_content_hash = crate::native_hash::sha256_hex(&bundle.manifest_bytes);
+    }
+
+    #[test]
+    fn self_consistent_artifact_substitution_cannot_mint_compiler_provenance() {
+        let topology = topology();
+        let request = request(&topology);
+        let original = compile_execution_topology(&topology, &request).expect("compile proposal");
+        let paths = original
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.path.clone())
+            .collect::<Vec<_>>();
+
+        for path in paths {
+            let mut substituted = original.clone();
+            readdress_artifact_after_substitution(&mut substituted, &path);
+            let substituted_hash = substituted.manifest_content_hash.clone();
+            let finding = verify_deployment_bundle(substituted, &substituted_hash)
+                .expect_err("content-addressed substitution is not compiler provenance");
+            assert_eq!(
+                finding.code, "deployment_bundle_semantic_mismatch",
+                "unexpected finding for {path}: {finding:?}"
+            );
+        }
     }
 
     #[test]

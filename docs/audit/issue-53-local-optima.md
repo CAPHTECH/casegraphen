@@ -13,7 +13,7 @@ streaming reconciliationをB/M/N/Tで監査し、arrival orderの局所的な低
 | N | 配列順処理 | external runtime protocolとreconciler。core log ruleは不変 |
 | T | 一配送 | duplicate/delayed replay、partial run、後日のaudit |
 
-構造証拠はADR 0020と、terminal判定を唯一の`reconcile_runtime_reports`へ委譲するmodule境界。実行証拠はout-of-order/duplicate、slow sibling、gate/resource block、completeの4反例。進化証拠はexperimental schema、意味/組織証拠は全releaseが`accepted=false`でruntime scheduler責任を保持する点である。
+構造証拠はADR 0024と、terminal判定を唯一の`reconcile_runtime_reports`へ委譲するmodule境界。実行証拠はout-of-order/duplicate、slow sibling、gate/resource block、completeの4反例。進化証拠はexperimental schema、意味/組織証拠は全releaseが`accepted=false`でruntime scheduler責任を保持する点である。
 
 ## 候補と反実仮想
 

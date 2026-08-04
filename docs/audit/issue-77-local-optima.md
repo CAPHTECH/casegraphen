@@ -31,7 +31,7 @@
 | 構造 | `src/runtime_protocol.rs:119-327,570-932` | canonical expectation、opaque byte observation、terminal/edge proof | 静的証拠 |
 | 実行 | `tests/runtime_edge_reconciliation.rs:195-390` | fan-out/reduce、retry replacement、missing/substitution/duplicate/un-ingested、parent/schema、JSONL review halt | fixture、非負荷試験 |
 | 進化 | commit `55fd682`、`docs/audit/issue-44-local-optima.md:79-88`、`issue-48-local-optima.md:42-50` | node projectionとadapter output-byte補償の段階的拡張 | PR待ち時間等は未取得 |
-| 意味・組織 | `docs/adr/0023-runtime-completeness-requires-edge-handoffs.md`、integrate Skill | completeness所有者とruntime/reviewer境界 | 実組織KPIなし |
+| 意味・組織 | `docs/adr/0025-runtime-completeness-requires-edge-handoffs.md`、integrate Skill | completeness所有者とruntime/reviewer境界 | 実組織KPIなし |
 
 ## 4. 候補一覧
 
@@ -93,7 +93,7 @@
 - 構造: canonical topology projectionがnodes、parents、data edgesを一度に生成する（`runtime_protocol.rs:232-304`）。artifact observationはbytes提示なしにfield constructionできない（同`:154-178,306-327`）。
 - 実行: 6 edge tests、4 integration tests、10 streaming tests、3 experimental schema conformance testsが通過。
 - 進化: node-only projection → adapter-local output-byte補償 → edge-level canonical proofという変更系列が確認できる。
-- 意味・組織: ADR 0023はruntime observationとacceptanceの所有者を統合せず、`complete`の意味だけをgraph境界へ拡張する。
+- 意味・組織: ADR 0025はruntime observationとacceptanceの所有者を統合せず、`complete`の意味だけをgraph境界へ拡張する。
 
 ### 5.6 境界拡張と優位性反転
 

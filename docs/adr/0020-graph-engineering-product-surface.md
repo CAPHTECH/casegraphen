@@ -15,7 +15,7 @@ The machine-readable source of truth is [`docs/product-surface.v0.json`](../prod
 | resource reserve/release | `reserve_resources`, `release_resources` | `resource_allocator` delegating to `resource_protocol` | atomic durable reservation/disposition; revision and caller-declared audit context required; caller allocator state is rejected |
 | resource reconcile | `reconcile_resources` | `resource_protocol` | untrusted allocation reconciliation; incomplete on mismatch |
 | expansion | `evaluate_expansion_round` | `dynamic_expansion` | bounded, typed, unreviewed topology proposals only |
-| streaming | `reconcile_streaming_run` | `streaming_reconciliation` | exact current case revision, canonical readiness and resource permits |
+| streaming (compatibility name) | `reconcile_streaming_run` | `streaming_reconciliation` | `terminal_artifact_stage_pipelining_v0`; exact revision, terminal producer/final bytes, canonical readiness and resource permits |
 | redesign | `propose_topology_redesign` | `topology_redesign` | content-bound unreviewed redesign proposal only |
 
 All MCP calls return `casegraphen.experimental.control_plane.response.v0`. A domain refusal is a response with `result: null` and a typed `refusal`; JSON-RPC framing/authentication errors use JSON-RPC errors. The host process exits non-zero for invalid startup configuration and remains fail-closed for unsupported tools.

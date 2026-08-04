@@ -9,6 +9,7 @@ use crate::{
         execution_topology_content_hash, ExecutionTopology, ResourceMode, TopologyNode,
     },
     graph_lint::lint_execution_topology,
+    streaming_reconciliation::StageReleaseSemantics,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,7 +59,7 @@ pub struct GraphSimulationRequest {
     pub max_parallelism: u32,
     pub resource_capacities: BTreeMap<String, u32>,
     pub fan_in_penalty_ms_per_input: u64,
-    pub streaming_overlap_basis_points: Option<u16>,
+    pub release_semantics: StageReleaseSemantics,
     pub retry_policy: RetryPolicy,
     pub expansion_bounds: BTreeMap<String, U64Range>,
     pub budgets: SimulationBudgets,
@@ -125,6 +126,10 @@ pub struct GraphSimulationReport {
     pub request_content_hash: String,
     pub seed: u64,
     pub iterations: u32,
+    pub release_semantics: StageReleaseSemantics,
+    /// The v0 contract cannot overlap a producer attempt with its direct
+    /// consumer: release occurs only after terminal output bytes are observed.
+    pub producer_consumer_overlap_ms: SimulationRange,
     pub latency_ms: Option<SimulationRange>,
     pub cost_microunits: Option<SimulationRange>,
     pub total_tokens: Option<SimulationRange>,
@@ -343,6 +348,12 @@ pub fn simulate_execution_topology(
         request_content_hash,
         seed: request.seed,
         iterations: request.iterations,
+        release_semantics: request.release_semantics,
+        producer_consumer_overlap_ms: SimulationRange {
+            minimum: 0,
+            p50: 0,
+            maximum: 0,
+        },
         latency_ms: summarize(&latency_samples),
         cost_microunits: summarize(&cost_samples),
         total_tokens: summarize(&token_samples),
@@ -396,16 +407,6 @@ fn validate_request(request: &GraphSimulationRequest) -> Vec<SimulationFinding> 
             "retry_attempts_out_of_bounds",
             "$.retry_policy.maximum_attempts",
             "maximum_attempts must be between 1 and 100",
-        ));
-    }
-    if request
-        .streaming_overlap_basis_points
-        .is_some_and(|value| value > 10_000)
-    {
-        findings.push(finding(
-            "invalid_streaming_overlap",
-            "$.streaming_overlap_basis_points",
-            "basis points must not exceed 10000",
         ));
     }
     for (resource, capacity) in &request.resource_capacities {
@@ -598,13 +599,6 @@ fn resolve_calibrations(
                     node_id: node.node_id.clone(),
                     metric: "token_envelope".to_owned(),
                     reason: "input and output token ranges are both required".to_owned(),
-                });
-            }
-            if node.delivery == crate::execution_topology::DeliveryMode::Streaming {
-                unknowns.insert(SimulationUnknown {
-                    node_id: node.node_id.clone(),
-                    metric: "streaming_partial_release".to_owned(),
-                    reason: "v0 conservatively schedules streaming nodes as barriers; overlap input is recorded but does not claim partial-release precision".to_owned(),
                 });
             }
             if node
@@ -956,7 +950,7 @@ mod tests {
             max_parallelism: 2_000,
             resource_capacities: BTreeMap::new(),
             fan_in_penalty_ms_per_input: 0,
-            streaming_overlap_basis_points: Some(0),
+            release_semantics: StageReleaseSemantics::TerminalArtifactStagePipeliningV0,
             retry_policy: RetryPolicy {
                 maximum_attempts: 3,
             },
@@ -1015,6 +1009,22 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(before, execution_topology_content_hash(&topology).unwrap());
         assert_eq!(first.iterations, 20);
+        assert_eq!(
+            first.release_semantics,
+            StageReleaseSemantics::TerminalArtifactStagePipeliningV0
+        );
+        assert_eq!(
+            first.producer_consumer_overlap_ms,
+            SimulationRange {
+                minimum: 0,
+                p50: 0,
+                maximum: 0,
+            }
+        );
+        assert!(!first
+            .unknowns
+            .iter()
+            .any(|unknown| unknown.metric == "terminal_artifact_stage_release_timing"));
         assert_eq!(first.routing_proposal.review_status, "unreviewed");
         assert!(!first.routing_proposal.decisions.is_empty());
     }

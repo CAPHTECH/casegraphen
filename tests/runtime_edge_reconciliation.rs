@@ -207,6 +207,63 @@ fn canonical_expectation_and_valid_fanout_reduce_prove_every_edge() {
 }
 
 #[test]
+fn non_utf8_binary_bytes_are_content_addressed_and_prove_the_edge() {
+    let topology = topology();
+    let expectation = derive_runtime_graph_expectation(&topology).unwrap();
+    let bytes = (0_u8..=255).cycle().take(65_536).collect::<Vec<_>>();
+    assert!(std::str::from_utf8(&bytes).is_err());
+    let artifact_id = format!("artifact:sha256-{:x}", Sha256::digest(&bytes));
+    let observation = observe_runtime_artifact(artifact_id.clone(), &bytes).unwrap();
+
+    let mut source_a = report(
+        &expectation,
+        "source-a",
+        "attempt:binary-source",
+        artifact_id.clone(),
+    );
+    let (source_b_id, source_b_observation) = artifact("source-b-result");
+    let source_b = report(
+        &expectation,
+        "source-b",
+        "attempt:binary-source-b",
+        source_b_id.clone(),
+    );
+    let (reduce_id, reduce_observation) = artifact("binary-reduce-result");
+    let mut reduce = report(&expectation, "reduce", "attempt:binary-reduce", reduce_id);
+    reduce.input_artifact_ids = vec![artifact_id.clone(), source_b_id];
+    let (fanout_id, fanout_observation) = artifact("binary-fanout-result");
+    let mut fanout = report(
+        &expectation,
+        "fanout-target",
+        "attempt:binary-fanout",
+        fanout_id,
+    );
+    fanout.input_artifact_ids = vec![artifact_id.clone()];
+    source_a.output_artifact_ids = vec![artifact_id.clone()];
+
+    let result = reconcile_runtime_reports(
+        &expectation,
+        &[source_a, source_b, reduce, fanout],
+        &[
+            observation,
+            source_b_observation,
+            reduce_observation,
+            fanout_observation,
+        ],
+    );
+    assert!(result.complete);
+    let binary_proofs = result
+        .edge_proofs
+        .iter()
+        .filter(|proof| proof.artifact_id == artifact_id)
+        .collect::<Vec<_>>();
+    assert_eq!(binary_proofs.len(), 2);
+    assert!(binary_proofs
+        .iter()
+        .all(|proof| proof.artifact_byte_length == 65_536));
+}
+
+#[test]
 fn strict_expectation_example_round_trips_and_canonical_projection_owns_edges() {
     let example = include_str!("../schemas/experimental/runtime.graph_expectation.v0.example.json");
     let parsed: RuntimeGraphExpectation = serde_json::from_str(example).unwrap();

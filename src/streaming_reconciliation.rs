@@ -23,6 +23,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const STREAM_EVENT_SCHEMA: &str = "casegraphen.experimental.runtime.stream_event.v0";
 
+/// The only release semantics implemented by v0. Despite the compatibility
+/// term `streaming`, no chunk can release a consumer while its producer is
+/// running; release requires the canonical terminal producer and final,
+/// byte-observed artifact.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageReleaseSemantics {
+    TerminalArtifactStagePipeliningV0,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StreamEventPayload {
@@ -71,7 +81,8 @@ pub struct StreamFinding {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct EarlyReleaseProposal {
+pub struct StageReleaseProposal {
+    pub release_semantics: StageReleaseSemantics,
     pub edge_id: String,
     pub from_node_id: String,
     pub to_node_id: String,
@@ -247,10 +258,11 @@ pub fn derive_streaming_resource_permits(
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StreamingReconciliation {
+    pub release_semantics: StageReleaseSemantics,
     pub status: StreamRunStatus,
     pub logical_events: Vec<RuntimeStreamEvent>,
     pub duplicate_event_count: u64,
-    pub early_release_proposals: Vec<EarlyReleaseProposal>,
+    pub stage_release_proposals: Vec<StageReleaseProposal>,
     pub unfinished_node_ids: Vec<String>,
     pub final_completeness: RuntimeCompleteness,
     pub findings: Vec<StreamFinding>,
@@ -528,9 +540,9 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             && bytes_observed;
         if !handoff_contract_proven {
             findings.push(finding(
-                "unproven_stream_handoff",
+                "unproven_stage_handoff",
                 Some(event.event_id.clone()),
-                "early release requires the canonical terminal producer, final artifact, topology edge binding, and observed content bytes",
+                "terminal-artifact stage release requires the canonical terminal producer, final artifact, topology edge binding, and observed content bytes",
             ));
         }
         let streams = nodes
@@ -568,7 +580,8 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             && acceptance_satisfied
             && handoff_contract_proven
         {
-            releases.push(EarlyReleaseProposal {
+            releases.push(StageReleaseProposal {
+                release_semantics: StageReleaseSemantics::TerminalArtifactStagePipeliningV0,
                 edge_id: edge.edge_id.clone(),
                 from_node_id: edge.from.clone(),
                 to_node_id: edge.to.clone(),
@@ -588,9 +601,9 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             });
         } else {
             findings.push(finding(
-                "early_release_blocked",
+                "stage_release_blocked",
                 Some(event.event_id.clone()),
-                "streaming, resource, or acceptance contract blocks release",
+                "terminal-artifact stage-pipelining, resource, or acceptance contract blocks release",
             ));
         }
     }
@@ -629,10 +642,11 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
     findings
         .sort_by(|a, b| (&a.code, &a.event_id, &a.detail).cmp(&(&b.code, &b.event_id, &b.detail)));
     StreamingReconciliation {
+        release_semantics: StageReleaseSemantics::TerminalArtifactStagePipeliningV0,
         status,
         logical_events,
         duplicate_event_count,
-        early_release_proposals: releases,
+        stage_release_proposals: releases,
         unfinished_node_ids,
         final_completeness,
         findings,

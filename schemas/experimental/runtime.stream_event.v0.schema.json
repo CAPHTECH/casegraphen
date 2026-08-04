@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "casegraphen.experimental.runtime.stream_event.v0",
+  "title": "Terminal-artifact stage-pipelining observation v0",
+  "description": "Compatibility streaming events. Artifact chunks are ordered observations only; v0 can release a downstream stage only after the canonical producer attempt is terminal and the final artifact bytes are observed.",
   "type": "object",
   "required": ["schema", "event_id", "runtime_graph_id", "runtime_graph_content_hash", "node_id", "attempt_id", "sequence", "logical_order", "observed_at", "kind"],
   "properties": {

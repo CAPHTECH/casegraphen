@@ -1,4 +1,4 @@
-# ADR 0020: Streaming Events Have Logical Order, Not Acceptance Authority
+# ADR 0024: Streaming Events Have Logical Order, Not Acceptance Authority
 
 ## Status
 
@@ -13,6 +13,15 @@ Applying completion order directly to the CaseGraphen log would make replay,
 readiness, and attribution vary with network timing.
 
 ## Decision
+
+The public v0 workflow name `streaming` is retained for compatibility, but its
+normative release semantic is `terminal_artifact_stage_pipelining_v0`.
+Artifact-chunk events are ordered observations only. A downstream proposal is
+not emitted until the producer's canonical attempt is terminal and its final
+artifact bytes are observed. This overlaps graph stages after producer
+completion; it does not overlap a running producer with a chunk-consuming
+downstream node. Reconciliation results and each release proposal expose that
+semantic explicitly.
 
 Streaming remains outside the core scheduler boundary. Runtime events carry a
 topology id and content hash, node and attempt ids, an attempt-local sequence,
@@ -75,6 +84,19 @@ event set and terminal reports.
 - The core gains no message bus, daemon, scheduler, retry engine, or model call.
 - Logical-order assignment is a deployment protocol responsibility. A producer
   that equivocates on event identity is refused rather than guessed around.
+- Product claims, Skills, and pilots must use “terminal-artifact stage
+  pipelining” for v0. The shorter “streaming” name is only a compatibility
+  identifier.
+
+## Incremental streaming boundary
+
+True incremental streaming requires a new versioned contract rather than a
+reinterpretation of v0. It must define chunk-byte observation and assembly,
+schema validity for prefixes, backpressure, consumer checkpoint/restart,
+producer retry and supersession after partial consumption, resource lifetime,
+deduplication, and completeness for an edge whose consumer begins before the
+producer terminates. Until those contracts and crash/replay pilots exist,
+`artifact_chunk` never grants chunk-consumption authority.
 
 ## Rejected alternatives
 

@@ -9,10 +9,10 @@
         "artifact:sha256-f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad"
       ],
       "measured_latency_ms": {
-        "inspect_a": 21,
-        "inspect_b_failed": 21,
+        "inspect_a": 35,
+        "inspect_b_failed": 35,
         "inspect_b_retry": 16,
-        "reduce": 10
+        "reduce": 12
       },
       "reported_cost": {
         "amount": 0.0027,
@@ -42,7 +42,7 @@
         "a4b9fabb5d1885352f0259e8fb4c7264abe137d2"
       ],
       "measured_latency_ms": [
-        62,
+        53,
         57
       ],
       "native_report_count": 2,
@@ -72,7 +72,7 @@
       "resource_reconciliation_complete": true,
       "runtime": "sqlite3-transactional-worker",
       "runtime_version": "3.50.4",
-      "topology_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9",
+      "topology_content_hash": "d33490047cfde194d497d7b17d8242fd17ef9e0b42f7e37af81b5146d8d87b75",
       "trust": "runtime_declared_untrusted"
     },
     {
@@ -86,13 +86,13 @@
         3,
         4
       ],
-      "measured_latency_ms": 9,
+      "measured_latency_ms": 8,
       "output_artifact_id": "artifact:sha256-80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
       "reservation_id": "reservation:async-stream:1",
       "resource_reconciliation_complete": true,
       "runtime": "asyncio-event-loop",
       "runtime_version": "3.11.14",
-      "topology_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5",
+      "topology_content_hash": "a8a46ba62ab0e9cf1f8fa04767128cda438ac5beaa35aa6f331d9b52720a1e4f",
       "trust": "runtime_declared_untrusted"
     }
   ],
@@ -112,8 +112,8 @@
   "base_revision_id": "revision:pilot-observed",
   "execution_provenance": {
     "git_version": "git version 2.50.1 (Apple Git-155)",
-    "harness_content_hash": "354be7f53de48667e44f91911668b308f830643443cc00804273e852a99318e1",
-    "operational_host_binary_content_hash": "6c68cb4b7744b517c7b57baf201fb2c436cdc8d1e9e2f1feeaa4c7d6b9231ac1",
+    "harness_content_hash": "af7688c408f4d35b7c930c795eec859dab8a8c7f78e9a1b5596dccf683e19e04",
+    "operational_host_binary_content_hash": "6c8406d8f304d09969a36abbe1ddf261be8bcd7291673d2a359f43f6215b96a3",
     "python_version": "3.11.14",
     "topology_source_hashes": {
       "fanout_reduce": "e8fb4eaf714fef1c7fc849f67398b3bbdf89c066eaff5f10bcc8478e3e9d30fe",
@@ -181,12 +181,13 @@
       "runtime_claim_accepted": false,
       "schema": "casegraphen.experimental.topology.redesign_proposal.v0",
       "source_runtime_finding_codes": [
+        "edge_terminal_attempt_missing",
         "output_schema_mismatch"
       ],
       "source_topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
       "source_topology_id": "topology:pilot-fanout-reduce"
     },
-    "proposal_id": "proposal:sha256-b1b8d038b9259dd1376f98274a9d3089a767e726544128239650c28600b74fdf",
+    "proposal_id": "proposal:sha256-42002e8c99a8ac48c76dd577dffbba0d38c70ac87b763d683e2f08652192844e",
     "review_status": "unreviewed"
   },
   "scenarios": {
@@ -200,31 +201,29 @@
           "sha256": "80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3aasync-stream:5",
       "completeness": {
         "actual_report_count": 1,
         "complete": true,
+        "dataflow_complete": true,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [],
+        "expected_edge_count": 0,
         "expected_node_count": 1,
         "failed_node_count": 0,
         "findings": [],
+        "missing_edge_count": 0,
         "missing_report_count": 0,
+        "node_complete": true,
+        "proven_edge_count": 0,
+        "terminal_attempt_ids": {
+          "node:async-stream": "attempt:async-stream:1"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "needs_review",
       "ingest_findings": [],
       "proposals": [
-        {
-          "kind": "morphism",
-          "payload": {
-            "morphism_type": "runtime_reconciliation",
-            "runtime_claim_accepted": false,
-            "runtime_graph_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5"
-          },
-          "proposal_id": "proposal:sha256-553e2b0ec0161f2fec2a10e97417cb5310e468e82ae15bad34abf75240584fd2",
-          "review_status": "unreviewed",
-          "source_boundary": "external_runtime_untrusted"
-        },
         {
           "kind": "evidence",
           "payload": {
@@ -234,6 +233,17 @@
             "runtime_claim_accepted": false
           },
           "proposal_id": "proposal:sha256-73e984aa0b807f00e6194aae63169d942f96b56a95b2246ae9c53c9dd8a88be9",
+          "review_status": "unreviewed",
+          "source_boundary": "external_runtime_untrusted"
+        },
+        {
+          "kind": "morphism",
+          "payload": {
+            "morphism_type": "runtime_reconciliation",
+            "runtime_claim_accepted": false,
+            "runtime_graph_content_hash": "a8a46ba62ab0e9cf1f8fa04767128cda438ac5beaa35aa6f331d9b52720a1e4f"
+          },
+          "proposal_id": "proposal:sha256-d45a6dade51d4b8fb44f343f170d3c343c632c91d3c453b7f148bc5244925c34",
           "review_status": "unreviewed",
           "source_boundary": "external_runtime_untrusted"
         }
@@ -255,7 +265,7 @@
         }
       ],
       "schema": "casegraphen.experimental.runtime.integration_report.v0",
-      "topology_content_hash": "63c878f01be30f3c6eff27421fa74330be2587a0f81667c623cde1b6d1fe7ed5",
+      "topology_content_hash": "a8a46ba62ab0e9cf1f8fa04767128cda438ac5beaa35aa6f331d9b52720a1e4f",
       "topology_id": "topology:pilot-async-stream"
     },
     "fanout_reduce_complete": {
@@ -280,15 +290,55 @@
           "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3aasync-stream:5",
       "completeness": {
         "actual_report_count": 4,
         "complete": true,
+        "dataflow_complete": true,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [
+          {
+            "artifact_byte_length": 20,
+            "artifact_content_sha256": "2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+            "artifact_id": "artifact:sha256-2d29f205035f82ebfb45e2ddedc6ab782e00b6c37d23d8694a08a38a8220b4e2",
+            "delivery": "streaming",
+            "edge_id": "edge:a-reduce",
+            "from_node_id": "node:inspect-a",
+            "input_name": "findings",
+            "output_name": "finding",
+            "schema_id": "schema:pilot-finding",
+            "source_attempt_id": "attempt:inspect-a:1",
+            "target_attempt_id": "attempt:reduce:1",
+            "to_node_id": "node:reduce"
+          },
+          {
+            "artifact_byte_length": 19,
+            "artifact_content_sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+            "artifact_id": "artifact:sha256-c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5",
+            "delivery": "streaming",
+            "edge_id": "edge:b-reduce",
+            "from_node_id": "node:inspect-b",
+            "input_name": "findings",
+            "output_name": "finding",
+            "schema_id": "schema:pilot-finding",
+            "source_attempt_id": "attempt:inspect-b:2",
+            "target_attempt_id": "attempt:reduce:1",
+            "to_node_id": "node:reduce"
+          }
+        ],
+        "expected_edge_count": 2,
         "expected_node_count": 3,
         "failed_node_count": 0,
         "findings": [],
+        "missing_edge_count": 0,
         "missing_report_count": 0,
+        "node_complete": true,
+        "proven_edge_count": 2,
+        "terminal_attempt_ids": {
+          "node:inspect-a": "attempt:inspect-a:1",
+          "node:inspect-b": "attempt:inspect-b:2",
+          "node:reduce": "attempt:reduce:1"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "needs_review",
@@ -365,14 +415,29 @@
           "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3aasync-stream:5",
       "completeness": {
         "actual_report_count": 3,
         "complete": false,
+        "dataflow_complete": false,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [],
+        "expected_edge_count": 2,
         "expected_node_count": 3,
         "failed_node_count": 0,
         "findings": [
+          {
+            "attempt_id": null,
+            "code": "edge_terminal_attempt_missing",
+            "detail": "edge edge:a-reduce lacks a canonical source or target terminal attempt",
+            "node_id": "node:reduce"
+          },
+          {
+            "attempt_id": null,
+            "code": "edge_terminal_attempt_missing",
+            "detail": "edge edge:b-reduce lacks a canonical source or target terminal attempt",
+            "node_id": "node:reduce"
+          },
           {
             "attempt_id": null,
             "code": "missing_report",
@@ -380,7 +445,14 @@
             "node_id": "node:reduce"
           }
         ],
+        "missing_edge_count": 2,
         "missing_report_count": 1,
+        "node_complete": false,
+        "proven_edge_count": 0,
+        "terminal_attempt_ids": {
+          "node:inspect-a": "attempt:inspect-a:1",
+          "node:inspect-b": "attempt:inspect-b:2"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "incomplete_runtime_reports",
@@ -476,14 +548,29 @@
           "sha256": "c91c4d603f69b900950784b7d57a2c6be63a1c839f60a8ef6126696c07edf1d5"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3aasync-stream:5",
       "completeness": {
         "actual_report_count": 4,
         "complete": false,
+        "dataflow_complete": false,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [],
+        "expected_edge_count": 2,
         "expected_node_count": 3,
         "failed_node_count": 1,
         "findings": [
+          {
+            "attempt_id": null,
+            "code": "edge_terminal_attempt_missing",
+            "detail": "edge edge:a-reduce lacks a canonical source or target terminal attempt",
+            "node_id": "node:reduce"
+          },
+          {
+            "attempt_id": null,
+            "code": "edge_terminal_attempt_missing",
+            "detail": "edge edge:b-reduce lacks a canonical source or target terminal attempt",
+            "node_id": "node:reduce"
+          },
           {
             "attempt_id": "attempt:reduce:1",
             "code": "output_schema_mismatch",
@@ -491,7 +578,14 @@
             "node_id": "node:reduce"
           }
         ],
+        "missing_edge_count": 2,
         "missing_report_count": 0,
+        "node_complete": false,
+        "proven_edge_count": 0,
+        "terminal_attempt_ids": {
+          "node:inspect-a": "attempt:inspect-a:1",
+          "node:inspect-b": "attempt:inspect-b:2"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "incomplete_runtime_reports",
@@ -514,15 +608,24 @@
           "sha256": "db2667e50dc4b8605a24f70ccc4b5a56620de87ff5a7a5c7c36d0536bb9b4f54"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3asqlite-queue:3",
       "completeness": {
         "actual_report_count": 1,
         "complete": true,
+        "dataflow_complete": true,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [],
+        "expected_edge_count": 0,
         "expected_node_count": 1,
         "failed_node_count": 0,
         "findings": [],
+        "missing_edge_count": 0,
         "missing_report_count": 0,
+        "node_complete": true,
+        "proven_edge_count": 0,
+        "terminal_attempt_ids": {
+          "node:sqlite-queue": "attempt:sqlite-queue:1"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "needs_review",
@@ -533,9 +636,9 @@
           "payload": {
             "morphism_type": "runtime_reconciliation",
             "runtime_claim_accepted": false,
-            "runtime_graph_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9"
+            "runtime_graph_content_hash": "d33490047cfde194d497d7b17d8242fd17ef9e0b42f7e37af81b5146d8d87b75"
           },
-          "proposal_id": "proposal:sha256-2489cb551879dad73bb0dc57c5c1a9de223dce525e27cd5b1b12f1d944b78496",
+          "proposal_id": "proposal:sha256-b785dc627764775d8719fdbbaf776b0e4a124dc0e4caf81ab9a0cdc949583eef",
           "review_status": "unreviewed",
           "source_boundary": "external_runtime_untrusted"
         },
@@ -569,7 +672,7 @@
         }
       ],
       "schema": "casegraphen.experimental.runtime.integration_report.v0",
-      "topology_content_hash": "1f47acddf7e0b6c4b7d184339f60699ff92da254bd721b1b41794c5e326363e9",
+      "topology_content_hash": "d33490047cfde194d497d7b17d8242fd17ef9e0b42f7e37af81b5146d8d87b75",
       "topology_id": "topology:pilot-sqlite-queue"
     },
     "worktree_isolation": {
@@ -588,15 +691,25 @@
           "sha256": "906a442289fc498618f5ed44d26eb3dbd16006baabbb6c90ff7f03a07decf370"
         }
       ],
-      "base_revision_id": "revision:pilot-observed",
+      "base_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology~3aasync-stream:5",
       "completeness": {
         "actual_report_count": 2,
         "complete": true,
+        "dataflow_complete": true,
         "duplicate_attempt_count": 0,
+        "edge_proofs": [],
+        "expected_edge_count": 0,
         "expected_node_count": 2,
         "failed_node_count": 0,
         "findings": [],
+        "missing_edge_count": 0,
         "missing_report_count": 0,
+        "node_complete": true,
+        "proven_edge_count": 0,
+        "terminal_attempt_ids": {
+          "node:edit-a": "attempt:edit-a:1",
+          "node:edit-b": "attempt:edit-b:1"
+        },
         "unaccounted_artifact_count": 0
       },
       "halt": "resource_reconciliation_incomplete",

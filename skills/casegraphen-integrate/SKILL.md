@@ -41,7 +41,10 @@ reservations, dispositions, and rate capacities are host-canonical allocator
 state and must never be supplied by the caller. The MCP bearer token authorizes host
 access; the audit context is attribution only and is never a CaseGraphen
 operation gate. Streaming re-derives canonical readiness and resource permits
-for the exact current revision.
+for the exact current revision. In v0, `streaming` is a compatibility name for
+`terminal_artifact_stage_pipelining_v0`: a proposal requires the canonical
+terminal producer and final byte-observed artifact. Never claim chunk-level
+producer/consumer overlap from this result.
 
 Use `compile_deployment_bundle` only for an unreviewed proposal. A deployment
 that will reserve resources must first be accepted by the dedicated topology
@@ -50,6 +53,10 @@ only the case-space and claim identities plus the observed accepted revision;
 never construct a compilation mode or deployment authority. Reservation must
 name the resulting content-addressed bundle and retain the allocator-journal
 review binding in the resource expectation bundle.
+The persisted bundle must include canonical `compiler.inputs.json`. The host
+recompiles those untrusted retained inputs and compares every output byte
+before deriving deployment authority; hash-consistent hand-built artifacts are
+not compiler provenance.
 
 ## Non-negotiable boundary
 
@@ -65,6 +72,14 @@ review binding in the resource expectation bundle.
   need not have been recorded by the same ledger morphism or revision. Strong
   reconciliation must replay the current case space so retained proofs are
   invalidated by review reopen/reject or capability invalidation.
+- For the shipped shell-worker workflow, retain `worker.report.json`,
+  `execution.trace.json`, `stdout`, and `stderr`, then derive the producer with
+  `derive_native_cli_run_producer_proof`. After an independent canonical CLI
+  review, derive the verifier with
+  `derive_native_cli_review_verifier_proof`. A normal review is already a
+  content-bound review execution record; never fabricate a verifier
+  `ExecutionTrace`. See
+  [the verification-lineage guide](../../docs/guides/verification-lineage.md).
 - Never turn an ingest report into accepted evidence or apply its morphism.
 - Never infer retry lineage from line order; only explicit
   `retry_of_attempt_id` is authoritative for reconciliation.

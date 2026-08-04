@@ -10,5 +10,18 @@
   "reviewed_claim_cell_id": null,
   "accepted_review_id": null,
   "accepted_review_revision_id": null,
-  "artifacts": []
+  "artifacts": [
+    {"path":"budget.policies.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"case.mapping.genesis.proposal.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"compiler.inputs.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"compiler.report.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"execution.plan.proposal.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"execution.topology.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"expansion.policies.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"graph.analysis.report.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"resource.manifest.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"runtime.deployment.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"topology.content-hash","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0},
+    {"path":"verification.policies.json","content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","byte_length":0}
+  ]
 }

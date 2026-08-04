@@ -183,7 +183,7 @@ fn simulation_request(
         max_parallelism: 4,
         resource_capacities: BTreeMap::new(),
         fan_in_penalty_ms_per_input: 0,
-        streaming_overlap_basis_points: None,
+        release_semantics: casegraphen::streaming_reconciliation::StageReleaseSemantics::TerminalArtifactStagePipeliningV0,
         retry_policy: RetryPolicy {
             maximum_attempts: 1,
         },

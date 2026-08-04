@@ -7,7 +7,7 @@
   "max_parallelism": 16,
   "resource_capacities": {"rate_limit_group:review-api": 4},
   "fan_in_penalty_ms_per_input": 2,
-  "streaming_overlap_basis_points": 2500,
+  "release_semantics": "terminal_artifact_stage_pipelining_v0",
   "retry_policy": {"maximum_attempts": 3},
   "expansion_bounds": {},
   "budgets": {

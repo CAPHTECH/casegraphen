@@ -69,6 +69,17 @@ Compilation still emits an unreviewed execution plan/deployment bundle. This
 ADR grants no runtime dispatch, evidence acceptance, or topology mutation
 authority.
 
+A persisted bundle gains deployment authority only after semantic provenance
+verification. Every bundle retains `compiler.inputs.json`, containing the
+canonical compiler target, mapping, policy documents, and the exact reviewed
+binding used for lowering. The verifier treats that record as untrusted,
+reconstructs the compiler request internally, deterministically recompiles the
+reviewed topology, and requires equality of the manifest plus every artifact
+byte. Hash-consistent substitutions of a plan, runtime deployment, resource
+manifest, policy set, compiler report, analysis, mapping, topology hash, or
+retained input are therefore refused. Deserializing retained inputs never
+constructs ledger authority outside this verification boundary.
+
 ## Consequences
 
 - Old target-ID-only or topology-only reviews cannot authorize reviewed
@@ -80,6 +91,9 @@ authority.
   such a change requires schema/example/test migration and a new review.
 - Review morphisms stay compact while the actual compiler policy documents
   remain substitution-resistant.
+- Bundle verification costs one deterministic recompile. This deliberate
+  authority-boundary cost prevents an artifact writer from manufacturing a
+  self-consistent bundle that the compiler never emitted.
 
 ## Rejected alternatives
 

@@ -21,8 +21,11 @@ still change incompatibly before promotion, but any such change must update its
 Rust owner, examples, references, and inventory atomically.
 
 - `runtime.stream_event.v0.schema.json` defines stable attempt/sequence and
-  logical-order observations for idempotent external streaming reconciliation.
-  Its early-release outputs are proposals, never accepted log entries.
+  logical-order observations for idempotent external reconciliation. Its v0
+  release semantic is `terminal_artifact_stage_pipelining_v0`: chunks are
+  observations, and only a canonical terminal producer plus its final
+  byte-observed artifact can release the next stage. It is not incremental
+  producer/consumer overlap. Outputs remain proposals, never accepted entries.
 
 - `verification.policy.v0.schema.json` separates ledger-verifiable
   constraints, runtime attestations, and properties that are not observable by

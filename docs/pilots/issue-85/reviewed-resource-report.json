@@ -1,0 +1,26 @@
+{
+  "accepted": false,
+  "accepted_review_revision_id": "revision:execution-topology-review:evidence~3aexecution-topology:3",
+  "failure_disposition": "review_proposals_only",
+  "halt": "needs_review",
+  "passed": true,
+  "proposal_count": 2,
+  "reconciliation_complete": true,
+  "reviewed_deployment_binding": {
+    "accepted_review_id": "review:morphism-review-execution-topology-evidence-execution-topology-accept-revision-execution-topology-review-evidence-3aexecution-topology-3",
+    "accepted_review_revision": "revision:execution-topology-review:evidence~3aexecution-topology:3",
+    "attempt_id": "attempt:e2e-review-a:1",
+    "case_space_id": "case_space:native-case-management-contract",
+    "claim_cell_id": "evidence:execution-topology",
+    "deployment_bundle_hash": "83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+    "node_id": "node:review-a",
+    "policy_manifest_hash": "0fe5926b96d5dd4dd0377d0c8bfaad6cc4195865be05414361decee9829854b4",
+    "resource_declaration_hash": "4333cf94938cbbf73ae47c34b62a32c4c5829911bc00af37da3194c44c18a6a8",
+    "reviewed_topology_hash": "29fbcfe68deb20e180f13a2c9444a2fddcde57646e8c880d90fbd0a7c53409bb",
+    "schema": "casegraphen.experimental.resource.reviewed_deployment_binding.v0",
+    "schema_version": 0
+  },
+  "reviewed_deployment_hash": "83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+  "schema": "casegraphen.experimental.reviewed_resource_pilot.report.v0",
+  "topology_content_hash": "29fbcfe68deb20e180f13a2c9444a2fddcde57646e8c880d90fbd0a7c53409bb"
+}

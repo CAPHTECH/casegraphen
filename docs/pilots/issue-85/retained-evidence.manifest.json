@@ -1,0 +1,61 @@
+{
+  "accepted": false,
+  "files": [
+    {
+      "byte_length": 5857,
+      "content_hash": "sha256:1d4e19562edda78d91519ce0a1798f59a7572f2e5f04711af03e66119df1a7d8",
+      "path": "durability-report.json"
+    },
+    {
+      "byte_length": 267,
+      "content_hash": "sha256:e92483552e2b1e7f0433a06ffb9a6619cee2fdf87e0b0824ec65d55ecbaf711b",
+      "path": "promotion-report.json"
+    },
+    {
+      "byte_length": 65536,
+      "content_hash": "sha256:7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2",
+      "path": "canonical-binary-artifact.bin"
+    },
+    {
+      "byte_length": 1018,
+      "content_hash": "sha256:00c99b6f3ae104c01ffe39e17aff70f83303432157127ccfe24a59065c39e94b",
+      "path": "canonical-canonical-runtime-report.json"
+    },
+    {
+      "byte_length": 535954,
+      "content_hash": "sha256:2818e1605fbf6a463d0e0644ce8562f1e3d749e63d020498c05deaca40e3facc",
+      "path": "canonical-execution.topology.json"
+    },
+    {
+      "byte_length": 322391,
+      "content_hash": "sha256:7e2dd7c456ddd53b1d0e8bda77710b088b6bd47e9e19e03cbc342f6adf753381",
+      "path": "canonical-runtime.completeness.json"
+    },
+    {
+      "byte_length": 209933,
+      "content_hash": "sha256:915f17ee4959211c1cbcd67f90b6ad5ce47101667b446a1b6188fbe53d846d9e",
+      "path": "canonical-runtime.expectation.json"
+    },
+    {
+      "byte_length": 940056,
+      "content_hash": "sha256:32a00c166a10a06870ba08fdf8a55fc51f04bc99e03f2fbcdb9f8587deba9632",
+      "path": "canonical-runtime.reports.json"
+    },
+    {
+      "byte_length": 894,
+      "content_hash": "sha256:924bc528c8a96cf5a23ca5eaec7a64e0244ff9a309feb8092502d3295c0a5c88",
+      "path": "allocator-durability-report.json"
+    },
+    {
+      "byte_length": 1554,
+      "content_hash": "sha256:9ec80477ba367fae00d0de784efeacacbaff33acf09235aee8c20e39f444391a",
+      "path": "reviewed-resource-report.json"
+    },
+    {
+      "byte_length": 275,
+      "content_hash": "sha256:33de9e60a68e62decfff2dca7d2335af20f914112432da2ca4cbf43873c44b8f",
+      "path": "remote.journal.jsonl"
+    }
+  ],
+  "schema": "casegraphen.experimental.runtime_durability_pilot.evidence_manifest.v0"
+}

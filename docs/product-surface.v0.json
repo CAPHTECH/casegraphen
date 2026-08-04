@@ -12,7 +12,7 @@
     {"workflow":"resource_release","entry_point":"operational_mcp_host","tool":"release_resources","owner":"src/resource_allocator.rs","skills":["casegraphen-integrate"]},
     {"workflow":"resource_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
     {"workflow":"expansion","entry_point":"operational_mcp_host","tool":"evaluate_expansion_round","owner":"src/dynamic_expansion.rs","skills":["casegraphen-design","casegraphen-audit"]},
-    {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","semantics":"terminal_artifact_stage_pipelining_v0","compatibility_name":"streaming","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
     {"workflow":"redesign","entry_point":"operational_mcp_host","tool":"propose_topology_redesign","owner":"src/topology_redesign.rs","skills":["casegraphen-audit"]}
   ],
   "invariants": {
@@ -25,6 +25,7 @@
     "acceptance_ledger_mutations_require_canonical_operation_gates": true,
     "resource_allocator_state_is_host_canonical": true,
     "operational_resource_reservations_require_reviewed_deployment_authority": true,
-    "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle": true
+    "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle": true,
+    "streaming_v0_requires_terminal_producer_and_final_artifact": true
   }
 }

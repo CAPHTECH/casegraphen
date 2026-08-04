@@ -19,8 +19,9 @@ use casegraphen::{
     },
     streaming_reconciliation::{
         derive_streaming_acceptance, derive_streaming_resource_permits, reconcile_stream,
-        RuntimeStreamEvent, StreamEventPayload, StreamRunStatus, StreamingAcceptance,
-        StreamingReconciliationInput, StreamingResourcePermits, STREAM_EVENT_SCHEMA,
+        RuntimeStreamEvent, StageReleaseSemantics, StreamEventPayload, StreamRunStatus,
+        StreamingAcceptance, StreamingReconciliationInput, StreamingResourcePermits,
+        STREAM_EVENT_SCHEMA,
     },
 };
 use sha2::{Digest, Sha256};
@@ -251,10 +252,10 @@ fn duplicate_delayed_and_out_of_order_delivery_is_deterministic() {
     let left = reconcile(&[second.clone(), first.clone(), first.clone()]);
     let right = reconcile(&[first, second]);
     assert_eq!(left.logical_events, right.logical_events);
-    assert_eq!(left.early_release_proposals, right.early_release_proposals);
+    assert_eq!(left.stage_release_proposals, right.stage_release_proposals);
     assert_eq!(left.duplicate_event_count, 1);
     assert!(left
-        .early_release_proposals
+        .stage_release_proposals
         .iter()
         .all(|proposal| !proposal.accepted));
 }
@@ -292,12 +293,20 @@ fn a_slow_sibling_allows_safe_progress_without_hiding_incompleteness() {
         run_closed: false,
     });
     assert_eq!(result.status, StreamRunStatus::PartiallyProgressing);
-    assert_eq!(result.early_release_proposals.len(), 1);
     assert_eq!(
-        result.early_release_proposals[0].target_attempt_id,
+        result.release_semantics,
+        StageReleaseSemantics::TerminalArtifactStagePipeliningV0
+    );
+    assert_eq!(result.stage_release_proposals.len(), 1);
+    assert_eq!(
+        result.stage_release_proposals[0].release_semantics,
+        StageReleaseSemantics::TerminalArtifactStagePipeliningV0
+    );
+    assert_eq!(
+        result.stage_release_proposals[0].target_attempt_id,
         "attempt:node:reduce"
     );
-    let proposal = &result.early_release_proposals[0];
+    let proposal = &result.stage_release_proposals[0];
     assert_eq!(
         proposal.topology_content_hash,
         expectation.runtime_graph_content_hash
@@ -395,7 +404,7 @@ fn acceptance_and_resource_permits_cannot_be_replayed_at_a_new_revision() {
         acceptance: Some(&acceptance_at_a),
         run_closed: false,
     });
-    assert!(result.early_release_proposals.is_empty());
+    assert!(result.stage_release_proposals.is_empty());
     assert!(result
         .findings
         .iter()
@@ -403,7 +412,7 @@ fn acceptance_and_resource_permits_cannot_be_replayed_at_a_new_revision() {
     assert!(result
         .findings
         .iter()
-        .any(|finding| finding.code == "early_release_blocked"));
+        .any(|finding| finding.code == "stage_release_blocked"));
 }
 
 #[test]
@@ -462,11 +471,11 @@ fn acceptance_gate_or_missing_resource_blocks_early_release() {
         acceptance: None,
         run_closed: false,
     });
-    assert!(result.early_release_proposals.is_empty());
+    assert!(result.stage_release_proposals.is_empty());
     assert!(result
         .findings
         .iter()
-        .any(|finding| finding.code == "early_release_blocked"));
+        .any(|finding| finding.code == "stage_release_blocked"));
 }
 
 #[test]
@@ -528,7 +537,7 @@ fn topology_expectation_mismatch_blocks_release_even_when_event_joins_expectatio
         acceptance: None,
         run_closed: false,
     });
-    assert!(result.early_release_proposals.is_empty());
+    assert!(result.stage_release_proposals.is_empty());
     assert!(result
         .findings
         .iter()
@@ -599,5 +608,5 @@ fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
             result.findings
         );
     }
-    assert!(result.early_release_proposals.is_empty());
+    assert!(result.stage_release_proposals.is_empty());
 }

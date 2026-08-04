@@ -3,7 +3,7 @@
   "$id": "casegraphen.experimental.graph_simulation.request.v0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "schema_version", "topology_content_hash", "seed", "iterations", "max_parallelism", "resource_capacities", "fan_in_penalty_ms_per_input", "streaming_overlap_basis_points", "retry_policy", "expansion_bounds", "budgets", "calibrations", "routing_candidates"],
+  "required": ["schema", "schema_version", "topology_content_hash", "seed", "iterations", "max_parallelism", "resource_capacities", "fan_in_penalty_ms_per_input", "release_semantics", "retry_policy", "expansion_bounds", "budgets", "calibrations", "routing_candidates"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.graph_simulation.request.v0"},
     "schema_version": {"const": 0},
@@ -17,7 +17,7 @@
       "additionalProperties": {"type": "integer", "minimum": 1}
     },
     "fan_in_penalty_ms_per_input": {"type": "integer", "minimum": 0},
-    "streaming_overlap_basis_points": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+    "release_semantics": {"const": "terminal_artifact_stage_pipelining_v0"},
     "retry_policy": {
       "type": "object", "additionalProperties": false, "required": ["maximum_attempts"],
       "properties": {"maximum_attempts": {"type": "integer", "minimum": 1, "maximum": 100}}

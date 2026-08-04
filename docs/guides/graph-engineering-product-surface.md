@@ -35,6 +35,8 @@ binding, content hash, and ingested bytes. Only their conjunction is
 substituted/un-ingested handoffs, or unaccounted artifacts keep graph
 completeness false. Reconciliation never accepts runtime output. Expansion,
 simulation, streaming, and redesign likewise emit reports or unreviewed
-proposals only.
+proposals only. The v0 `streaming` workflow is specifically terminal-artifact
+stage pipelining: it can release a stage after its canonical producer finishes,
+but it does not authorize consumption of chunks from a running producer.
 
 MCP domain refusals are returned in `structuredContent.refusal` with `isError: true`. Authentication and malformed JSON-RPC are protocol errors. A repeated idempotency key replays the durable result; a crash with an ambiguous prior effect refuses instead of delegating twice.

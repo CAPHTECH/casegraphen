@@ -4,6 +4,7 @@
   "required_artifacts": [
     "budget.policies.json",
     "case.mapping.genesis.proposal.json",
+    "compiler.inputs.json",
     "compiler.report.json",
     "execution.plan.proposal.json",
     "execution.topology.json",

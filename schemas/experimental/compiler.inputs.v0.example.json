@@ -1,0 +1,20 @@
+{
+  "schema": "casegraphen.experimental.graph_compiler.inputs.v0",
+  "compiler_version": "casegraphen-graph-compiler/0",
+  "mode": {"kind": "proposal"},
+  "target": "generic_jsonl_v0",
+  "case_space_id": "space:example",
+  "base_revision_id": "revision:example",
+  "plan_id": "plan:example",
+  "node_plan_mappings": [
+    {
+      "node_id": "node:review",
+      "worker_binding_id": "binding:review",
+      "success_evidence_requirement_ids": [],
+      "allowed_transition_classes": []
+    }
+  ],
+  "verification_policies": {},
+  "budget_policies": {},
+  "expansion_policies": {}
+}
