@@ -103,15 +103,15 @@ jobs:
           tag="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["tag"])' "$record")"
           asset="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["asset_name"])' "$record")"
           cp "$package" "runtime-durability-publication/$asset"
-          if ! gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json 2>/dev/null; then
-            gh release create "$tag" \
+          if ! gh release view "$tag" --repo "${{ github.repository }}" --json tagName,targetCommitish,assets > /tmp/runtime-release.json 2>/dev/null; then
+            gh release create "$tag" --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" \
               --title "Runtime durability evidence ${package_hash#sha256:}" \
               --notes 'Content-addressed runtime durability evidence. This GitHub Release is not WORM storage.' \
               --latest=false || \
-              gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+              gh release view "$tag" --repo "${{ github.repository }}" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
           fi
-          gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+          gh release view "$tag" --repo "${{ github.repository }}" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
           state="$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
             --input /tmp/runtime-release.json \
             --tag "$tag" \
@@ -120,8 +120,8 @@ jobs:
             --expected-size "$package_size" \
             --expected-sha256 "$package_hash")"
           if test "$state" = absent; then
-            if ! gh release upload "$tag" "runtime-durability-publication/$asset"; then
-              gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+            if ! gh release upload "$tag" "runtime-durability-publication/$asset" --repo "${{ github.repository }}"; then
+              gh release view "$tag" --repo "${{ github.repository }}" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
               test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
                 --input /tmp/runtime-release.json --tag "$tag" --target-sha "${{ github.sha }}" \
                 --asset-name "$asset" --expected-size "$package_size" \
@@ -130,13 +130,13 @@ jobs:
           else
             test "$state" = present
           fi
-          gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+          gh release view "$tag" --repo "${{ github.repository }}" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
           test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
             --input /tmp/runtime-release.json --tag "$tag" --target-sha "${{ github.sha }}" \
             --asset-name "$asset" --expected-size "$package_size" \
             --expected-sha256 "$package_hash")" = present
           mkdir /tmp/runtime-durability-redownload
-          gh release download "$tag" --pattern "$asset" --dir /tmp/runtime-durability-redownload
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern "$asset" --dir /tmp/runtime-durability-redownload
           python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-file \
             --input "/tmp/runtime-durability-redownload/$asset" \
             --expected-sha256 "$package_hash"
