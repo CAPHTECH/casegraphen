@@ -60,6 +60,44 @@ install_skills_into() {
   printf '%d skill(s) written to %s\n' "$installed" "$target"
 }
 
+installed_binary_path() {
+  name=$1
+  if [ -n "${CARGO_INSTALL_ROOT:-}" ]; then
+    printf '%s/bin/%s\n' "$CARGO_INSTALL_ROOT" "$name"
+    return
+  fi
+  if [ -n "${CARGO_HOME:-}" ]; then
+    printf '%s/bin/%s\n' "$CARGO_HOME" "$name"
+    return
+  fi
+
+  resolved=$(command -v "$name" 2>/dev/null || true)
+  case "$resolved" in
+    /*)
+      printf '%s\n' "$resolved"
+      return
+      ;;
+  esac
+
+  printf '%s/.cargo/bin/%s\n' "$HOME" "$name"
+}
+
+print_mcp_setup() {
+  mcp_binary=$(installed_binary_path casegraphen-mcp)
+
+  printf '\n== configure the CaseGraphen MCP reference adapter\n'
+  printf 'Codex (user configuration):\n'
+  printf "  codex mcp add casegraphen -- '%s'\n" "$mcp_binary"
+  printf '  codex mcp get casegraphen\n'
+  printf '\nClaude Code (user configuration):\n'
+  printf "  claude mcp add --scope user casegraphen -- '%s'\n" "$mcp_binary"
+  printf '  claude mcp get casegraphen\n'
+  printf '\nThe reference adapter provides local graph linting and fails closed for\n'
+  printf 'operations that require an external decision or resource owner.\n'
+  printf 'For the durable authenticated operational host, follow:\n'
+  printf '  %s/docs/guides/mcp-operational-host.md\n' "$source_dir"
+}
+
 case "$#" in
   0)
     if [ -z "${HOME:-}" ]; then
@@ -71,6 +109,7 @@ case "$#" in
     agent_homes | while IFS= read -r home; do
       install_skills_into "$home/skills"
     done
+    print_mcp_setup
     ;;
   *)
     printf 'usage: %s\n' "$0" >&2

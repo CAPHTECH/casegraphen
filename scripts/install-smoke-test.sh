@@ -12,11 +12,21 @@ mkdir -p "$test_dir/bin" "$test_dir/project"
 printf '#!/bin/sh\nexit 0\n' >"$test_dir/bin/cargo"
 chmod +x "$test_dir/bin/cargo"
 
+install_output="$test_dir/install-output.txt"
 (
   cd "$test_dir/project"
-  HOME="$test_dir/home" PATH="$test_dir/bin:/usr/bin:/bin" \
+  HOME="$test_dir/home" CARGO_HOME="$test_dir/cargo-home" \
+    PATH="$test_dir/bin:/usr/bin:/bin" \
     sh "$repository_dir/install.sh"
-)
+) >"$install_output"
+cat "$install_output"
+
+mcp_binary="$test_dir/cargo-home/bin/casegraphen-mcp"
+grep -F "codex mcp add casegraphen -- '$mcp_binary'" "$install_output" >/dev/null
+grep -F "claude mcp add --scope user casegraphen -- '$mcp_binary'" "$install_output" >/dev/null
+grep -F 'codex mcp get casegraphen' "$install_output" >/dev/null
+grep -F 'claude mcp get casegraphen' "$install_output" >/dev/null
+grep -F "$repository_dir/docs/guides/mcp-operational-host.md" "$install_output" >/dev/null
 
 for runtime in .claude .codex; do
   for skill in casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate; do
@@ -63,7 +73,8 @@ if [ -e "$test_dir/project/.claude" ]; then
   exit 1
 fi
 
-if HOME="$test_dir/home" PATH="$test_dir/bin:/usr/bin:/bin" \
+if HOME="$test_dir/home" CARGO_HOME="$test_dir/cargo-home" \
+  PATH="$test_dir/bin:/usr/bin:/bin" \
   sh "$repository_dir/install.sh" --user >/dev/null 2>&1; then
   printf 'installer unexpectedly accepted the removed --user option\n' >&2
   exit 1

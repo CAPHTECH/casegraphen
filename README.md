@@ -161,7 +161,11 @@ cargo install casegraphen
 ```
 
 From a checkout, `install.sh` installs the binary and the agent skills that
-drive it in one step — see [Driving it from an agent](#driving-it-from-an-agent).
+drive it in one step, then prints copyable Codex and Claude Code commands for
+registering the stateless MCP reference adapter — see
+[Driving it from an agent](#driving-it-from-an-agent). The durable authenticated
+operational host has a separate setup guide because it requires an
+authorization-aware client and persistent state.
 The supported compiler contract is Rust 1.80: `Cargo.toml` declares the MSRV,
 `rust-toolchain.toml` pins 1.80.0 with rustfmt and Clippy, and the Quality
 workflow runs the same pin. `sh scripts/static-analysis.sh` reports the active
