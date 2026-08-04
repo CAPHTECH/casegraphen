@@ -36,6 +36,17 @@ Evidence planes:
    and fails on both missing host attestations, missing signed review,
    unresolved judgments, and unobserved Codex cost. This is negative evidence
    for promotion, not a substitute for the protected workflow lifecycle.
+6. Current-HEAD remote run
+   [`30956779910`](https://github.com/CAPHTECH/casegraphen/actions/runs/30956779910)
+   built and published the immutable evaluator, then left both provider jobs
+   queued with their exact self-hosted labels and `runner_id: null`. The run
+   was cancelled rather than left queued indefinitely. Its aggregate still
+   emitted the content-addressed report
+   `sha256:622e17fbccc8de67b5a44f1d66f0b3ae3f61a14e8153f17588563f1a4318ba8c`
+   with `accepted: false`, `promotion_eligible: false`, and findings
+   `missing_provider:codex`, `missing_provider:claude`, and
+   `manual_review_missing`. This is direct fail-closed operational evidence,
+   not provider execution evidence.
 
 ## Candidate ranking
 
@@ -51,10 +62,17 @@ Evidence planes:
 | 8 | Repeat two small broker jobs instead of parameterizing authority routing | Visible duplication | Minor maintenance duplication | Workflow source only | 2 | C2 | `not-local-optimum`; intentional authority separation |
 
 The severity column uses `E + A + F + K + T` (0–15). It describes each
-pre-fix candidate, while the verdict records the current contract. The GitHub
-API currently reports zero self-hosted runners and zero Environments, and main
-has no branch-protection rule. Those are material missing operational evidence,
-not facts that repository conformance can manufacture.
+pre-fix candidate, while the verdict records the current contract. At the time
+of remote run `30956779910`, the repository API reported no repository-scoped
+self-hosted runners and neither provider job received a runner. Subsequent
+Issue #89 work provisioned the two CLI-session Environment names, a separate
+runtime-durability publisher Environment, and an exact trusted-SHA variable;
+those controls do not supply the missing provider or broker runners, external
+host attestors, provider/broker key material, signer/finalizer Environments, or
+main protection required by this issue. Organization-scoped runners,
+variables, and secrets could not be inventoried because the active token lacks
+`admin:org`. These are material missing operational evidence, not facts that
+repository conformance can manufacture.
 
 ## Observations
 
@@ -345,9 +363,13 @@ evaluated code no longer executes with signing authority; symmetric forge
 authority is removed; review identity, source runs, and artifact bytes are
 cryptographically/content bound; GitHub credentials do not cross the storage
 redirect; and evidence crosses the 90-day review window with its verification
-material. Operational proof is still missing. With zero registered runners,
-zero Environments, and no main protection, the repository can prove only the
-intended fail-closed shape. Stable promotion remains unproven until independent
-platform operators provision the external host attestors, keys, protected
+material. Operational proof is still missing. The repository now has the
+provider CLI-session Environment names, but it still has no repository-scoped
+runner, no matching provider runner assignment in the current-HEAD remote
+probe, no attestation/broker/signer/finalizer authority chain, and no main
+protection; organization-scoped authority remains unobservable to the active
+token. The repository can therefore prove only the intended fail-closed shape.
+Stable promotion remains unproven until independent platform operators
+provision and expose the external host attestors, keys, remaining protected
 workflows/environments, and execute those boundaries. This is not a claim of a
 global optimum or stable-contract readiness.
