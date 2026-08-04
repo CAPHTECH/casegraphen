@@ -22,7 +22,9 @@ Evidence planes:
    generic JSONL artifact ingest and exact resource reconciliation.
 3. A Python standard-library MCP client independently completes initialize,
    propose, lint, compile, attach, and reconcile, then stops at the review
-   seam with `accepted: false`.
+   seam with `accepted: false`. Its deterministic report is retained in
+   `docs/pilots/issue-76/independent-mcp-client-report.json` rather than being
+   deleted with the test workspace.
 4. `docs/pilots/issue-76/retained-evidence.manifest.json` binds the generated
    JSONL streams and reports to SHA-256 digests and byte lengths.
 
@@ -58,8 +60,9 @@ Evidence planes:
 - [Evidence] Complete runtime reconciliation and the independent MCP client
   both stop at `needs_review`.
 - [Inference] The shared generic JSONL/resource seam is exercised through four
-  materially different transport/storage families, but this does not prove
-  remote-provider behavior or sustained-load characteristics.
+  materially different transport/storage families. Issue #85 separately adds
+  bounded remote, binary, scale, retry, crash/resume, and allocator-journal
+  evidence; neither bounded suite proves a production fleet indefinitely.
 
 ## Local rationality and compensation halo
 
@@ -111,6 +114,21 @@ but a non-main ref cannot reach the session-bearing job. Actual Environment
 reviewer/branch protection remains external configuration and is not inferred
 from the workflow string.
 
+The first fail-closed aggregate also stopped after uploading provider output
+and told an operator to download artifacts, obtain two attestations, author the
+review, reconstruct six security-sensitive arguments, rerun aggregation, and
+retain the result manually. That preserved the trust seam but optimized the
+first workflow by externalizing the complete evidence lifecycle.
+Classification: `externalization`, severity E2/A2/F2/K2/T2 = 10, confidence
+C3. The lifecycle is now explicit and conformance-gated: provider-specific
+broker jobs consume exact commit-named artifacts without running evaluation,
+and a protected hosted verifier consumes the two run IDs, two attestation run
+IDs, a confined reviewer-authored document, and verifier-only HMAC keys. The
+final report is retained for 90 days and the workflow fails unless the strict
+aggregate passes. The workflows still cannot invent an independent reviewer,
+broker key ACL, or dedicated runner; those remain observable provisioning
+preconditions rather than hidden manual glue.
+
 An early real Claude run requested a model alias that the CLI resolved to a
 different canonical model. Treating the request string as the executed model
 would optimize a green matrix at the cost of reproducibility. Classification:
@@ -143,6 +161,10 @@ action/retry fields; manual review is limited to non-fabrication and rationale.
   hashes and limits, require broker-signed run/host CLI-session provenance,
   retain content-addressed reports, and keep all outputs unaccepted until
   review. Adopted.
+- D — Keep broker/reviewer authority external but encode artifact transfer,
+  exact-run joining, verification-key handling, final aggregation, retention,
+  and fail-closed disposition as a two-stage workflow. Adopted; this removes
+  operator argument reconstruction without collapsing authority roles.
 
 ## False positives and residual risks
 
@@ -163,9 +185,10 @@ action/retry fields; manual review is limited to non-fabrication and rationale.
   key and run binding, not that deployed OS accounts, key ACLs, or credential
   brokers actually prevent agent reads. That remains externally auditable host
   provisioning and must not be inferred from repository tests.
-- [Hypothesis] Four local families do not establish production durability,
-  remote transport security, or performance under load. Promotion remains
-  false in the retained report.
+- [Hypothesis] Four local families plus the bounded durability suite do not
+  establish production durability, remote transport security, or unbounded
+  performance under load. Promotion remains false until the provider-host
+  evidence lifecycle completes.
 
 Within the issue boundary, no material local optimum remains after widening
 the evaluation boundary from individual runner success to exact retained

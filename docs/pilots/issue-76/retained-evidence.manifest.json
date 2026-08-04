@@ -2,8 +2,8 @@
   "accepted": false,
   "files": [
     {
-      "byte_length": 29920,
-      "content_hash": "sha256:06684cf8d412b937ddeda543f4aab8579d9bed564a1ce826fafe288c947e89c4",
+      "byte_length": 30193,
+      "content_hash": "sha256:8c8fa0c7a724ede354201192c772459d156cbcdf97db6a8ae58aa99f44af5239",
       "path": "pilot-report.json"
     },
     {
@@ -37,9 +37,14 @@
       "path": "v0-next-version-proposal.json"
     },
     {
-      "byte_length": 1293,
-      "content_hash": "sha256:47d2d6f7fe19e9ed03e08c00ed3f6511f3d81ced7f05f5fac60d68b4b73725c5",
+      "byte_length": 1563,
+      "content_hash": "sha256:25de3dd7716726ddd035d61943b02afcd5547e6c1de14f5c883ca33f5e7b6268",
       "path": "promotion-report.json"
+    },
+    {
+      "byte_length": 12661,
+      "content_hash": "sha256:cf629e3b90e8ed2e1f13933f0aaa3334945b3dcc6ebed0bda4faba76a7755d8a",
+      "path": "independent-mcp-client-report.json"
     }
   ],
   "schema": "casegraphen.experimental.runtime_pilot.evidence_manifest.v0",

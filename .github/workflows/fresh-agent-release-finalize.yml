@@ -1,0 +1,126 @@
+name: Fresh Agent Release Finalization
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run_id:
+        description: Fresh Agent Release Evaluation run id
+        required: true
+        type: string
+      codex_attestation_run_id:
+        description: Codex host-attestation workflow run id
+        required: true
+        type: string
+      claude_attestation_run_id:
+        description: Claude host-attestation workflow run id
+        required: true
+        type: string
+      evaluated_commit_sha:
+        description: Exact 40-character commit shared by all evidence
+        required: true
+        type: string
+      manual_review_path:
+        description: Repository-relative review JSON under docs/evals/fresh-agent/reviews
+        required: true
+        type: string
+
+jobs:
+  finalize:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      actions: read
+      contents: read
+    environment: fresh-agent-release-verifier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate evidence coordinates
+        shell: bash
+        env:
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          CODEX_ATTESTATION_RUN_ID: ${{ inputs.codex_attestation_run_id }}
+          CLAUDE_ATTESTATION_RUN_ID: ${{ inputs.claude_attestation_run_id }}
+          EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+        run: |
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CODEX_ATTESTATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CLAUDE_ATTESTATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Download immutable evaluator
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-evaluator-${{ inputs.evaluated_commit_sha }}
+          path: fresh-agent-bundle
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Download exact Codex evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-codex-${{ inputs.evaluated_commit_sha }}
+          path: provider-runs/codex
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Download exact Claude evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-claude-${{ inputs.evaluated_commit_sha }}
+          path: provider-runs/claude
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Download exact Codex host attestation
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-host-attestation-codex-${{ inputs.evaluated_commit_sha }}
+          path: host-attestations/codex
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.codex_attestation_run_id }}
+      - name: Download exact Claude host attestation
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-host-attestation-claude-${{ inputs.evaluated_commit_sha }}
+          path: host-attestations/claude
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.claude_attestation_run_id }}
+      - name: Verify and retain the complete release evidence lifecycle
+        id: aggregate
+        continue-on-error: true
+        shell: bash
+        env:
+          CASEGRAPHEN_CODEX_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_CODEX_ATTESTATION_KEY }}
+          CASEGRAPHEN_CLAUDE_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_CLAUDE_ATTESTATION_KEY }}
+          CASEGRAPHEN_MANUAL_REVIEW_PATH: ${{ inputs.manual_review_path }}
+        run: |
+          set -euo pipefail
+          case "$CASEGRAPHEN_MANUAL_REVIEW_PATH" in
+            docs/evals/fresh-agent/reviews/*.json) ;;
+            *) echo 'manual review must be a JSON file under docs/evals/fresh-agent/reviews' >&2; exit 2 ;;
+          esac
+          test -f "$CASEGRAPHEN_MANUAL_REVIEW_PATH"
+          umask 077
+          key_dir="$RUNNER_TEMP/casegraphen-release-verifier"
+          mkdir -p "$key_dir"
+          trap 'rm -rf "$key_dir"' EXIT
+          printf '%s' "$CASEGRAPHEN_CODEX_ATTESTATION_KEY" > "$key_dir/codex.key"
+          printf '%s' "$CASEGRAPHEN_CLAUDE_ATTESTATION_KEY" > "$key_dir/claude.key"
+          python3 fresh-agent-bundle/scripts/fresh-agent-release.py \
+            --provider-run provider-runs/codex \
+            --provider-run provider-runs/claude \
+            --manual-review "$CASEGRAPHEN_MANUAL_REVIEW_PATH" \
+            --host-attestation codex=host-attestations/codex/codex.json \
+            --host-attestation claude=host-attestations/claude/claude.json \
+            --attestation-key codex="$key_dir/codex.key" \
+            --attestation-key claude="$key_dir/claude.key" \
+            --output-dir fresh-agent-release-report
+      - name: Publish content-addressed final report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-final-release-report-${{ inputs.evaluated_commit_sha }}
+          path: fresh-agent-release-report
+          if-no-files-found: error
+          retention-days: 90
+      - name: Require a passing strict aggregate
+        if: steps.aggregate.outcome != 'success'
+        run: exit 1

@@ -45,8 +45,9 @@ provider-specific labels. The Codex runner must already have the pinned Codex
 CLI and an authenticated Codex CLI session; the Claude runner has the
 corresponding Claude CLI/session. An uncredentialed hosted `prepare` job checks
 out the repository, builds the canonical evaluator, installs evaluation-only
-Python dependencies into an artifact directory, and publishes one short-lived
-evaluation bundle. The authenticated runner only downloads that immutable
+Python dependencies into an artifact directory, and publishes one immutable
+evaluation bundle retained for the same 90-day review window as provider
+evidence. The authenticated runner only downloads that immutable
 artifact; it performs no checkout, dependency installation, or build. External
 Actions are pinned to commit SHAs. The workflow does not install provider CLIs
 or inject credentials. It is manual-only and has read-only repository
@@ -171,7 +172,46 @@ the release report. The report itself is named by its content hash. A failed
 matrix emits only content-addressed, unreviewed audit/redesign proposals with
 `accepted: false`; it never changes an accepted topology.
 
-The GitHub workflow runs aggregation without fabricating manual review.
-Consequently the aggregate job remains blocked until an independent reviewer
-downloads the evidence, creates a run-bound review document, and reruns the
-command above.
+The GitHub workflows preserve that separation as an explicit evidence
+lifecycle:
+
+1. `fresh-agent-release-eval.yml` creates the immutable evaluator and both
+   provider artifacts. Its preliminary aggregate intentionally fails at the
+   review/attestation seam.
+2. A privileged provider broker dispatches
+   `fresh-agent-host-attest.yml` once per provider. The broker job uses a
+   dedicated label and protected environment, downloads the exact
+   commit-named provider artifact, reprobes the non-API CLI session, and emits
+   only a content-bound attestation. The HMAC key is not available to the
+   evaluation job or retained as evidence.
+3. An independent reviewer commits a JSON document under
+   `docs/evals/fresh-agent/reviews/` that binds both run hashes and resolves all
+   twenty manual judgments. A cost waiver, when needed, is bounded and bound
+   to the same run.
+4. `fresh-agent-release-finalize.yml` runs in the protected
+   `fresh-agent-release-verifier` environment. It downloads the exact provider
+   and attestation artifacts by workflow run ID and evaluated commit, uses the
+   immutable release aggregator shipped with that evaluation, retains the
+   content-addressed final report for 90 days, and fails unless the strict
+   aggregate passes.
+
+The repository workflow never manufactures the independent review or broker
+authority. Provisioning the dedicated runner labels, protected environments,
+runner identity variables, and verifier-only HMAC keys remains an operator
+responsibility. Provider API keys are neither required nor accepted.
+
+Required external configuration is explicit:
+
+| Role | Runner/environment | Protected inputs |
+|---|---|---|
+| Codex evaluation | `casegraphen-codex-cli-session` / `fresh-agent-cli-session-codex` | authenticated Codex CLI session only |
+| Claude evaluation | `casegraphen-claude-cli-session` / `fresh-agent-cli-session-claude` | authenticated Claude Code session only |
+| Codex broker | `casegraphen-codex-attestation-broker` / `fresh-agent-attestation-codex` | `CASEGRAPHEN_ATTESTATION_KEY`, `CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH` |
+| Claude broker | `casegraphen-claude-attestation-broker` / `fresh-agent-attestation-claude` | `CASEGRAPHEN_ATTESTATION_KEY`, `CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH` |
+| Final verifier | hosted / `fresh-agent-release-verifier` | `CASEGRAPHEN_CODEX_ATTESTATION_KEY`, `CASEGRAPHEN_CLAUDE_ATTESTATION_KEY` |
+
+Both broker runners also carry the common
+`casegraphen-fresh-agent-broker` label. Runner-instance values are opaque
+`sha256:` identifiers, not hostnames or account identifiers. Evaluation
+environments receive none of the attestation keys; the final verifier receives
+no provider session.

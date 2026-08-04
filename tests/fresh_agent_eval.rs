@@ -661,6 +661,83 @@ fn workflow_conformance_rejects_api_key_or_github_secret_injection() {
         ),
         "provider-specific protected environments",
     );
+    reject(
+        "short-lived-evaluator.yml",
+        valid.replacen(
+            "          retention-days: 90\n",
+            "          retention-days: 1\n",
+            1,
+        ),
+        "90-day review lifecycle",
+    );
+}
+
+#[test]
+fn release_evidence_lifecycle_requires_brokers_exact_artifacts_and_strict_finalization() {
+    let output_root = TestOutputDirectory::new();
+    let attestation =
+        fs::read_to_string(root().join(".github/workflows/fresh-agent-host-attest.yml")).unwrap();
+    let finalization =
+        fs::read_to_string(root().join(".github/workflows/fresh-agent-release-finalize.yml"))
+            .unwrap();
+
+    let reject = |name: &str, flag: &str, contents: String, expected: &str| {
+        let path = output_root.path.join(name);
+        fs::write(&path, contents).unwrap();
+        let result = Command::new("python3")
+            .args(["scripts/fresh-agent-workflow-conformance.py", flag])
+            .arg(&path)
+            .current_dir(root())
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{name} unexpectedly conformed");
+        assert!(
+            String::from_utf8_lossy(&result.stdout).contains(expected),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+    };
+
+    reject(
+        "attestation-api-key.yml",
+        "--attestation-workflow",
+        attestation.replace(
+            "    steps:\n",
+            "    env:\n      PROVIDER_API_KEY: forbidden\n    steps:\n",
+        ),
+        "must not use provider API keys",
+    );
+    reject(
+        "attestation-wrong-runner.yml",
+        "--attestation-workflow",
+        attestation.replacen(
+            "casegraphen-codex-attestation-broker",
+            "casegraphen-codex-cli-session",
+            1,
+        ),
+        "dedicated broker runner",
+    );
+    reject(
+        "finalization-unbound-artifact.yml",
+        "--finalization-workflow",
+        finalization.replace(
+            "fresh-agent-codex-${{ inputs.evaluated_commit_sha }}",
+            "fresh-agent-codex-latest",
+        ),
+        "download exact artifact",
+    );
+    reject(
+        "finalization-unprotected.yml",
+        "--finalization-workflow",
+        finalization.replace("    environment: fresh-agent-release-verifier\n", ""),
+        "protected release-verifier environment",
+    );
+    reject(
+        "finalization-fail-open.yml",
+        "--finalization-workflow",
+        finalization.replace("      - name: Require a passing strict aggregate\n        if: steps.aggregate.outcome != 'success'\n        run: exit 1\n", ""),
+        "fail closed",
+    );
 }
 
 #[test]

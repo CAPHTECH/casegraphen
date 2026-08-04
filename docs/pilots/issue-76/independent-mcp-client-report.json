@@ -1,0 +1,313 @@
+{
+  "attachments": [
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-3020d48952a71f5a240c6ef9d204637afff1dc54dee8d39d0319d11b70207219",
+      "content_hash": "sha256:3020d48952a71f5a240c6ef9d204637afff1dc54dee8d39d0319d11b70207219",
+      "review_status": "unreviewed"
+    },
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-e2ff40e36d0e8664b9d7bb2ccee812c6c431591cf23d1cca6c4278c2df4f4958",
+      "content_hash": "sha256:e2ff40e36d0e8664b9d7bb2ccee812c6c431591cf23d1cca6c4278c2df4f4958",
+      "review_status": "unreviewed"
+    },
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-e1ac25d2ca2f81d9abb66b5ca75d3ae15ce472e2565c965452d3015c8c856ecd",
+      "content_hash": "sha256:e1ac25d2ca2f81d9abb66b5ca75d3ae15ce472e2565c965452d3015c8c856ecd",
+      "review_status": "unreviewed"
+    },
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-da66db478821f0f323ff549e2a7eb01988d8b8ac2eacfc07c2d166d2a7515863",
+      "content_hash": "sha256:da66db478821f0f323ff549e2a7eb01988d8b8ac2eacfc07c2d166d2a7515863",
+      "review_status": "unreviewed"
+    },
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-36ce9d3564f7af711b1f5dfc9c123887b69d839d0773cecd9d9f241ba857a9a2",
+      "content_hash": "sha256:36ce9d3564f7af711b1f5dfc9c123887b69d839d0773cecd9d9f241ba857a9a2",
+      "review_status": "unreviewed"
+    },
+    {
+      "accepted": false,
+      "artifact_id": "artifact:sha256-71db541836c828c78e5a4261663dd8a80bb151f6577e01264e65f093a8d0fae2",
+      "content_hash": "sha256:71db541836c828c78e5a4261663dd8a80bb151f6577e01264e65f093a8d0fae2",
+      "review_status": "unreviewed"
+    }
+  ],
+  "client_implementation": "python_stdlib_json_rpc",
+  "compiled": {
+    "accepted": false,
+    "accepted_runtime_output": false,
+    "deployment_authority": "proposal_only",
+    "generated_plan_review_status": "unreviewed",
+    "manifest": {
+      "accepted_review_id": null,
+      "accepted_review_revision_id": null,
+      "artifacts": [
+        {
+          "byte_length": 218,
+          "content_hash": "485331d7608273f875d611aaaa8601ac1aba2ab440f4c888a24cf45bdc9f6b95",
+          "path": "budget.policies.json"
+        },
+        {
+          "byte_length": 515,
+          "content_hash": "b049f0977bdda25665872a2e4da830667f9a28cd9c28387278f23e1895fe1d19",
+          "path": "case.mapping.genesis.proposal.json"
+        },
+        {
+          "byte_length": 1267,
+          "content_hash": "846620a367198ece6b531ac8f002425e7be4e11503dcf6f6e4b52ba20b6505f2",
+          "path": "compiler.inputs.json"
+        },
+        {
+          "byte_length": 564,
+          "content_hash": "d327e04d10ef7ff5886e5305ae45ff5758fecc76165e59a80fdbf77c238b1e54",
+          "path": "compiler.report.json"
+        },
+        {
+          "byte_length": 1354,
+          "content_hash": "f9e0ad1d227f3f0fc091d0a82bcc431c7a4e4183d6ecc28f8c8601d1e851e155",
+          "path": "execution.plan.proposal.json"
+        },
+        {
+          "byte_length": 3144,
+          "content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+          "path": "execution.topology.json"
+        },
+        {
+          "byte_length": 164,
+          "content_hash": "b69b7c79ef372a8333ec4cd55efbec3d9cbff9b387a03d67d44ed07a48ada6df",
+          "path": "expansion.policies.json"
+        },
+        {
+          "byte_length": 416,
+          "content_hash": "e20426226e9ca44202d7699bb42d7b4d775d291348bcc2d2855ac0a8e226b696",
+          "path": "graph.analysis.report.json"
+        },
+        {
+          "byte_length": 351,
+          "content_hash": "289ce989d43d4a7cb02a9028de1eefa8d581ea79b44c9a561b1aca3eaf2fba0b",
+          "path": "resource.manifest.json"
+        },
+        {
+          "byte_length": 1987,
+          "content_hash": "47b523d4c3efb0c87f1f8e10a1bf50305b551ca5675809d193931d40faf336a7",
+          "path": "runtime.deployment.json"
+        },
+        {
+          "byte_length": 65,
+          "content_hash": "ff7f2e01d0c50c3aa0624ab1065c5cac2b0d08c7e370d6a0a07ca5af0d5159e0",
+          "path": "topology.content-hash"
+        },
+        {
+          "byte_length": 167,
+          "content_hash": "0c821c70a7c0f01dddf8d7f440ebe2fd079f93ea6c137920bdca2aea1dea7c6e",
+          "path": "verification.policies.json"
+        }
+      ],
+      "base_revision_id": "revision:independent-client-observed",
+      "case_space_id": "case_space:runtime-pilot",
+      "compiler_version": "casegraphen-graph-compiler/0",
+      "mode": "proposal",
+      "policy_manifest_content_hash": "b1a64e0c8e8cc5edc7d6fced5b1d6d2cfcce4ecd96416bad99743ae8be2429d6",
+      "reviewed_claim_cell_id": null,
+      "schema": "casegraphen.experimental.deployment_bundle.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "manifest_content_hash": "899e78ef430f570025ce25101e5e00f8958990079044a3fbc52f4eeb9bd74a38"
+  },
+  "custom_rust_client_code": false,
+  "final_boundary": {
+    "accepted": false,
+    "all_proposals_unreviewed": true,
+    "review_required": true
+  },
+  "host_binary_sha256": "38779d9c67cd52170c50d316432ef1778012cd05373e5488439921c4a813b938",
+  "lint": {
+    "accepted": false,
+    "lint": {
+      "findings": [],
+      "metrics": {
+        "critical_path_ms": 40,
+        "edge_count": 2,
+        "longest_path_nodes": 2,
+        "maximum_fan_in": 2,
+        "maximum_fan_out": 1,
+        "node_count": 3,
+        "sink_count": 1,
+        "source_count": 2,
+        "theoretical_parallel_width": 2
+      },
+      "report_version": 0,
+      "schema": "casegraphen.experimental.graph_lint.report.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "review_status": "unreviewed",
+    "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+    "topology_id": "topology:pilot-fanout-reduce"
+  },
+  "propose": {
+    "accepted": false,
+    "lint": {
+      "findings": [],
+      "metrics": {
+        "critical_path_ms": 40,
+        "edge_count": 2,
+        "longest_path_nodes": 2,
+        "maximum_fan_in": 2,
+        "maximum_fan_out": 1,
+        "node_count": 3,
+        "sink_count": 1,
+        "source_count": 2,
+        "theoretical_parallel_width": 2
+      },
+      "report_version": 0,
+      "schema": "casegraphen.experimental.graph_lint.report.v0",
+      "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+      "topology_id": "topology:pilot-fanout-reduce"
+    },
+    "review_status": "unreviewed",
+    "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+    "topology_id": "topology:pilot-fanout-reduce"
+  },
+  "protocol_version": "2025-06-18",
+  "reconciliation": {
+    "accepted": false,
+    "artifacts": [
+      {
+        "artifact_id": "artifact:sha256-06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136",
+        "byte_length": 51,
+        "media_type": "application/json",
+        "sha256": "06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136"
+      },
+      {
+        "artifact_id": "artifact:sha256-21bc19c418e4e2f4f5fbddd2ddda9b46080fb387e63914d2bc8a64184d65a9ff",
+        "byte_length": 48,
+        "media_type": "application/json",
+        "sha256": "21bc19c418e4e2f4f5fbddd2ddda9b46080fb387e63914d2bc8a64184d65a9ff"
+      },
+      {
+        "artifact_id": "artifact:sha256-ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86",
+        "byte_length": 51,
+        "media_type": "application/json",
+        "sha256": "ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86"
+      }
+    ],
+    "base_revision_id": "revision:independent-client-observed",
+    "completeness": {
+      "actual_report_count": 3,
+      "complete": true,
+      "dataflow_complete": true,
+      "duplicate_attempt_count": 0,
+      "edge_proofs": [
+        {
+          "artifact_byte_length": 51,
+          "artifact_content_sha256": "ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86",
+          "artifact_id": "artifact:sha256-ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86",
+          "delivery": "streaming",
+          "edge_id": "edge:a-reduce",
+          "from_node_id": "node:inspect-a",
+          "input_name": "findings",
+          "output_name": "finding",
+          "schema_id": "schema:pilot-finding",
+          "source_attempt_id": "attempt:independent-client:0",
+          "target_attempt_id": "attempt:independent-client:2",
+          "to_node_id": "node:reduce"
+        },
+        {
+          "artifact_byte_length": 51,
+          "artifact_content_sha256": "06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136",
+          "artifact_id": "artifact:sha256-06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136",
+          "delivery": "streaming",
+          "edge_id": "edge:b-reduce",
+          "from_node_id": "node:inspect-b",
+          "input_name": "findings",
+          "output_name": "finding",
+          "schema_id": "schema:pilot-finding",
+          "source_attempt_id": "attempt:independent-client:1",
+          "target_attempt_id": "attempt:independent-client:2",
+          "to_node_id": "node:reduce"
+        }
+      ],
+      "expected_edge_count": 2,
+      "expected_node_count": 3,
+      "failed_node_count": 0,
+      "findings": [],
+      "missing_edge_count": 0,
+      "missing_report_count": 0,
+      "node_complete": true,
+      "proven_edge_count": 2,
+      "terminal_attempt_ids": {
+        "node:inspect-a": "attempt:independent-client:0",
+        "node:inspect-b": "attempt:independent-client:1",
+        "node:reduce": "attempt:independent-client:2"
+      },
+      "unaccounted_artifact_count": 0
+    },
+    "halt": "needs_review",
+    "ingest_findings": [],
+    "proposals": [
+      {
+        "kind": "evidence",
+        "payload": {
+          "artifact_id": "artifact:sha256-ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86",
+          "content_hash": "ae406d7382ccf6d1b5b88f686a38df69be5fab814458543def620b00a43f5d86",
+          "evidence_boundary": "worker_output",
+          "runtime_claim_accepted": false
+        },
+        "proposal_id": "proposal:sha256-2523725ff3591f34eaadb952ebc32aaa1776e2b7cb3a34617d5e001649912823",
+        "review_status": "unreviewed",
+        "source_boundary": "external_runtime_untrusted"
+      },
+      {
+        "kind": "evidence",
+        "payload": {
+          "artifact_id": "artifact:sha256-21bc19c418e4e2f4f5fbddd2ddda9b46080fb387e63914d2bc8a64184d65a9ff",
+          "content_hash": "21bc19c418e4e2f4f5fbddd2ddda9b46080fb387e63914d2bc8a64184d65a9ff",
+          "evidence_boundary": "worker_output",
+          "runtime_claim_accepted": false
+        },
+        "proposal_id": "proposal:sha256-780ba7e299a0fc648a355672a28ad6a0749897efbfde9a9c75417d1c69e1be75",
+        "review_status": "unreviewed",
+        "source_boundary": "external_runtime_untrusted"
+      },
+      {
+        "kind": "morphism",
+        "payload": {
+          "morphism_type": "runtime_reconciliation",
+          "runtime_claim_accepted": false,
+          "runtime_graph_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01"
+        },
+        "proposal_id": "proposal:sha256-ad407ec7a0610f8530a8ff9554462363b55c44a5ff3501ca7cd1cfbfd83bfb7c",
+        "review_status": "unreviewed",
+        "source_boundary": "external_runtime_untrusted"
+      },
+      {
+        "kind": "evidence",
+        "payload": {
+          "artifact_id": "artifact:sha256-06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136",
+          "content_hash": "06498762244387582bd6d0cb1bee58038f954caf105a30af8aaa68a77f38e136",
+          "evidence_boundary": "worker_output",
+          "runtime_claim_accepted": false
+        },
+        "proposal_id": "proposal:sha256-deb18d71a68ab730d9f5ec04d29dc650ffba7c81be6202ebf2c8f4e4e737273d",
+        "review_status": "unreviewed",
+        "source_boundary": "external_runtime_untrusted"
+      }
+    ],
+    "reconciliation_complete": true,
+    "report_version": 0,
+    "resource_reconciliations": [],
+    "schema": "casegraphen.experimental.runtime.integration_report.v0",
+    "topology_content_hash": "42b6af233728dedad6f4fb0bb2b55c2756752420b58ecb99fd030fbc47247a01",
+    "topology_id": "topology:pilot-fanout-reduce"
+  },
+  "schema": "casegraphen.evidence.independent_mcp_client.v0",
+  "topology_source_name": "fanout-reduce.json",
+  "topology_source_sha256": "e8fb4eaf714fef1c7fc849f67398b3bbdf89c066eaff5f10bcc8478e3e9d30fe"
+}

@@ -1,0 +1,135 @@
+name: Fresh Agent Host Attestation
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider lane to attest
+        required: true
+        type: choice
+        options:
+          - codex
+          - claude
+      evidence_run_id:
+        description: Fresh Agent Release Evaluation run id
+        required: true
+        type: string
+      evaluated_commit_sha:
+        description: Exact 40-character commit evaluated by the provider lane
+        required: true
+        type: string
+
+jobs:
+  attest-codex:
+    if: github.ref == 'refs/heads/main' && inputs.provider == 'codex'
+    permissions:
+      actions: read
+      contents: read
+    environment: fresh-agent-attestation-codex
+    runs-on: [self-hosted, linux, x64, casegraphen-fresh-agent-broker, casegraphen-codex-attestation-broker]
+    steps:
+      - name: Validate evidence coordinates
+        shell: bash
+        env:
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+        run: |
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Download immutable evaluator
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-evaluator-${{ inputs.evaluated_commit_sha }}
+          path: fresh-agent-bundle
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Download exact provider evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-codex-${{ inputs.evaluated_commit_sha }}
+          path: provider-run
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Broker-sign the exact Codex run
+        shell: bash
+        env:
+          CASEGRAPHEN_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_ATTESTATION_KEY }}
+          CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH: ${{ vars.CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="$RUNNER_TEMP/casegraphen-attestation.key"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$CASEGRAPHEN_ATTESTATION_KEY" > "$key_file"
+          python3 fresh-agent-bundle/scripts/fresh-agent-host-attest.py \
+            --summary provider-run/summary.json \
+            --provider codex \
+            --provider-cli codex \
+            --key-file "$key_file" \
+            --key-id codex-cli-session-host-v1 \
+            --runner-instance-id-hash "$CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH" \
+            --output host-attestation/codex.json
+      - name: Publish content-bound Codex attestation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-host-attestation-codex-${{ inputs.evaluated_commit_sha }}
+          path: host-attestation/codex.json
+          if-no-files-found: error
+          retention-days: 90
+
+  attest-claude:
+    if: github.ref == 'refs/heads/main' && inputs.provider == 'claude'
+    permissions:
+      actions: read
+      contents: read
+    environment: fresh-agent-attestation-claude
+    runs-on: [self-hosted, linux, x64, casegraphen-fresh-agent-broker, casegraphen-claude-attestation-broker]
+    steps:
+      - name: Validate evidence coordinates
+        shell: bash
+        env:
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+        run: |
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Download immutable evaluator
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-evaluator-${{ inputs.evaluated_commit_sha }}
+          path: fresh-agent-bundle
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Download exact provider evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-claude-${{ inputs.evaluated_commit_sha }}
+          path: provider-run
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run_id }}
+      - name: Broker-sign the exact Claude run
+        shell: bash
+        env:
+          CASEGRAPHEN_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_ATTESTATION_KEY }}
+          CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH: ${{ vars.CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="$RUNNER_TEMP/casegraphen-attestation.key"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$CASEGRAPHEN_ATTESTATION_KEY" > "$key_file"
+          python3 fresh-agent-bundle/scripts/fresh-agent-host-attest.py \
+            --summary provider-run/summary.json \
+            --provider claude \
+            --provider-cli claude \
+            --key-file "$key_file" \
+            --key-id claude-cli-session-host-v1 \
+            --runner-instance-id-hash "$CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH" \
+            --output host-attestation/claude.json
+      - name: Publish content-bound Claude attestation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-host-attestation-claude-${{ inputs.evaluated_commit_sha }}
+          path: host-attestation/claude.json
+          if-no-files-found: error
+          retention-days: 90

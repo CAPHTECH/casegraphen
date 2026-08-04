@@ -9,10 +9,10 @@
         "artifact:sha256-f2c82decdd7181cf98945929a62598db7e6b477e11f6e0eb0ae97020eff151ad"
       ],
       "measured_latency_ms": {
-        "inspect_a": 35,
-        "inspect_b_failed": 35,
-        "inspect_b_retry": 16,
-        "reduce": 12
+        "inspect_a": 10,
+        "inspect_b_failed": 10,
+        "inspect_b_retry": 10,
+        "reduce": 10
       },
       "reported_cost": {
         "amount": 0.0027,
@@ -42,8 +42,8 @@
         "a4b9fabb5d1885352f0259e8fb4c7264abe137d2"
       ],
       "measured_latency_ms": [
-        53,
-        57
+        57,
+        61
       ],
       "native_report_count": 2,
       "reported_cost": {
@@ -86,7 +86,7 @@
         3,
         4
       ],
-      "measured_latency_ms": 8,
+      "measured_latency_ms": 10,
       "output_artifact_id": "artifact:sha256-80df755a25a392193b06504249581867d69418969462b4ca0387449d52e2fa06",
       "reservation_id": "reservation:async-stream:1",
       "resource_reconciliation_complete": true,
@@ -112,8 +112,8 @@
   "base_revision_id": "revision:pilot-observed",
   "execution_provenance": {
     "git_version": "git version 2.50.1 (Apple Git-155)",
-    "harness_content_hash": "af7688c408f4d35b7c930c795eec859dab8a8c7f78e9a1b5596dccf683e19e04",
-    "operational_host_binary_content_hash": "6c8406d8f304d09969a36abbe1ddf261be8bcd7291673d2a359f43f6215b96a3",
+    "harness_content_hash": "9051d9bf2ac1bbdd567052aaeed8505f473c31e8fb9364e0c94a288090abf7a2",
+    "operational_host_binary_content_hash": "38779d9c67cd52170c50d316432ef1778012cd05373e5488439921c4a813b938",
     "python_version": "3.11.14",
     "topology_source_hashes": {
       "fanout_reduce": "e8fb4eaf714fef1c7fc849f67398b3bbdf89c066eaff5f10bcc8478e3e9d30fe",
@@ -146,7 +146,7 @@
   "promotion_report": {
     "accepted": false,
     "blockers": [
-      "Real runtime integration evidence is insufficient to promote experimental v0 to stable."
+      "Stable promotion remains blocked by Issue #76 until the full provider matrix has broker-signed host/session provenance and independent review."
     ],
     "candidate": "graph-engineering-plane-v0",
     "evidence": [
@@ -156,14 +156,15 @@
       "Explicit retry lineage reconciled without relying on JSONL order.",
       "File-drop workspaces were physically distinct and output bytes were content-addressed.",
       "Unsafe shared writers produced a graph-lint resource conflict finding.",
-      "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation."
+      "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation.",
+      "An independent Python standard-library MCP client completed propose, lint, compile, attach, and reconcile before stopping at needs_review."
     ],
     "promotion_recommended": false,
     "review_seam": "operator_review_required",
     "schema": "casegraphen.experimental.runtime_pilot.promotion_report.v0",
     "unknowns": [
       "Runtime-reported model, context, cost, version, and latency are not independently anchored.",
-      "The pilots do not cover a remote runtime, sustained load, or binary artifacts.",
+      "This four-family report does not itself cover remote, binary, or scale behavior; bounded companion evidence is retained under docs/pilots/issue-85.",
       "A deployment hash is pilot provenance, not a runtime.node_report.v0 field."
     ]
   },

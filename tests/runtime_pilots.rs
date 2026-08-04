@@ -68,6 +68,7 @@ fn four_materially_distinct_runtime_families_fail_closed_at_the_operational_host
         "redesign-proposal.json",
         "v0-next-version-proposal.json",
         "promotion-report.json",
+        "independent-mcp-client-report.json",
         "retained-evidence.manifest.json",
     ] {
         assert!(
@@ -81,11 +82,23 @@ fn four_materially_distinct_runtime_families_fail_closed_at_the_operational_host
     )
     .expect("retained evidence manifest is JSON");
     assert_eq!(manifest["accepted"], false);
-    assert_eq!(manifest["files"].as_array().unwrap().len(), 8);
+    assert_eq!(manifest["files"].as_array().unwrap().len(), 9);
     for entry in manifest["files"].as_array().unwrap() {
         let bytes = fs::read(output.join(entry["path"].as_str().unwrap())).unwrap();
         let observed = format!("sha256:{:x}", sha2::Sha256::digest(bytes));
         assert_eq!(entry["content_hash"], observed);
     }
+    let independent: Value = serde_json::from_slice(
+        &fs::read(output.join("independent-mcp-client-report.json"))
+            .expect("independent MCP evidence exists"),
+    )
+    .unwrap();
+    assert_eq!(
+        independent["client_implementation"],
+        "python_stdlib_json_rpc"
+    );
+    assert_eq!(independent["custom_rust_client_code"], false);
+    assert_eq!(independent["final_boundary"]["review_required"], true);
+    assert_eq!(independent["final_boundary"]["accepted"], false);
     let _ = fs::remove_dir_all(output);
 }

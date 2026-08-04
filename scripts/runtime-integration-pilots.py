@@ -833,14 +833,15 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             "File-drop workspaces were physically distinct and output bytes were content-addressed.",
             "Unsafe shared writers produced a graph-lint resource conflict finding.",
             "SQLite queue and async stream families both ingested content-addressed artifacts and completed canonical resource reconciliation.",
+            "An independent Python standard-library MCP client completed propose, lint, compile, attach, and reconcile before stopping at needs_review.",
         ],
         "unknowns": [
             "Runtime-reported model, context, cost, version, and latency are not independently anchored.",
-            "The pilots do not cover a remote runtime, sustained load, or binary artifacts.",
+            "This four-family report does not itself cover remote, binary, or scale behavior; bounded companion evidence is retained under docs/pilots/issue-85.",
             "A deployment hash is pilot provenance, not a runtime.node_report.v0 field.",
         ],
         "blockers": [
-            "Real runtime integration evidence is insufficient to promote experimental v0 to stable.",
+            "Stable promotion remains blocked by Issue #76 until the full provider matrix has broker-signed host/session provenance and independent review.",
         ],
         "review_seam": "operator_review_required",
     }
@@ -920,6 +921,21 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
     write_json(output / "redesign-proposal.json", redesign)
     write_json(output / "v0-next-version-proposal.json", next_version)
     write_json(output / "promotion-report.json", promotion)
+    independent_report = output / "independent-mcp-client-report.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts/independent-mcp-client.py"),
+            "--host-bin",
+            str(host_binary),
+            "--topology",
+            str(repo / "pilots/runtime-integration/topologies/fanout-reduce.json"),
+            "--output",
+            str(independent_report),
+        ],
+        cwd=repo,
+        check=True,
+    )
     retained_names = [
         "pilot-report.json",
         "process-jsonl.complete.jsonl",
@@ -929,6 +945,7 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
         "redesign-proposal.json",
         "v0-next-version-proposal.json",
         "promotion-report.json",
+        "independent-mcp-client-report.json",
     ]
     retained_manifest = {
         "schema": "casegraphen.experimental.runtime_pilot.evidence_manifest.v0",

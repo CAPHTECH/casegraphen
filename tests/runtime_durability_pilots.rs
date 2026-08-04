@@ -115,6 +115,36 @@ fn checked_in_edge_proof_pilot_is_current_not_historical_node_only_evidence() {
     assert_eq!(completeness["proven_edge_count"], 2);
     assert_eq!(completeness["edge_proofs"].as_array().unwrap().len(), 2);
 
+    let independent: Value = serde_json::from_slice(
+        &fs::read("docs/pilots/issue-76/independent-mcp-client-report.json")
+            .expect("independent MCP report exists"),
+    )
+    .unwrap();
+    assert_eq!(
+        independent["client_implementation"],
+        "python_stdlib_json_rpc"
+    );
+    assert_eq!(independent["custom_rust_client_code"], false);
+    assert_eq!(independent["reconciliation"]["halt"], "needs_review");
+    assert_eq!(independent["final_boundary"]["accepted"], false);
+
+    let manifest: Value = serde_json::from_slice(
+        &fs::read("docs/pilots/issue-76/retained-evidence.manifest.json")
+            .expect("issue 76 retained manifest exists"),
+    )
+    .unwrap();
+    assert!(manifest["files"].as_array().unwrap().iter().any(|entry| {
+        entry["path"] == "independent-mcp-client-report.json"
+            && entry["content_hash"]
+                == format!(
+                    "sha256:{:x}",
+                    Sha256::digest(
+                        fs::read("docs/pilots/issue-76/independent-mcp-client-report.json")
+                            .unwrap()
+                    )
+                )
+    }));
+
     let promotion: Value = serde_json::from_slice(
         &fs::read("docs/pilots/issue-85/promotion-report.json")
             .expect("durability promotion report exists"),

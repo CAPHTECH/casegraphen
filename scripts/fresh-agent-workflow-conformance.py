@@ -10,6 +10,8 @@ import json
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_WORKFLOW = ROOT / ".github/workflows/fresh-agent-release-eval.yml"
+DEFAULT_ATTESTATION_WORKFLOW = ROOT / ".github/workflows/fresh-agent-host-attest.yml"
+DEFAULT_FINALIZATION_WORKFLOW = ROOT / ".github/workflows/fresh-agent-release-finalize.yml"
 DEFAULT_POLICY = ROOT / "evals/fresh-agent/release-policy.v0.json"
 RUST_TOOLCHAIN = re.search(
     r'^channel\s*=\s*"([^"]+)"',
@@ -59,6 +61,15 @@ def validate(text: str, pins: dict[str, dict[str, str]]) -> list[str]:
         errors.append("provider evaluation must use provider-specific protected environments")
     if text.count("python3 fresh-agent-bundle/scripts/fresh-agent-eval.py") != 2:
         errors.append("both provider lanes must execute the prepared evaluator artifact")
+    for retained_script in ("fresh-agent-host-attest.py", "fresh-agent-release.py"):
+        if f"cp scripts/{retained_script} fresh-agent-bundle/scripts/{retained_script}" not in text:
+            errors.append(f"immutable evaluator bundle must retain {retained_script}")
+    evaluator_upload = re.search(
+        r"(?ms)name: fresh-agent-evaluator-\$\{\{ github\.sha \}\}.*?retention-days:\s*(\d+)",
+        text,
+    )
+    if evaluator_upload is None or evaluator_upload.group(1) != "90":
+        errors.append("immutable evaluator bundle must survive the 90-day review lifecycle")
     if text.count('--casegraphen-bin "$GITHUB_WORKSPACE/fresh-agent-bundle/bin/casegraphen"') != 2:
         errors.append("both provider lanes must pass an absolute prepared casegraphen binary path")
     if text.count('--model "$CASEGRAPHEN_MODEL"') != 2 or text.count(
@@ -123,13 +134,119 @@ def validate(text: str, pins: dict[str, dict[str, str]]) -> list[str]:
     return errors
 
 
+def immutable_actions(text: str, workflow: str) -> list[str]:
+    return [
+        f"{workflow} action must use an immutable commit SHA: {action}@{reference}"
+        for action, reference in re.findall(
+            r"(?m)^\s*-?\s*uses:\s+([^@\s]+)@([^\s]+)\s*$", text
+        )
+        if not re.fullmatch(r"[0-9a-f]{40}", reference)
+    ]
+
+
+def validate_evidence_lifecycle(attestation: str, finalization: str) -> list[str]:
+    errors: list[str] = []
+    for name, text in (("attestation", attestation), ("finalization", finalization)):
+        if any(
+            re.search(rf"(?m)^  {event}:\s*$", text)
+            for event in ("push", "pull_request", "pull_request_target", "schedule")
+        ):
+            errors.append(f"{name} workflow must remain workflow_dispatch-only")
+        if "if: github.ref == 'refs/heads/main'" not in text:
+            errors.append(f"{name} workflow must refuse non-main dispatch refs")
+        if "API_KEY" in text:
+            errors.append(f"{name} workflow must not use provider API keys")
+        errors.extend(immutable_actions(text, name))
+
+    for provider in ("codex", "claude"):
+        if f"environment: fresh-agent-attestation-{provider}" not in attestation:
+            errors.append(f"{provider} attestation must use its protected broker environment")
+        expected_runner = (
+            "runs-on: [self-hosted, linux, x64, casegraphen-fresh-agent-broker, "
+            f"casegraphen-{provider}-attestation-broker]"
+        )
+        if expected_runner not in attestation:
+            errors.append(f"{provider} attestation must use its dedicated broker runner")
+        for artifact in (
+            "fresh-agent-evaluator-${{ inputs.evaluated_commit_sha }}",
+            f"fresh-agent-{provider}-${{{{ inputs.evaluated_commit_sha }}}}",
+        ):
+            if artifact not in attestation:
+                errors.append(f"{provider} attestation must download exact artifact {artifact}")
+        if f"--provider {provider}" not in attestation:
+            errors.append(f"{provider} broker must invoke the canonical host attester")
+        if f"fresh-agent-host-attestation-{provider}-${{{{ inputs.evaluated_commit_sha }}}}" not in attestation:
+            errors.append(f"{provider} attestation artifact must bind the evaluated commit")
+    if attestation.count("${{ secrets.CASEGRAPHEN_ATTESTATION_KEY }}") != 2:
+        errors.append("each broker lane must receive exactly its protected attestation key")
+    if attestation.count("${{ vars.CASEGRAPHEN_RUNNER_INSTANCE_ID_HASH }}") != 2:
+        errors.append("each broker lane must bind its protected runner instance identity")
+    if attestation.count('[[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]') != 2 or attestation.count(
+        '[[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]'
+    ) != 2:
+        errors.append("broker lanes must validate numeric run ids and exact commit hashes")
+    if "fresh-agent-eval.py" in attestation:
+        errors.append("broker workflow must never execute provider evaluation")
+
+    if "environment: fresh-agent-release-verifier" not in finalization:
+        errors.append("finalization must use the protected release-verifier environment")
+    if "runs-on: ubuntu-latest" not in finalization:
+        errors.append("finalization must use an ephemeral hosted verifier")
+    for provider in ("codex", "claude"):
+        for artifact in (
+            f"fresh-agent-{provider}-${{{{ inputs.evaluated_commit_sha }}}}",
+            f"fresh-agent-host-attestation-{provider}-${{{{ inputs.evaluated_commit_sha }}}}",
+        ):
+            if artifact not in finalization:
+                errors.append(f"finalization must download exact artifact {artifact}")
+        for argument in (
+            f"--provider-run provider-runs/{provider}",
+            f"--host-attestation {provider}=host-attestations/{provider}/{provider}.json",
+            f"--attestation-key {provider}=\"$key_dir/{provider}.key\"",
+        ):
+            if argument not in finalization:
+                errors.append(f"finalization is missing canonical aggregate argument: {argument}")
+    if "docs/evals/fresh-agent/reviews/*.json" not in finalization:
+        errors.append("manual review path must be confined to the reviewed repository directory")
+    if '--manual-review "$CASEGRAPHEN_MANUAL_REVIEW_PATH"' not in finalization:
+        errors.append("finalization must pass the exact reviewer-authored document")
+    if finalization.count("${{ secrets.CASEGRAPHEN_") != 2:
+        errors.append("release verifier must receive exactly the two HMAC verification keys")
+    if "if: steps.aggregate.outcome != 'success'" not in finalization:
+        errors.append("finalization must fail closed when the strict aggregate does not pass")
+    if "retention-days: 90" not in finalization:
+        errors.append("final release evidence must be retained durably")
+    for coordinate in (
+        "EVIDENCE_RUN_ID",
+        "CODEX_ATTESTATION_RUN_ID",
+        "CLAUDE_ATTESTATION_RUN_ID",
+    ):
+        if f'[[ "${coordinate}" =~ ^[1-9][0-9]*$ ]]' not in finalization:
+            errors.append(f"finalization must validate numeric coordinate {coordinate}")
+    if '[[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]' not in finalization:
+        errors.append("finalization must validate the exact evaluated commit hash")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workflow", type=pathlib.Path, default=DEFAULT_WORKFLOW)
+    parser.add_argument(
+        "--attestation-workflow", type=pathlib.Path, default=DEFAULT_ATTESTATION_WORKFLOW
+    )
+    parser.add_argument(
+        "--finalization-workflow", type=pathlib.Path, default=DEFAULT_FINALIZATION_WORKFLOW
+    )
     parser.add_argument("--policy", type=pathlib.Path, default=DEFAULT_POLICY)
     args = parser.parse_args()
     policy = json.loads(args.policy.resolve().read_text())
     errors = validate(args.workflow.resolve().read_text(), policy.get("runner_pins", {}))
+    errors.extend(
+        validate_evidence_lifecycle(
+            args.attestation_workflow.resolve().read_text(),
+            args.finalization_workflow.resolve().read_text(),
+        )
+    )
     if errors:
         for error in errors:
             print(f"FAIL {error}")

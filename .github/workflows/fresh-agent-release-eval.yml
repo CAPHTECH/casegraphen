@@ -36,6 +36,8 @@ jobs:
           mkdir -p fresh-agent-bundle/bin fresh-agent-bundle/scripts
           cp target/release/casegraphen fresh-agent-bundle/bin/casegraphen
           cp scripts/fresh-agent-eval.py fresh-agent-bundle/scripts/fresh-agent-eval.py
+          cp scripts/fresh-agent-host-attest.py fresh-agent-bundle/scripts/fresh-agent-host-attest.py
+          cp scripts/fresh-agent-release.py fresh-agent-bundle/scripts/fresh-agent-release.py
           cp -R evals skills schemas fresh-agent-bundle/
           python3 -m pip install --target fresh-agent-bundle/python-deps jsonschema==4.26.0
       - name: Publish immutable evaluation bundle
@@ -44,7 +46,7 @@ jobs:
           name: fresh-agent-evaluator-${{ github.sha }}
           path: fresh-agent-bundle
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
 
   evaluate:
     if: github.ref == 'refs/heads/main'
