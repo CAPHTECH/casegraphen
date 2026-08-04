@@ -5,7 +5,7 @@
 
 use crate::{
     execution_topology::{execution_topology_content_hash, ExecutionTopology},
-    graph_lint::{lint_execution_topology, FindingClassification, LintSeverity},
+    graph_lint::lint_execution_topology,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -262,10 +262,7 @@ pub fn propose_redesign(
     for finding in lint_execution_topology(proposed)
         .findings
         .into_iter()
-        .filter(|finding| {
-            finding.classification == FindingClassification::Deterministic
-                && finding.severity == LintSeverity::Error
-        })
+        .filter(|finding| finding.is_deterministic_error())
     {
         findings.push(one(
             "invalid_proposed_topology",

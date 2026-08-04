@@ -1,0 +1,17 @@
+{
+  "schema": "casegraphen.experimental.runtime.graph_expectation.v0",
+  "schema_version": 0,
+  "runtime_graph_id": "topology:file-review",
+  "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "nodes": [
+    {"node_id":"node:reduce","expected_output_schema_id":"schema:finding-summary","expected_parent_node_ids":["node:review-a","node:review-b"]},
+    {"node_id":"node:review-a","expected_output_schema_id":"schema:findings","expected_parent_node_ids":[]},
+    {"node_id":"node:review-b","expected_output_schema_id":"schema:findings","expected_parent_node_ids":[]},
+    {"node_id":"node:verify","expected_output_schema_id":"schema:verified-summary","expected_parent_node_ids":["node:reduce"]}
+  ],
+  "edges": [
+    {"edge_id":"edge:a-reduce","from_node_id":"node:review-a","to_node_id":"node:reduce","output_name":"findings","input_name":"candidate_findings","schema_id":"schema:findings","delivery":"streaming"},
+    {"edge_id":"edge:b-reduce","from_node_id":"node:review-b","to_node_id":"node:reduce","output_name":"findings","input_name":"candidate_findings","schema_id":"schema:findings","delivery":"streaming"},
+    {"edge_id":"edge:reduce-verify-data","from_node_id":"node:reduce","to_node_id":"node:verify","output_name":"summary","input_name":"summary","schema_id":"schema:finding-summary","delivery":"barrier"}
+  ]
+}

@@ -2,7 +2,7 @@
 
 use casegraphen::runtime_protocol::{
     parse_runtime_node_report, reconcile_runtime_reports, ExpectedRuntimeNode,
-    RuntimeGraphExpectation, RuntimeNodeReport,
+    RuntimeGraphExpectation, RuntimeNodeReport, RUNTIME_GRAPH_EXPECTATION_SCHEMA,
 };
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::Path, process::Command};
@@ -60,14 +60,18 @@ fn canonical_reconciliation_refuses_199_of_200_as_complete() {
     let reported_count = fixture["reported_node_count"].as_u64().unwrap() as usize;
     let base = example_report();
     let expectation = RuntimeGraphExpectation {
+        schema: RUNTIME_GRAPH_EXPECTATION_SCHEMA.to_owned(),
+        schema_version: 0,
         runtime_graph_id: base.runtime_graph_id.clone(),
         runtime_graph_content_hash: base.runtime_graph_content_hash.clone(),
         nodes: (0..expected_count)
             .map(|index| ExpectedRuntimeNode {
                 node_id: format!("node:{index:04}"),
                 expected_output_schema_id: base.expected_output_schema_id.clone(),
+                expected_parent_node_ids: Vec::new(),
             })
             .collect(),
+        edges: Vec::new(),
     };
     let reports = (0..reported_count)
         .map(|index| report_for_node(&base, index))

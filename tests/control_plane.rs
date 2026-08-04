@@ -71,7 +71,7 @@ fn request(tool: ControlPlaneTool, id: &str) -> ControlPlaneRequest {
 #[test]
 fn catalog_contains_the_required_mcp_compatible_surface() {
     assert_eq!(RESOURCE_TEMPLATES.len(), 7);
-    assert_eq!(TOOLS.len(), 17);
+    assert_eq!(TOOLS.len(), 18);
     assert_eq!(NOTIFICATIONS.len(), 7);
     for required in [
         "casegraphen://spaces/{id}/status",
@@ -92,6 +92,7 @@ fn catalog_contains_the_required_mcp_compatible_surface() {
         .contains(&json!("apply_evidence_packet")));
     for workflow in [
         "compile_deployment_bundle",
+        "compile_reviewed_deployment_bundle",
         "reconcile_run",
         "reconcile_resources",
         "simulate_execution_topology",

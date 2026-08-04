@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.verification_lineage_declarations.v0",
+  "description": "Caller-declared producer and verifier lineage. These values are untrusted integration input and cannot satisfy ledger-derived verification requirements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "producer", "verifiers"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.verification_lineage_declarations.v0"},
+    "schema_version": {"const": 0},
+    "producer": {"$ref": "#/$defs/producer"},
+    "verifiers": {"type": "array", "items": {"$ref": "#/$defs/verifier"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "ids": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_id", "capability_ids"],
+      "properties": {
+        "actor_id": {"$ref": "#/$defs/id"},
+        "capability_ids": {"$ref": "#/$defs/ids"}
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifier_report_id", "actor_id", "capability_ids", "disposition", "runtime_attestations"],
+      "properties": {
+        "verifier_report_id": {"$ref": "#/$defs/id"},
+        "actor_id": {"$ref": "#/$defs/id"},
+        "capability_ids": {"$ref": "#/$defs/ids"},
+        "disposition": {"enum": ["accept", "reject", "abstain"]},
+        "runtime_attestations": {"$ref": "#/$defs/ids"}
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ use crate::{
         Provenance, TopologyEdge, TopologyNode,
     },
     graph_compiler::CompilationMode,
-    graph_lint::{lint_execution_topology, FindingClassification, LintSeverity},
+    graph_lint::lint_execution_topology,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -835,10 +835,7 @@ impl ExpansionController {
         if let Some(finding) = lint_execution_topology(reviewed_topology)
             .findings
             .into_iter()
-            .find(|finding| {
-                finding.classification == FindingClassification::Deterministic
-                    && finding.severity == LintSeverity::Error
-            })
+            .find(|finding| finding.is_deterministic_error())
         {
             return Err(one(
                 "reviewed_topology_invalid",

@@ -798,6 +798,7 @@ fn build_error(shape: ErrorShape, seed: &str) -> NativeCliError {
         }
         ErrorShape::Review => NativeCliError::Review(crate::native_review::NativeReviewError {
             message: format!("review error {seed}"),
+            findings: Vec::new(),
         }),
         ErrorShape::Eval => NativeCliError::Eval(crate::native_eval::NativeEvalError {
             violations: vec![crate::native_eval::NativeEvalViolation {
@@ -840,6 +841,30 @@ fn error_code_is_total_non_empty_and_independent_of_payload_text() {
             Ok(())
         },
     );
+}
+
+#[test]
+fn review_lint_refusal_data_preserves_structured_finding_fields() {
+    let topology: crate::execution_topology::ExecutionTopology = serde_json::from_str(
+        include_str!("../../schemas/experimental/execution.topology.file-review.example.json"),
+    )
+    .expect("typed topology fixture");
+    let finding = crate::graph_lint::lint_execution_topology(&topology)
+        .findings
+        .into_iter()
+        .next()
+        .expect("fixture has lint findings");
+    let error = NativeCliError::Review(crate::native_review::NativeReviewError {
+        message: "topology review refused".to_owned(),
+        findings: vec![finding.clone()],
+    });
+
+    let data = error
+        .refusal_data()
+        .expect("structured review refusal data");
+    assert_eq!(data["findings"][0]["code"], finding.code);
+    assert_eq!(data["findings"][0]["location"], finding.location);
+    assert_eq!(data["findings"][0]["detail"], finding.detail);
 }
 
 /// The property above only pins that a code is non-empty and stable across

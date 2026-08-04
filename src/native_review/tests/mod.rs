@@ -446,6 +446,12 @@ fn execution_topology_accept_uses_canonical_semantic_validation_but_reject_remai
         .expect_err("semantic invalidity prevents acceptance");
         assert!(error.message.contains(code), "{}", error.message);
         assert!(error.message.contains(location), "{}", error.message);
+        assert!(error.findings.iter().any(|finding| {
+            finding.code == format!("contract_{code}")
+                && finding.location == location
+                && finding.classification == crate::graph_lint::FindingClassification::Deterministic
+                && finding.severity == crate::graph_lint::LintSeverity::Error
+        }));
 
         execution_topology_review_morphism(
             &space,
@@ -455,6 +461,126 @@ fn execution_topology_accept_uses_canonical_semantic_validation_but_reject_remai
         )
         .expect("invalid proposal can still be rejected audibly");
     }
+}
+
+#[test]
+fn execution_topology_accept_blocks_only_canonical_deterministic_lint_errors() {
+    let mut cycle_value: Value = serde_json::from_str(include_str!(
+        "../../../schemas/experimental/execution.topology.file-review.example.json"
+    ))
+    .expect("topology fixture");
+    let mut closing_edge = cycle_value["edges"][3].clone();
+    closing_edge["edge_id"] = json!("edge:verify-review-a-control");
+    closing_edge["from"] = json!("node:verify");
+    closing_edge["to"] = json!("node:review-a");
+    closing_edge["kind"] = json!("control");
+    closing_edge["output"] = Value::Null;
+    closing_edge["input"] = Value::Null;
+    closing_edge["schema_id"] = Value::Null;
+    closing_edge["blocking_predicate"] = json!("verification has not completed");
+    closing_edge["dependency_witness"] = json!("control:cycle-fixture");
+    closing_edge["removal_counterexample"] =
+        json!("without this edge review A can start before verification");
+    cycle_value["edges"]
+        .as_array_mut()
+        .expect("fixture edges")
+        .push(closing_edge);
+
+    let mut space = fixture_space();
+    cycle_value["topology_id"] = json!("topology:review-fixture");
+    cycle_value["case_space_id"] = json!(space.case_space_id.clone());
+    let (topology_bytes, manifest_bytes, target) =
+        topology_review_target_from_value(&space, cycle_value);
+    install_topology_review_target(&mut space, &target);
+    let request = |action| ExecutionTopologyReviewRequest {
+        target: target.clone(),
+        action,
+        reviewer_id: id("reviewer:native"),
+        reviewed_at: "2026-08-04T00:00:00Z".to_owned(),
+        reason: "Record the exact cyclic proposal disposition.".to_owned(),
+        evidence_ids: Vec::new(),
+        source_ids: vec![id("source:test")],
+        target_revision_id: id("revision:cycle-disposition"),
+    };
+
+    let parsed: crate::execution_topology::ExecutionTopology =
+        serde_json::from_slice(&topology_bytes).expect("typed cyclic topology");
+    let lint = crate::graph_lint::lint_execution_topology(&parsed);
+    assert!(lint.findings.iter().any(|finding| {
+        finding.code == "dependency_cycle"
+            && finding.classification == crate::graph_lint::FindingClassification::Deterministic
+            && finding.severity == crate::graph_lint::LintSeverity::Error
+    }));
+    assert!(
+        lint.findings.iter().any(|finding| {
+            finding.classification == crate::graph_lint::FindingClassification::Heuristic
+        }),
+        "cycle fixture intentionally exercises mixed lint classes"
+    );
+
+    let error = execution_topology_review_morphism(
+        &space,
+        request(ReviewAction::Accept),
+        &topology_bytes,
+        &manifest_bytes,
+    )
+    .expect_err("deterministic cycle prevents accept authority");
+    assert_eq!(error.findings.len(), 1);
+    assert_eq!(error.findings[0].code, "dependency_cycle");
+    assert_eq!(error.findings[0].location, "$.edges");
+    assert!(error.findings[0].detail.contains("dependency cycle"));
+
+    execution_topology_review_morphism(
+        &space,
+        request(ReviewAction::Reject),
+        &topology_bytes,
+        &manifest_bytes,
+    )
+    .expect("cyclic proposal remains rejectable");
+    execution_topology_review_morphism(
+        &space,
+        request(ReviewAction::Reopen),
+        &topology_bytes,
+        &manifest_bytes,
+    )
+    .expect("cyclic proposal remains reopenable");
+}
+
+#[test]
+fn execution_topology_accept_does_not_promote_deterministic_warnings() {
+    let mut value: Value = serde_json::from_str(include_str!(
+        "../../../schemas/experimental/execution.topology.file-review.example.json"
+    ))
+    .expect("topology fixture");
+    value["edges"][0]["removal_counterexample"] = json!("none");
+    let mut space = fixture_space();
+    value["topology_id"] = json!("topology:review-fixture");
+    value["case_space_id"] = json!(space.case_space_id.clone());
+    let (topology_bytes, manifest_bytes, target) = topology_review_target_from_value(&space, value);
+    install_topology_review_target(&mut space, &target);
+
+    let morphism = execution_topology_review_morphism(
+        &space,
+        ExecutionTopologyReviewRequest {
+            target,
+            action: ReviewAction::Accept,
+            reviewer_id: id("reviewer:native"),
+            reviewed_at: "2026-08-04T00:00:00Z".to_owned(),
+            reason: "Warnings remain non-authoritative.".to_owned(),
+            evidence_ids: Vec::new(),
+            source_ids: vec![id("source:test")],
+            target_revision_id: id("revision:warning-accepted"),
+        },
+        &topology_bytes,
+        &manifest_bytes,
+    )
+    .expect("deterministic warning is not an implicit blocker");
+    let advisories = morphism.metadata["execution_topology_review_advisories"]
+        .as_array()
+        .expect("heuristic advisories array");
+    assert!(advisories.iter().all(|finding| {
+        finding.get("classification").and_then(Value::as_str) == Some("heuristic")
+    }));
 }
 
 #[test]

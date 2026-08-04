@@ -1,6 +1,6 @@
 # ADR 0022: Atomic resource allocation and runtime expectations
 
-Status: accepted for experimental v0
+Status: accepted for experimental v0; amended 2026-08-04
 
 ## Decision
 
@@ -10,6 +10,16 @@ not submit the active reservation set, disposition set, or rate-limit
 capacities. Those inputs are reconstructed from the allocator journal and the
 host configuration. Compatibility, conflict, capacity, and active-disposition
 rules remain canonical in `resource_protocol`.
+
+The operational host grants only a reviewed deployment reservation. A request
+names a persisted deployment-bundle hash, case space, and topology claim; the
+host verifies all bundle bytes, replays the exact accepted-review revision,
+and derives an opaque authority through `graph_compiler`. The allocator event
+persists the reviewed topology hash, policy-manifest hash, deployment-bundle
+hash, accepted review/revision, node, attempt, and resource-declaration hash.
+Bearer authentication or a caller-supplied topology does not create this
+authority. The pure library allocator remains available for proposal-level
+evaluation, but the operational host does not expose that weaker path.
 
 Allocator events are append-only and hash chained. Publication uses an atomic
 create-new filesystem boundary after the complete event has been written and
@@ -23,7 +33,7 @@ expiry is inferred by replay.
 Resource-bearing runtime reconciliation uses
 `runtime.resource_expectation_bundle.v0`. The bundle binds the exact topology
 content hash and client-observed case revision to node/attempt identities,
-declarations, reservations, allocations, and disposition evidence. The host
+reviewed deployment authority, declarations, reservations, allocations, and disposition evidence. The host
 checks reservation and disposition records against the allocator journal,
 then delegates allocation reconciliation to `runtime_integration` and
 `resource_protocol`. A missing or mismatched resource boundary cannot become a

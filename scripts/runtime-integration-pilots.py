@@ -35,6 +35,7 @@ from typing import Any
 
 TRUST_BOUNDARY = "runtime_reported_untrusted_until_independently_validated_and_reviewed"
 BASE_REVISION = "revision:pilot-observed"
+NATIVE_CASE_SPACE_ID = "case_space:native-case-management-contract"
 
 
 def canonical(value: Any) -> bytes:
@@ -116,13 +117,25 @@ def report(
 
 
 class McpHost:
-    def __init__(self, binary: Path, root: Path) -> None:
+    def __init__(self, binary: Path, root: Path, repo: Path) -> None:
         token = "pilot-local-token"
+        self.root = root
+        self.store = root / "store"
+        self.cli = binary.with_name("casegraphen")
+        lift = subprocess.run(
+            [str(self.cli), "lift", "native", "--store", str(self.store),
+             "--input", str(repo / "schemas/casegraphen/native.case.space.example.json"),
+             "--revision-id", BASE_REVISION, "--format", "json"],
+            capture_output=True, text=True, check=False,
+        )
+        if lift.returncode != 0:
+            raise RuntimeError(f"pilot case-space lift failed: {lift.stderr}")
+        self.base_revision = BASE_REVISION
         environment = os.environ.copy()
         environment["CASEGRAPHEN_PILOT_TOKEN"] = token
         self.token = token
         self.process = subprocess.Popen(
-            [str(binary), "--state", str(root / "state.json"), "--store", str(root / "store"),
+            [str(binary), "--state", str(root / "state.json"), "--store", str(self.store),
              "--artifacts", str(root / "host-artifacts"), "--auth-token-env", "CASEGRAPHEN_PILOT_TOKEN"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", env=environment,
@@ -157,7 +170,7 @@ class McpHost:
         arguments = {
             "request_id": f"request:pilot:{suffix}",
             "idempotency_key": f"idempotency:pilot:{suffix}",
-            "base_revision_id": BASE_REVISION,
+            "base_revision_id": self.base_revision,
             "payload": payload,
         }
         if mutation:
@@ -177,6 +190,112 @@ class McpHost:
         if structured.get("refusal") is not None:
             raise RuntimeError(f"host refusal: {structured['refusal']}")
         return structured["result"]
+
+    def _gated_cli(self, arguments: list[str], actor_id: str) -> dict[str, Any]:
+        completed = subprocess.run(
+            [str(self.cli), *arguments, "--store", str(self.store),
+             "--actor-id", actor_id,
+             "--capability-id", "capability:durable-mutation",
+             "--operation-scope-id", NATIVE_CASE_SPACE_ID,
+             "--audience", "audit",
+             "--source-boundary-id", "source_boundary:native-case-management-contract"],
+            capture_output=True, text=True, check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(f"pilot case mutation failed: {completed.stderr}")
+        return json.loads(completed.stdout)
+
+    def reviewed_deployment(self, topology: dict[str, Any], topology_hash: str, family: str) -> dict[str, str]:
+        """Create and compile the exact content-bound topology review used for reservation."""
+        claim_id = f"evidence:execution-topology:{family}"
+        topology_path = self.root / f"{family}.execution-topology.json"
+        topology_bytes = canonical(topology)
+        topology_path.write_bytes(topology_bytes)
+        budget_policies = {
+            policy_id: {"policy_id": policy_id, "max_cost": 10}
+            for policy_id in topology.get("budget_policy_ids", [])
+        }
+        policy_manifest = {
+            "schema": "casegraphen.experimental.deployment_policy_manifest.v0",
+            "schema_version": 0,
+            "topology_id": topology["topology_id"],
+            "topology_content_hash": topology_hash,
+            "verification_policies": [],
+            "budget_policies": [
+                {"policy_id": policy_id, "content_hash": sha256(canonical(document))}
+                for policy_id, document in sorted(budget_policies.items())
+            ],
+            "expansion_policies": [],
+        }
+        policy_path = self.root / f"{family}.deployment-policy-manifest.json"
+        policy_path.write_bytes(canonical(policy_manifest))
+        policy_hash = sha256(canonical(policy_manifest))
+        artifact_id = f"artifact:sha256-{sha256(topology_bytes)}"
+        claim = {
+            "id": claim_id,
+            "cell_type": "evidence",
+            "space_id": "space:higher-graphen-casegraphen",
+            "title": f"Reviewed {family} runtime pilot topology",
+            "summary": "Exact content-bound topology for local runtime resource reconciliation.",
+            "lifecycle": "active",
+            "source_ids": ["source:cargo-test"],
+            "structure_ids": [],
+            "provenance": {
+                "source": {"kind": "log", "title": "runtime integration pilot"},
+                "confidence": 1.0,
+                "review_status": "unreviewed",
+            },
+            "metadata": {
+                "evidence_boundary": "inferred",
+                "topology_id": topology["topology_id"],
+                "execution_topology_content_hash": topology_hash,
+                "artifact_id": artifact_id,
+                "case_space_id": NATIVE_CASE_SPACE_ID,
+                "policy_manifest_content_hash": policy_hash,
+            },
+        }
+        claim_path = self.root / f"{family}.execution-topology-claim.json"
+        claim_path.write_bytes(canonical(claim))
+        attached = self._gated_cli([
+            "evidence", "attach", "--case-space-id", NATIVE_CASE_SPACE_ID,
+            "--base-revision-id", self.base_revision,
+            "--input", str(claim_path), "--artifact", str(topology_path), "--format", "json",
+        ], "actor:native-evidence-cli")
+        attached_revision = attached["result"]["record"]["current_revision_id"]
+        reviewed = self._gated_cli([
+            "topology-review", "accept", "--case-space-id", NATIVE_CASE_SPACE_ID,
+            "--target-id", claim_id, "--input", str(topology_path),
+            "--policy-manifest", str(policy_path), "--reviewer-id", f"reviewer:{family}",
+            "--reason", f"Reviewed exact {family} pilot topology and policies.",
+            "--base-revision-id", attached_revision, "--format", "json",
+        ], "actor:native-mutation-cli")
+        self.base_revision = reviewed["result"]["record"]["current_revision_id"]
+        mappings = [{
+            "node_id": node["node_id"],
+            "worker_binding_id": f"worker_binding:{node['node_id']}",
+            "success_evidence_requirement_ids": [f"evidence_requirement:{node['node_id']}"],
+            "allowed_transition_classes": [{
+                "morphism_type": "update", "target_cell_types": ["work"],
+                "to_lifecycles": ["resolved"],
+            }],
+        } for node in topology["nodes"]]
+        compiled = self.call("compile_reviewed_deployment_bundle", {
+            "topology_json": topology_bytes.decode(),
+            "compiler_request": {
+                "case_space_id": NATIVE_CASE_SPACE_ID,
+                "claim_cell_id": claim_id,
+                "plan_id": f"plan:runtime-pilot:{family}",
+                "node_plan_mappings": mappings,
+                "verification_policies": {},
+                "budget_policies": budget_policies,
+                "expansion_policies": {},
+            },
+        }, f"compile-reviewed-{family}")
+        return {
+            "case_space_id": NATIVE_CASE_SPACE_ID,
+            "claim_cell_id": claim_id,
+            "deployment_bundle_hash": compiled["manifest_content_hash"],
+        }
 
     def close(self) -> None:
         if self.process.stdin is not None:
@@ -355,6 +474,7 @@ Path(native_path).write_text(json.dumps(native, sort_keys=True), encoding='utf-8
                    adapter_name="file-drop", adapter_version="0.1.0", runtime_name="local-workspace-runner",
                    runtime_version=platform.python_version(), started_at=f"2026-08-03T00:00:0{index}Z",
                    finished_at=f"2026-08-03T00:00:0{index + 1}Z",
+                   parents=["node:edit-a"] if index == 1 else [],
                    worktree_id=f"git-worktree:pilot-{index}@{commit_hash}",
                    commit_sha=commit_hash, cost=0.0004),
         ])
@@ -392,6 +512,7 @@ def single_resource_topology(template: dict[str, Any], family: str) -> dict[str,
     topology = json.loads(json.dumps(template))
     node = topology["nodes"][0]
     topology["topology_id"] = f"topology:pilot-{family}"
+    topology["case_space_id"] = NATIVE_CASE_SPACE_ID
     topology["nodes"] = [node]
     topology["edges"] = []
     node["node_id"] = f"node:{family}"
@@ -524,9 +645,11 @@ def run_resource_family(
     observation: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     declaration, reservation, allocation = resource_contracts(topology, topology_hash, family)
-    host.call(
+    deployment_authority = host.reviewed_deployment(topology, topology_hash, family)
+    reserve = host.call(
         "reserve_resources",
         {"topology_json": json.dumps(topology), "resource_request": {
+            "deployment_authority": deployment_authority,
             "declaration": declaration, "reservation": reservation,
         }},
         f"reserve-{family}",
@@ -552,9 +675,10 @@ def run_resource_family(
         "schema": "casegraphen.experimental.runtime.resource_expectation_bundle.v0",
         "schema_version": 0,
         "topology_content_hash": topology_hash,
-        "case_revision_id": BASE_REVISION,
+        "case_revision_id": host.base_revision,
         "expectations": [{
             "node_id": node["node_id"], "attempt_id": reservation["attempt_id"],
+            "reviewed_deployment": reserve["allocator_event"]["payload"]["reviewed_deployment"],
             "declaration": declaration, "reservation": reservation,
             "allocations": [allocation], "disposition_evidence": [],
         }],
@@ -605,7 +729,7 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
     async_topology = single_resource_topology(fanout, "async-stream")
     with tempfile.TemporaryDirectory(prefix="casegraphen-runtime-pilot-") as directory:
         root = Path(directory)
-        host = McpHost(host_binary, root)
+        host = McpHost(host_binary, root, repo)
         try:
             fanout_lint = host.call("lint_execution_topology", {"topology_json": json.dumps(fanout)}, "lint-fanout")
             worktree_lint = host.call("lint_execution_topology", {"topology_json": json.dumps(worktree)}, "lint-worktree")
@@ -753,7 +877,14 @@ def run_pilots(repo: Path, host_binary: Path, output: Path) -> dict[str, Any]:
             "retry_lineage_preserved": process_observation["retry_lineage"] == ["attempt:inspect-b:1", "attempt:inspect-b:2"],
             "resource_collision_detected": any("resource" in code for code in collision_codes),
             "workspaces_isolated": file_observation["workspace_isolation_observed"],
-            "legacy_resource_boundary_fails_closed": worktree_result["halt"] == "resource_reconciliation_incomplete" and not worktree_result["proposals"],
+            "legacy_resource_boundary_fails_closed": (
+                worktree_result["halt"] == "resource_reconciliation_incomplete"
+                and worktree_result["accepted"] is False
+                and all(
+                    proposal["review_status"] == "unreviewed"
+                    for proposal in worktree_result["proposals"]
+                )
+            ),
             "additional_families_resource_complete": all(
                 result["halt"] == "needs_review"
                 and result["accepted"] is False

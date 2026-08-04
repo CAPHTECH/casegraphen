@@ -115,7 +115,14 @@ fn report(
         attempt_id: attempt.into(),
         retry_of_attempt_id: None,
         round_id: "round:1".into(),
-        parent_node_ids: vec![],
+        parent_node_ids: topology
+            .edges
+            .iter()
+            .filter(|edge| edge.to == node)
+            .map(|edge| edge.from.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
         input_artifact_ids: vec![],
         output_artifact_ids: vec![artifact.into()],
         expected_output_schema_id: schema.into(),

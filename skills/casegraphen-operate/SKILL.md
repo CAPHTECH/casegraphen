@@ -25,6 +25,12 @@ from the shipped CLI surface and schemas in
 | Have a worker do the work: binding, plan, `run --step`, reading the result | `references/executing.md` |
 | An agent runtime executes the graph and CaseGraphen records what was accepted: node granularity, mandates, taking runtime reports as evidence | `references/governing.md` |
 
+For a reviewed execution topology, accept the exact topology/policy artifact
+through `topology-review` first. An operational host may then invoke
+`compile_reviewed_deployment_bundle` using the returned revision and claim
+cell; the host derives authority from the store. This does not accept the
+generated execution plan or any runtime result.
+
 ## The two rules that break every first attempt
 
 **1. Carry the revision returned by each mutating command.** Each durable

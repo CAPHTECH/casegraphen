@@ -15,12 +15,15 @@
   },
   "$defs":{
     "hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
-    "reserve":{"type":"object","additionalProperties":false,"required":["kind","topology_content_hash","base_revision_id","declaration","reservation"],"properties":{
+    "reserve":{"type":"object","additionalProperties":false,"required":["kind","topology_content_hash","base_revision_id","reviewed_deployment","declaration","reservation"],"properties":{
       "kind":{"const":"reserve"},"topology_content_hash":{"$ref":"#/$defs/hash"},"base_revision_id":{"type":"string","minLength":1},
+      "reviewed_deployment":{"oneOf":[{"type":"null"},{"$ref":"casegraphen.experimental.resource.reviewed_deployment_binding.v0"}]},
       "declaration":{"$ref":"casegraphen.experimental.resource.declaration.v0"},"reservation":{"$ref":"casegraphen.experimental.resource.reservation.v0"}
     }},
-    "disposition":{"type":"object","additionalProperties":false,"required":["kind","base_revision_id","assertion"],"properties":{
-      "kind":{"const":"disposition"},"base_revision_id":{"type":"string","minLength":1},"assertion":{"$ref":"casegraphen.experimental.resource.reservation_disposition.v0"}
+    "disposition":{"type":"object","additionalProperties":false,"required":["kind","base_revision_id","reviewed_deployment","assertion"],"properties":{
+      "kind":{"const":"disposition"},"base_revision_id":{"type":"string","minLength":1},
+      "reviewed_deployment":{"oneOf":[{"type":"null"},{"$ref":"casegraphen.experimental.resource.reviewed_deployment_binding.v0"}]},
+      "assertion":{"$ref":"casegraphen.experimental.resource.reservation_disposition.v0"}
     }}
   }
 }

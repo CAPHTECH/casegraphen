@@ -1,0 +1,21 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.resource.reviewed_deployment_binding.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","claim_cell_id","accepted_review_id","reviewed_topology_hash","policy_manifest_hash","deployment_bundle_hash","accepted_review_revision","case_space_id","node_id","attempt_id","resource_declaration_hash"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.resource.reviewed_deployment_binding.v0"},
+    "schema_version":{"const":0},
+    "claim_cell_id":{"type":"string","minLength":1},
+    "accepted_review_id":{"type":"string","minLength":1},
+    "reviewed_topology_hash":{"$ref":"#/$defs/hash"},
+    "policy_manifest_hash":{"$ref":"#/$defs/hash"},
+    "deployment_bundle_hash":{"$ref":"#/$defs/hash"},
+    "accepted_review_revision":{"type":"string","minLength":1},
+    "case_space_id":{"type":"string","minLength":1},
+    "node_id":{"type":"string","minLength":1},
+    "attempt_id":{"type":"string","minLength":1},
+    "resource_declaration_hash":{"$ref":"#/$defs/hash"}
+  },
+  "$defs":{"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

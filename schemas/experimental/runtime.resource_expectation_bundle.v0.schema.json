@@ -10,8 +10,9 @@
     "case_revision_id":{"type":"string","minLength":1},
     "expectations":{"type":"array","items":{"$ref":"#/$defs/expectation"}}
   },
-  "$defs":{"expectation":{"type":"object","additionalProperties":false,"required":["node_id","attempt_id","declaration","reservation","allocations","disposition_evidence"],"properties":{
+  "$defs":{"expectation":{"type":"object","additionalProperties":false,"required":["node_id","attempt_id","reviewed_deployment","declaration","reservation","allocations","disposition_evidence"],"properties":{
     "node_id":{"type":"string","minLength":1},"attempt_id":{"type":"string","minLength":1},
+    "reviewed_deployment":{"$ref":"casegraphen.experimental.resource.reviewed_deployment_binding.v0"},
     "declaration":{"$ref":"casegraphen.experimental.resource.declaration.v0"},
     "reservation":{"$ref":"casegraphen.experimental.resource.reservation.v0"},
     "allocations":{"type":"array","items":{"$ref":"casegraphen.experimental.runtime.resource_allocation.v0"}},

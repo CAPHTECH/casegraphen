@@ -49,6 +49,38 @@ fn import_list_inspect_history_and_replay_case_space() {
 }
 
 #[test]
+fn public_store_append_cannot_mint_an_execution_trace_anchor() {
+    let root = temp_root("reserved-trace-anchor");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+    let mut entry = metadata_entry(&case_space);
+    entry.morphism.morphism_type = CaseMorphismType::Custom("execution_trace_anchor".to_owned());
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("public store API must not mint a tool-observed trace anchor");
+
+    assert!(
+        error
+            .to_string()
+            .contains("reserved for the canonical run path"),
+        "unexpected error: {error:?}"
+    );
+    assert_eq!(
+        store
+            .history_entries(&case_space.case_space_id)
+            .expect("history remains readable")
+            .len(),
+        1,
+        "refusal must not append the forged anchor"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn genesis_payload_round_trips_after_its_snapshot_is_rebuilt() {
     let root = temp_root("genesis-rebuild");
     let store = NativeCaseStore::new(root.clone());

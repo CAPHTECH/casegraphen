@@ -34,6 +34,7 @@ pub const TOOLS: &[ControlPlaneTool] = &[
     ControlPlaneTool::ProposeExecutionTopology,
     ControlPlaneTool::LintExecutionTopology,
     ControlPlaneTool::CompileDeploymentBundle,
+    ControlPlaneTool::CompileReviewedDeploymentBundle,
     ControlPlaneTool::AttachRuntimeReport,
     ControlPlaneTool::ReconcileRun,
     ControlPlaneTool::ApplyEvidencePacket,
@@ -56,6 +57,7 @@ pub enum ControlPlaneTool {
     ProposeExecutionTopology,
     LintExecutionTopology,
     CompileDeploymentBundle,
+    CompileReviewedDeploymentBundle,
     AttachRuntimeReport,
     ReconcileRun,
     ApplyEvidencePacket,
@@ -81,6 +83,7 @@ impl ControlPlaneTool {
             || matches!(
                 self,
                 Self::CompileDeploymentBundle
+                    | Self::CompileReviewedDeploymentBundle
                     | Self::ReconcileRun
                     | Self::ReconcileResources
                     | Self::EvaluateExpansionRound
@@ -149,16 +152,11 @@ pub struct ControlPlaneRequest {
     pub payload: Value,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CanonicalCasegraphenAuthorization {
+    #[default]
     NotEvaluated,
-}
-
-impl Default for CanonicalCasegraphenAuthorization {
-    fn default() -> Self {
-        Self::NotEvaluated
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

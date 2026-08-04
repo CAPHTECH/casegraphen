@@ -2,7 +2,7 @@
 
 use casegraphen::runtime_protocol::{
     parse_runtime_node_report, reconcile_runtime_reports, ExpectedRuntimeNode,
-    RuntimeGraphExpectation,
+    RuntimeGraphExpectation, RUNTIME_GRAPH_EXPECTATION_SCHEMA,
 };
 use serde_json::Value;
 use std::{
@@ -109,14 +109,18 @@ fn completeness_oracle_is_owned_by_the_canonical_runtime_reconciler() {
     ))
     .unwrap();
     let expectation = RuntimeGraphExpectation {
+        schema: RUNTIME_GRAPH_EXPECTATION_SCHEMA.to_owned(),
+        schema_version: 0,
         runtime_graph_id: base.runtime_graph_id.clone(),
         runtime_graph_content_hash: base.runtime_graph_content_hash.clone(),
         nodes: (0..200)
             .map(|index| ExpectedRuntimeNode {
                 node_id: format!("node:{index:04}"),
                 expected_output_schema_id: base.expected_output_schema_id.clone(),
+                expected_parent_node_ids: Vec::new(),
             })
             .collect(),
+        edges: Vec::new(),
     };
     let reports = (0..199)
         .map(|index| {

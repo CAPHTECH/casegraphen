@@ -9,19 +9,19 @@ use crate::execution_topology::{
     EdgeKind, ExecutionTopology, ResourceMode, SideEffects, WorkspaceStrategy,
 };
 use crate::verification_policy::{validate_verification_policy, VerificationPolicy};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const GRAPH_LINT_REPORT_SCHEMA: &str = "casegraphen.experimental.graph_lint.report.v0";
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingClassification {
     Deterministic,
     Heuristic,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LintSeverity {
     Error,
@@ -29,7 +29,7 @@ pub enum LintSeverity {
     Info,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GraphLintFinding {
     pub code: String,
     pub classification: FindingClassification,
@@ -39,7 +39,16 @@ pub struct GraphLintFinding {
     pub suggested_next_operation: SuggestedOperation,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+impl GraphLintFinding {
+    /// The versioned authority boundary shared by graph consumers. A
+    /// deterministic warning is deliberately not equivalent to an error.
+    pub fn is_deterministic_error(&self) -> bool {
+        self.classification == FindingClassification::Deterministic
+            && self.severity == LintSeverity::Error
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SuggestedOperation {
     pub operation: String,
     pub target_id: Option<String>,

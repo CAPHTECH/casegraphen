@@ -14,7 +14,8 @@ use casegraphen::{
         GenericJsonlReconciler, RuntimeIntegrationReport, RuntimeResourceExpectation,
     },
     runtime_protocol::{
-        parse_runtime_node_report, ExpectedRuntimeNode, RuntimeGraphExpectation, RuntimeNodeReport,
+        derive_runtime_graph_expectation, observe_runtime_artifact, parse_runtime_node_report,
+        RuntimeArtifactObservation, RuntimeGraphExpectation, RuntimeNodeReport,
     },
     streaming_reconciliation::{
         derive_streaming_acceptance, derive_streaming_resource_permits, reconcile_stream,
@@ -22,8 +23,8 @@ use casegraphen::{
         StreamingReconciliationInput, StreamingResourcePermits, STREAM_EVENT_SCHEMA,
     },
 };
+use sha2::{Digest, Sha256};
 
-const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const REVISION: &str = "revision:native-contract-v1";
 
 fn setup() -> (
@@ -57,22 +58,7 @@ fn setup() -> (
         network_scope: vec![],
         secret_scope: vec![],
     }];
-    let hash = execution_topology_content_hash(&topology).unwrap();
-    let expectation = RuntimeGraphExpectation {
-        runtime_graph_id: topology.topology_id.clone(),
-        runtime_graph_content_hash: hash,
-        nodes: topology
-            .nodes
-            .iter()
-            .map(|node| ExpectedRuntimeNode {
-                node_id: node.node_id.clone(),
-                expected_output_schema_id: node
-                    .outputs
-                    .first()
-                    .map_or_else(|| "schema:none".into(), |output| output.schema_id.clone()),
-            })
-            .collect(),
-    };
+    let expectation = derive_runtime_graph_expectation(&topology).unwrap();
     (topology, expectation)
 }
 
@@ -96,6 +82,7 @@ fn event(
     sequence: u64,
     logical_order: u64,
 ) -> RuntimeStreamEvent {
+    let content_hash = format!("{:x}", Sha256::digest(id.as_bytes()));
     RuntimeStreamEvent {
         schema: STREAM_EVENT_SCHEMA.into(),
         event_id: id.into(),
@@ -108,10 +95,10 @@ fn event(
         observed_at: "2026-08-03T00:00:00Z".into(),
         payload: StreamEventPayload::ArtifactChunk {
             edge_id: "edge:a-reduce".into(),
-            artifact_id: format!("artifact:{id}"),
+            artifact_id: format!("artifact:sha256-{content_hash}"),
             schema_id: "schema:findings".into(),
             chunk_index: sequence,
-            chunk_sha256: HASH.into(),
+            chunk_sha256: content_hash,
             final_chunk: sequence == 1,
         },
     }
@@ -129,8 +116,19 @@ fn report(expectation: &RuntimeGraphExpectation, node_id: &str, schema: &str) ->
     report.report_id = format!("report:{node_id}");
     report.expected_output_schema_id = schema.into();
     report.actual_output_schema_id = Some(schema.into());
-    report.output_artifact_ids = vec![format!("artifact:terminal:{node_id}")];
+    let bytes = node_id.as_bytes();
+    report.output_artifact_ids = vec![format!("artifact:sha256-{:x}", Sha256::digest(bytes))];
+    report.parent_node_ids = expectation
+        .nodes
+        .iter()
+        .find(|node| node.node_id == node_id)
+        .map(|node| node.expected_parent_node_ids.clone())
+        .unwrap_or_default();
     report
+}
+
+fn observed(artifact_id: &str, bytes: &[u8]) -> RuntimeArtifactObservation {
+    observe_runtime_artifact(artifact_id.to_owned(), bytes).unwrap()
 }
 
 fn resource_integration(
@@ -243,7 +241,7 @@ fn duplicate_delayed_and_out_of_order_delivery_is_deterministic() {
             expectation: &expectation,
             events,
             terminal_reports: &[],
-            observed_artifact_ids: &[],
+            observed_artifacts: &[],
             expected_case_revision_id: REVISION,
             resource_permits: Some(&resources),
             acceptance: None,
@@ -265,14 +263,29 @@ fn duplicate_delayed_and_out_of_order_delivery_is_deterministic() {
 fn a_slow_sibling_allows_safe_progress_without_hiding_incompleteness() {
     let (topology, expectation) = setup();
     let resources = resources(&topology, &expectation, "node:reduce");
-    let event = event(&expectation, "event:chunk", 0, 0);
-    let terminal = report(&expectation, "node:review-a", "schema:findings");
+    let mut event = event(&expectation, "event:chunk", 0, 0);
+    let artifact_id = match &mut event.payload {
+        StreamEventPayload::ArtifactChunk {
+            artifact_id,
+            final_chunk,
+            ..
+        } => {
+            *final_chunk = true;
+            artifact_id.clone()
+        }
+        _ => unreachable!(),
+    };
+    let mut terminal = report(&expectation, "node:review-a", "schema:findings");
+    terminal.attempt_id = "attempt:a".into();
+    terminal.report_id = "report:attempt:a".into();
+    terminal.output_artifact_ids = vec![artifact_id.clone()];
+    let artifact = observed(&artifact_id, b"event:chunk");
     let result = reconcile_stream(StreamingReconciliationInput {
         topology: &topology,
         expectation: &expectation,
         events: &[event],
         terminal_reports: &[terminal],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[artifact],
         expected_case_revision_id: REVISION,
         resource_permits: Some(&resources),
         acceptance: None,
@@ -376,7 +389,7 @@ fn acceptance_and_resource_permits_cannot_be_replayed_at_a_new_revision() {
         expectation: &expectation,
         events: &[event],
         terminal_reports: &[],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[],
         expected_case_revision_id: "revision:native-contract-v2",
         resource_permits: Some(&permits_at_a),
         acceptance: Some(&acceptance_at_a),
@@ -401,7 +414,7 @@ fn an_empty_expected_revision_fails_closed() {
         expectation: &expectation,
         events: &[],
         terminal_reports: &[],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[],
         expected_case_revision_id: "",
         resource_permits: None,
         acceptance: None,
@@ -434,9 +447,8 @@ fn acceptance_gate_or_missing_resource_blocks_early_release() {
         },
     });
     let expectation = RuntimeGraphExpectation {
-        runtime_graph_id: topology.topology_id.clone(),
         runtime_graph_content_hash: execution_topology_content_hash(&topology).unwrap(),
-        nodes: expectation.nodes,
+        ..expectation
     };
     let event = event(&expectation, "event:gated", 0, 0);
     let result = reconcile_stream(StreamingReconciliationInput {
@@ -444,7 +456,7 @@ fn acceptance_gate_or_missing_resource_blocks_early_release() {
         expectation: &expectation,
         events: &[event],
         terminal_reports: &[],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[],
         expected_case_revision_id: REVISION,
         resource_permits: Some(&resources(&topology, &expectation, "node:reduce")),
         acceptance: None,
@@ -460,17 +472,35 @@ fn acceptance_gate_or_missing_resource_blocks_early_release() {
 #[test]
 fn terminal_completeness_is_owned_by_runtime_protocol() {
     let (topology, expectation) = setup();
-    let reports = expectation
+    let mut reports = expectation
         .nodes
         .iter()
         .map(|node| report(&expectation, &node.node_id, &node.expected_output_schema_id))
+        .collect::<Vec<_>>();
+    for edge in &expectation.edges {
+        let artifact_id = reports
+            .iter()
+            .find(|report| report.node_id == edge.from_node_id)
+            .unwrap()
+            .output_artifact_ids[0]
+            .clone();
+        reports
+            .iter_mut()
+            .find(|report| report.node_id == edge.to_node_id)
+            .unwrap()
+            .input_artifact_ids
+            .push(artifact_id);
+    }
+    let artifacts = reports
+        .iter()
+        .map(|report| observed(&report.output_artifact_ids[0], report.node_id.as_bytes()))
         .collect::<Vec<_>>();
     let result = reconcile_stream(StreamingReconciliationInput {
         topology: &topology,
         expectation: &expectation,
         events: &[],
         terminal_reports: &reports,
-        observed_artifact_ids: &[],
+        observed_artifacts: &artifacts,
         expected_case_revision_id: REVISION,
         resource_permits: None,
         acceptance: None,
@@ -492,7 +522,7 @@ fn topology_expectation_mismatch_blocks_release_even_when_event_joins_expectatio
         expectation: &expectation,
         events: &[event(&expectation, "event:stale-topology", 0, 0)],
         terminal_reports: &[],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[],
         expected_case_revision_id: REVISION,
         resource_permits: Some(&resources),
         acceptance: None,
@@ -506,9 +536,41 @@ fn topology_expectation_mismatch_blocks_release_even_when_event_joins_expectatio
 }
 
 #[test]
+fn caller_cannot_omit_canonical_edges_to_claim_stream_completion() {
+    let (topology, canonical) = setup();
+    let mut declared = canonical.clone();
+    declared.edges.clear();
+    let reports = declared
+        .nodes
+        .iter()
+        .map(|node| report(&declared, &node.node_id, &node.expected_output_schema_id))
+        .collect::<Vec<_>>();
+    let result = reconcile_stream(StreamingReconciliationInput {
+        topology: &topology,
+        expectation: &declared,
+        events: &[],
+        terminal_reports: &reports,
+        observed_artifacts: &[],
+        expected_case_revision_id: REVISION,
+        resource_permits: None,
+        acceptance: None,
+        run_closed: true,
+    });
+    assert_ne!(result.status, StreamRunStatus::Complete);
+    assert!(result
+        .findings
+        .iter()
+        .any(|finding| finding.code == "topology_expectation_mismatch"));
+}
+
+#[test]
 fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
     let (topology, expectation) = setup();
     let first = event(&expectation, "event:first", 0, 0);
+    let first_artifact_id = match &first.payload {
+        StreamEventPayload::ArtifactChunk { artifact_id, .. } => artifact_id.clone(),
+        _ => unreachable!(),
+    };
     let mut collision = event(&expectation, "event:collision", 0, 1);
     if let StreamEventPayload::ArtifactChunk {
         artifact_id,
@@ -516,7 +578,7 @@ fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
         ..
     } = &mut collision.payload
     {
-        *artifact_id = "artifact:event:first".to_owned();
+        *artifact_id = first_artifact_id;
         *final_chunk = true;
     }
     let result = reconcile_stream(StreamingReconciliationInput {
@@ -524,7 +586,7 @@ fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
         expectation: &expectation,
         events: &[first, collision],
         terminal_reports: &[],
-        observed_artifact_ids: &[],
+        observed_artifacts: &[],
         expected_case_revision_id: REVISION,
         resource_permits: Some(&resources(&topology, &expectation, "node:reduce")),
         acceptance: None,

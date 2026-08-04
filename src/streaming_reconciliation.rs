@@ -14,7 +14,8 @@ use crate::{
     resource_protocol::validate_resource_declaration,
     runtime_integration::{RuntimeIntegrationReport, RuntimeResourceExpectation},
     runtime_protocol::{
-        reconcile_runtime_reports, RuntimeCompleteness, RuntimeGraphExpectation, RuntimeNodeReport,
+        derive_runtime_graph_expectation, reconcile_runtime_reports, RuntimeArtifactObservation,
+        RuntimeCompleteness, RuntimeGraphExpectation, RuntimeNodeReport,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -299,7 +300,8 @@ pub struct StreamingReconciliationInput<'a> {
     pub expectation: &'a RuntimeGraphExpectation,
     pub events: &'a [RuntimeStreamEvent],
     pub terminal_reports: &'a [RuntimeNodeReport],
-    pub observed_artifact_ids: &'a [String],
+    /// Content proofs reconstructed from actual bytes at the ingest boundary.
+    pub observed_artifacts: &'a [RuntimeArtifactObservation],
     /// Exact case revision for which this stream prefix is being reconciled.
     /// It must join both canonical readiness and every resource permit.
     pub expected_case_revision_id: &'a str,
@@ -330,16 +332,25 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             ));
         }
     }
-    let topology_join_valid = input.topology.topology_id == input.expectation.runtime_graph_id
-        && execution_topology_content_hash(input.topology)
-            .is_ok_and(|hash| hash == input.expectation.runtime_graph_content_hash);
+    let canonical_expectation = derive_runtime_graph_expectation(input.topology);
+    let topology_join_valid = canonical_expectation
+        .as_ref()
+        .is_ok_and(|canonical| canonical == input.expectation);
     if !topology_join_valid {
         findings.push(finding(
             "topology_expectation_mismatch",
             None,
-            "topology identity/content hash must match the runtime expectation",
+            "runtime expectation must exactly equal the canonical topology projection",
         ));
     }
+    // The terminal protocol owns retry/terminal selection for both batch and
+    // streaming paths. Early release consumes this projection instead of
+    // implementing a second attempt-lineage rule.
+    let final_completeness = reconcile_runtime_reports(
+        input.expectation,
+        input.terminal_reports,
+        input.observed_artifacts,
+    );
     let expected_node_ids = input
         .expectation
         .nodes
@@ -455,6 +466,7 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             artifact_id,
             schema_id,
             chunk_sha256,
+            final_chunk,
             ..
         } = &event.payload
         else {
@@ -486,6 +498,40 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
                 "producer, edge kind, or schema differs from topology",
             ));
             continue;
+        }
+        let expected_edge = input
+            .expectation
+            .edges
+            .iter()
+            .find(|candidate| candidate.edge_id == *edge_id);
+        let source_attempt_is_canonical = final_completeness
+            .terminal_attempt_ids
+            .get(&edge.from)
+            .is_some_and(|attempt_id| attempt_id == &event.attempt_id);
+        let source_report_names_artifact = input.terminal_reports.iter().any(|report| {
+            report.node_id == edge.from
+                && report.attempt_id == event.attempt_id
+                && report.output_artifact_ids.contains(artifact_id)
+        });
+        let bytes_observed = input
+            .observed_artifacts
+            .iter()
+            .any(|artifact| artifact.artifact_id() == artifact_id);
+        let handoff_contract_proven = *final_chunk
+            && expected_edge.is_some_and(|expected| {
+                expected.from_node_id == edge.from
+                    && expected.to_node_id == edge.to
+                    && expected.schema_id == *schema_id
+            })
+            && source_attempt_is_canonical
+            && source_report_names_artifact
+            && bytes_observed;
+        if !handoff_contract_proven {
+            findings.push(finding(
+                "unproven_stream_handoff",
+                Some(event.event_id.clone()),
+                "early release requires the canonical terminal producer, final artifact, topology edge binding, and observed content bytes",
+            ));
         }
         let streams = nodes
             .get(edge.from.as_str())
@@ -520,6 +566,7 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             && streams
             && resources
             && acceptance_satisfied
+            && handoff_contract_proven
         {
             releases.push(EarlyReleaseProposal {
                 edge_id: edge.edge_id.clone(),
@@ -554,11 +601,6 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
             &b.source_event_id,
         ))
     });
-    let final_completeness = reconcile_runtime_reports(
-        input.expectation,
-        input.terminal_reports,
-        input.observed_artifact_ids,
-    );
     let reported = input
         .terminal_reports
         .iter()
@@ -575,7 +617,7 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
         .filter(|node| !reported.contains(node.node_id.as_str()))
         .map(|node| node.node_id.clone())
         .collect::<Vec<_>>();
-    let status = if final_completeness.complete {
+    let status = if topology_join_valid && final_completeness.complete && findings.is_empty() {
         StreamRunStatus::Complete
     } else if input.run_closed {
         StreamRunStatus::IncompleteTerminal

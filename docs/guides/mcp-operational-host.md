@@ -42,7 +42,19 @@ capacity from that journal and its startup configuration. `reserve_resources`
 therefore does not accept caller-supplied existing reservations, dispositions,
 or capacities. `release_resources` records an explicit disposition. Atomic
 event publication means an unpublished temporary event is ignored after a
-crash, while a published event is replayed idempotently after restart.
+crash, while a published event is replayed idempotently after restart. An
+operational reservation must name a persisted reviewed deployment bundle,
+claim cell, and exact accepted-review revision. The host verifies every bundle
+artifact, re-derives authority from the CaseGraphen store, and journals the
+topology, policy manifest, bundle, review, node, attempt, and declaration
+hashes. Bearer authentication alone cannot reserve arbitrary topology work.
+
+`compile_deployment_bundle` is proposal-only. After topology and policy
+artifacts are attached and accepted through `casegraphen topology-review`, use
+`compile_reviewed_deployment_bundle`; the host accepts the claim cell and
+case-space identity, replays the exact revision, and derives the opaque mode
+through the canonical compiler. It never accepts a caller-supplied mode,
+review record, or authority hash.
 
 For a resource-bearing `reconcile_run`, pass a
 `runtime.resource_expectation_bundle.v0` naming the exact topology hash, base

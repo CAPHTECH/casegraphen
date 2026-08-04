@@ -49,9 +49,12 @@ The reviewed bytes and their derivation are:
 
 The dedicated topology-review constructor is the sole owner of these checks.
 It verifies artifact/claim lineage, topology identity, exact policy-ID sets,
-manifest content hashes, and deterministic topology semantics before an accept
-morphism can be created. Reject and reopen retain the same identity but may
-record a disposition for semantically invalid content.
+manifest content hashes, and the canonical graph-lint result before an accept
+morphism can be created. Intrinsic semantic-contract findings and graph-shape
+findings block only when the linter classifies them as `deterministic` errors;
+deterministic warnings are non-blocking and heuristic findings remain retained
+review advice. Reject and reopen retain the same identity but may record a
+disposition for semantically or structurally invalid content.
 
 `reviewed_compilation_mode` may construct its opaque binding only from an
 accepted canonical execution-topology review. At compilation, the compiler

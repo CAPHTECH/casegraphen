@@ -13,9 +13,7 @@ use crate::{
     execution_topology::{
         canonical_execution_topology, execution_topology_content_hash, ExecutionTopology,
     },
-    graph_lint::{
-        lint_execution_topology_with_verification_policies, GraphLintReport, LintSeverity,
-    },
+    graph_lint::{lint_execution_topology_with_verification_policies, GraphLintReport},
     native_eval::validate_native_case_space,
     native_model::{CaseCellType, CaseSpace, ReviewAction},
     native_review::{canonical_review, NativeReviewTargetKind},
@@ -154,7 +152,7 @@ pub struct CompilerReport {
     pub schema: &'static str,
     pub compiler_version: &'static str,
     pub status: CompilerStatus,
-    pub mode: &'static str,
+    pub mode: String,
     pub target: CompilationTarget,
     pub topology_id: String,
     pub topology_content_hash: String,
@@ -176,7 +174,8 @@ pub struct BundleArtifact {
 }
 
 /// Manifest entry joining a path to exact bytes.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BundleManifestEntry {
     pub path: String,
     pub content_hash: String,
@@ -184,15 +183,20 @@ pub struct BundleManifestEntry {
 }
 
 /// Manifest joining every generated artifact to topology and revision.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BundleManifest {
-    pub schema: &'static str,
-    pub compiler_version: &'static str,
+    pub schema: String,
+    pub compiler_version: String,
     pub topology_id: String,
     pub topology_content_hash: String,
     pub case_space_id: String,
     pub base_revision_id: String,
-    pub mode: &'static str,
+    pub mode: String,
+    pub policy_manifest_content_hash: String,
+    pub reviewed_claim_cell_id: Option<String>,
+    pub accepted_review_id: Option<String>,
+    pub accepted_review_revision_id: Option<String>,
     pub artifacts: Vec<BundleManifestEntry>,
 }
 
@@ -204,6 +208,265 @@ pub struct DeploymentBundle {
     pub manifest: BundleManifest,
     pub manifest_bytes: Vec<u8>,
     pub manifest_content_hash: String,
+}
+
+/// Opaque proof that manifest bytes, artifact inventory, and every artifact
+/// byte string agree with one content-addressed compiler bundle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedDeploymentBundle {
+    bundle: DeploymentBundle,
+    topology: ExecutionTopology,
+}
+
+impl VerifiedDeploymentBundle {
+    pub fn manifest(&self) -> &BundleManifest {
+        &self.bundle.manifest
+    }
+
+    pub fn manifest_content_hash(&self) -> &str {
+        &self.bundle.manifest_content_hash
+    }
+
+    pub fn artifact_bytes(&self, path: &str) -> Option<&[u8]> {
+        self.bundle
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.path == path)
+            .map(|artifact| artifact.bytes.as_slice())
+    }
+
+    pub fn topology(&self) -> &ExecutionTopology {
+        &self.topology
+    }
+}
+
+const REQUIRED_DEPLOYMENT_ARTIFACTS: [&str; 10] = [
+    "execution.topology.json",
+    "topology.content-hash",
+    "compiler.report.json",
+    "execution.plan.proposal.json",
+    "runtime.deployment.json",
+    "resource.manifest.json",
+    "verification.policies.json",
+    "budget.policies.json",
+    "expansion.policies.json",
+    "graph.analysis.report.json",
+];
+
+/// Verify a persisted compiler bundle before it can participate in authority
+/// derivation. Callers cannot turn a syntactically valid digest into a proof.
+pub fn verify_deployment_bundle(
+    bundle: DeploymentBundle,
+    expected_manifest_content_hash: &str,
+) -> Result<VerifiedDeploymentBundle, CompilerFinding> {
+    let invalid = |location: &str, detail: &str| {
+        compiler_finding("deployment_bundle_integrity_failure", location, detail)
+    };
+    if expected_manifest_content_hash.len() != 64
+        || !expected_manifest_content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || bundle.manifest_content_hash != expected_manifest_content_hash
+        || crate::native_hash::sha256_hex(&bundle.manifest_bytes) != expected_manifest_content_hash
+    {
+        return Err(invalid(
+            "$.manifest",
+            "manifest bytes do not match the requested content address",
+        ));
+    }
+    let parsed: BundleManifest = serde_json::from_slice(&bundle.manifest_bytes)
+        .map_err(|error| invalid("$.manifest", &error.to_string()))?;
+    if parsed != bundle.manifest {
+        return Err(invalid(
+            "$.manifest",
+            "parsed manifest differs from the supplied typed manifest",
+        ));
+    }
+    let manifest_entries = bundle
+        .manifest
+        .artifacts
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let artifacts = bundle
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.path.as_str(), artifact))
+        .collect::<BTreeMap<_, _>>();
+    if manifest_entries.len() != bundle.manifest.artifacts.len()
+        || artifacts.len() != bundle.artifacts.len()
+        || manifest_entries.keys().ne(artifacts.keys())
+        || REQUIRED_DEPLOYMENT_ARTIFACTS
+            .iter()
+            .any(|path| !artifacts.contains_key(path))
+    {
+        return Err(invalid(
+            "$.manifest.artifacts",
+            "artifact inventory is duplicated, incomplete, or differs from the manifest",
+        ));
+    }
+    for (path, artifact) in artifacts {
+        let entry = manifest_entries[path];
+        let actual_hash = crate::native_hash::sha256_hex(&artifact.bytes);
+        if artifact.content_hash != actual_hash
+            || entry.content_hash != actual_hash
+            || entry.byte_length != artifact.bytes.len() as u64
+        {
+            return Err(invalid(
+                &format!("$.artifacts[{path}]"),
+                "artifact bytes, digest, and manifest entry do not agree",
+            ));
+        }
+    }
+    let topology_bytes = bundle
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == "execution.topology.json")
+        .expect("required inventory was checked")
+        .bytes
+        .as_slice();
+    let topology_text = std::str::from_utf8(topology_bytes)
+        .map_err(|error| invalid("$.artifacts[execution.topology.json]", &error.to_string()))?;
+    let topology =
+        crate::execution_topology::parse_execution_topology(topology_text).map_err(|findings| {
+            invalid(
+                "$.artifacts[execution.topology.json]",
+                &serde_json::to_string(&findings).expect("topology findings serialize"),
+            )
+        })?;
+    let topology_hash = execution_topology_content_hash(&topology)
+        .expect("validated execution topology serializes");
+    if topology.topology_id != bundle.manifest.topology_id
+        || topology.case_space_id != bundle.manifest.case_space_id
+        || topology_hash != bundle.manifest.topology_content_hash
+    {
+        return Err(invalid(
+            "$.artifacts[execution.topology.json]",
+            "topology artifact identity or content hash differs from the manifest",
+        ));
+    }
+    Ok(VerifiedDeploymentBundle { bundle, topology })
+}
+
+/// Opaque proof that a persisted deployment bundle is exactly the output
+/// authorized by the latest canonical execution-topology review.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewedDeploymentAuthority {
+    claim_cell_id: String,
+    accepted_review_id: String,
+    topology_content_hash: String,
+    policy_manifest_content_hash: String,
+    deployment_bundle_hash: String,
+    accepted_review_revision_id: String,
+    case_space_id: String,
+}
+
+impl ReviewedDeploymentAuthority {
+    pub(crate) fn claim_cell_id(&self) -> &str {
+        &self.claim_cell_id
+    }
+
+    pub(crate) fn accepted_review_id(&self) -> &str {
+        &self.accepted_review_id
+    }
+
+    pub(crate) fn topology_content_hash(&self) -> &str {
+        &self.topology_content_hash
+    }
+
+    pub(crate) fn policy_manifest_content_hash(&self) -> &str {
+        &self.policy_manifest_content_hash
+    }
+
+    pub(crate) fn deployment_bundle_hash(&self) -> &str {
+        &self.deployment_bundle_hash
+    }
+
+    pub(crate) fn accepted_review_revision_id(&self) -> &str {
+        &self.accepted_review_revision_id
+    }
+
+    pub(crate) fn case_space_id(&self) -> &str {
+        &self.case_space_id
+    }
+}
+
+/// Re-derives deployment authority from canonical review state and a verified
+/// content-addressed bundle manifest. The manifest bytes and artifact entries
+/// must be hash-verified by the persistence adapter before this call.
+pub fn reviewed_deployment_authority(
+    case_space: &CaseSpace,
+    claim_cell_id: &str,
+    bundle: &VerifiedDeploymentBundle,
+) -> Result<ReviewedDeploymentAuthority, CompilerFinding> {
+    let manifest = bundle.manifest();
+    let deployment_bundle_hash = bundle.manifest_content_hash();
+    let CompilationMode::Reviewed(binding) = reviewed_compilation_mode(case_space, claim_cell_id)?
+    else {
+        unreachable!("reviewed_compilation_mode only returns reviewed authority")
+    };
+    let mismatch = |location: &str, detail: &str| {
+        compiler_finding("reviewed_deployment_binding_mismatch", location, detail)
+    };
+    if manifest.schema != DEPLOYMENT_BUNDLE_SCHEMA
+        || manifest.compiler_version != GRAPH_COMPILER_VERSION
+        || manifest.mode != "reviewed"
+    {
+        return Err(mismatch(
+            "$.manifest",
+            "bundle is not a reviewed deployment manifest from this compiler version",
+        ));
+    }
+    if manifest.case_space_id != binding.case_space_id
+        || manifest.base_revision_id != binding.base_revision_id
+        || manifest.accepted_review_revision_id.as_deref()
+            != Some(binding.base_revision_id.as_str())
+    {
+        return Err(mismatch(
+            "$.manifest.base_revision_id",
+            "bundle is not bound to the accepted review revision",
+        ));
+    }
+    if manifest.topology_content_hash != binding.topology_content_hash {
+        return Err(mismatch(
+            "$.manifest.topology_content_hash",
+            "bundle topology differs from the accepted topology review",
+        ));
+    }
+    if manifest.policy_manifest_content_hash != binding.policy_manifest_content_hash {
+        return Err(mismatch(
+            "$.manifest.policy_manifest_content_hash",
+            "bundle policies differ from the accepted topology review",
+        ));
+    }
+    if manifest.reviewed_claim_cell_id.as_deref() != Some(claim_cell_id)
+        || manifest.accepted_review_id.as_deref() != Some(binding.review_id.as_str())
+    {
+        return Err(mismatch(
+            "$.manifest.accepted_review_id",
+            "bundle does not name the canonical accepted topology review",
+        ));
+    }
+    if deployment_bundle_hash.len() != 64
+        || !deployment_bundle_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(compiler_finding(
+            "invalid_deployment_bundle_hash",
+            "$.deployment_bundle_hash",
+            "deployment bundle hash must be a lowercase SHA-256 hex digest",
+        ));
+    }
+    Ok(ReviewedDeploymentAuthority {
+        claim_cell_id: claim_cell_id.to_owned(),
+        accepted_review_id: binding.review_id,
+        topology_content_hash: binding.topology_content_hash,
+        policy_manifest_content_hash: binding.policy_manifest_content_hash,
+        deployment_bundle_hash: deployment_bundle_hash.to_owned(),
+        accepted_review_revision_id: binding.base_revision_id,
+        case_space_id: binding.case_space_id,
+    })
 }
 
 /// Derive reviewed mode from the canonical, validated CaseGraphen review log.
@@ -320,12 +583,13 @@ pub fn compile_execution_topology(
     let topology = &canonical_topology;
     let topology_hash = execution_topology_content_hash(topology)
         .expect("canonical execution topology hashes deterministically");
-    let (mode_name, reviewed_claim, accepted_review) = mode_report_fields(&request.mode);
+    let (mode_name, reviewed_claim, accepted_review, accepted_review_revision) =
+        mode_report_fields(&request.mode);
     let mut report = CompilerReport {
         schema: COMPILER_REPORT_SCHEMA,
         compiler_version: GRAPH_COMPILER_VERSION,
         status: CompilerStatus::Refused,
-        mode: mode_name,
+        mode: mode_name.to_owned(),
         target: request.target,
         topology_id: topology.topology_id.clone(),
         topology_content_hash: topology_hash.clone(),
@@ -351,7 +615,7 @@ pub fn compile_execution_topology(
     for finding in analysis
         .findings
         .iter()
-        .filter(|finding| finding.severity == LintSeverity::Error)
+        .filter(|finding| finding.is_deterministic_error())
     {
         report.unsupported_semantics.push(compiler_finding(
             format!("lint_{}", finding.code),
@@ -408,13 +672,26 @@ pub fn compile_execution_topology(
     replace_compiler_report(&mut artifacts, &report);
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
     let manifest = BundleManifest {
-        schema: DEPLOYMENT_BUNDLE_SCHEMA,
-        compiler_version: GRAPH_COMPILER_VERSION,
+        schema: DEPLOYMENT_BUNDLE_SCHEMA.to_owned(),
+        compiler_version: GRAPH_COMPILER_VERSION.to_owned(),
         topology_id: topology.topology_id.clone(),
         topology_content_hash: topology_hash,
         case_space_id: request.case_space_id.clone(),
         base_revision_id: request.base_revision_id.clone(),
-        mode: mode_name,
+        mode: mode_name.to_owned(),
+        policy_manifest_content_hash: deployment_policy_manifest_content_hash(
+            &deployment_policy_manifest(
+                topology,
+                &report.topology_content_hash,
+                &request.verification_policies,
+                &request.budget_policies,
+                &request.expansion_policies,
+            ),
+        )
+        .expect("typed deployment policy manifest hashes"),
+        reviewed_claim_cell_id: report.reviewed_claim_cell_id.clone(),
+        accepted_review_id: report.accepted_review_id.clone(),
+        accepted_review_revision_id: accepted_review_revision,
         artifacts: artifacts
             .iter()
             .map(|artifact| BundleManifestEntry {
@@ -886,13 +1163,16 @@ fn canonical_value(value: Value) -> Value {
     }
 }
 
-fn mode_report_fields(mode: &CompilationMode) -> (&'static str, Option<String>, Option<String>) {
+fn mode_report_fields(
+    mode: &CompilationMode,
+) -> (&'static str, Option<String>, Option<String>, Option<String>) {
     match mode {
-        CompilationMode::Proposal => ("proposal", None, None),
+        CompilationMode::Proposal => ("proposal", None, None, None),
         CompilationMode::Reviewed(binding) => (
             "reviewed",
             Some(binding.claim_cell_id.clone()),
             Some(binding.review_id.clone()),
+            Some(binding.base_revision_id.clone()),
         ),
     }
 }
@@ -1068,6 +1348,40 @@ mod tests {
         let plan: ExecutionPlan = serde_json::from_slice(&plan_artifact.bytes).unwrap();
         assert_eq!(plan.review_status, ReviewStatus::Unreviewed);
         assert_eq!(plan.provenance.review_status, ReviewStatus::Unreviewed);
+    }
+
+    #[test]
+    fn deployment_authority_requires_verified_manifest_and_artifact_bytes() {
+        let topology = topology();
+        let request = request(&topology);
+        let bundle = compile_execution_topology(&topology, &request).expect("compile proposal");
+        let expected_hash = bundle.manifest_content_hash.clone();
+        let verified = verify_deployment_bundle(bundle.clone(), &expected_hash)
+            .expect("exact compiler output verifies");
+        assert_eq!(verified.manifest_content_hash(), expected_hash);
+
+        let forged = "0".repeat(64);
+        assert_eq!(
+            verify_deployment_bundle(bundle.clone(), &forged)
+                .expect_err("a caller-chosen digest cannot mint bundle authority")
+                .code,
+            "deployment_bundle_integrity_failure"
+        );
+
+        let mut substituted = bundle;
+        substituted
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.path == "execution.topology.json")
+            .unwrap()
+            .bytes
+            .push(b' ');
+        assert_eq!(
+            verify_deployment_bundle(substituted, &expected_hash)
+                .expect_err("artifact substitution must fail before authority derivation")
+                .code,
+            "deployment_bundle_integrity_failure"
+        );
     }
 
     #[test]

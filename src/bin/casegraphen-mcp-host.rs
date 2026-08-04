@@ -8,8 +8,10 @@ use casegraphen::{
     dynamic_expansion::{ExpansionCandidate, ExpansionController, ExpansionPolicy},
     execution_topology::{execution_topology_content_hash, parse_execution_topology},
     graph_compiler::{
-        compile_execution_topology, CompilationMode, CompilationTarget, CompilerRequest,
-        NodePlanMapping,
+        compile_execution_topology, reviewed_compilation_mode, reviewed_deployment_authority,
+        verify_deployment_bundle, BundleArtifact, BundleManifest, CompilationMode,
+        CompilationTarget, CompilerRequest, DeploymentBundle, NodePlanMapping,
+        VerifiedDeploymentBundle,
     },
     graph_lint::lint_execution_topology,
     graph_simulation::{simulate_execution_topology, GraphSimulationRequest},
@@ -72,9 +74,33 @@ struct ProposalCompilerInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReviewedCompilerInput {
+    case_space_id: String,
+    claim_cell_id: String,
+    plan_id: String,
+    node_plan_mappings: Vec<NodePlanMapping>,
+    #[serde(default)]
+    verification_policies: std::collections::BTreeMap<String, Value>,
+    #[serde(default)]
+    budget_policies: std::collections::BTreeMap<String, Value>,
+    #[serde(default)]
+    expansion_policies: std::collections::BTreeMap<String, Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResourceReservationInput {
+    deployment_authority: ReviewedDeploymentReference,
     declaration: ResourceDeclaration,
     reservation: ResourceReservation,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewedDeploymentReference {
+    case_space_id: String,
+    claim_cell_id: String,
+    deployment_bundle_hash: String,
 }
 
 #[derive(Deserialize)]
@@ -116,8 +142,6 @@ struct StreamingRunInput {
     events: Vec<RuntimeStreamEvent>,
     #[serde(default)]
     terminal_reports: Vec<RuntimeNodeReport>,
-    #[serde(default)]
-    observed_artifact_ids: Vec<String>,
     #[serde(default)]
     resource_expectations: Vec<RuntimeResourceExpectation>,
     runtime_jsonl: String,
@@ -190,23 +214,52 @@ impl DecisionDelegate for OperationalDelegate {
                         "compilation_refused",
                         &serde_json::to_string(&report).expect("compiler report serializes"),
                     ))?;
-                let bundle_directory = self.artifact_path.join("bundles")
-                    .join(bundle.manifest_content_hash.replace(':', "-"));
-                fs::create_dir_all(&bundle_directory).map_err(io_refusal)?;
-                for artifact in &bundle.artifacts {
-                    let relative = safe_relative_path(&artifact.path)?;
-                    let output = bundle_directory.join(relative);
-                    if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(io_refusal)?; }
-                    write_exact_content(&output, &artifact.bytes)?;
+                persist_bundle(&self.artifact_path, bundle, false)
+            }
+            ControlPlaneTool::CompileReviewedDeploymentBundle => {
+                let topology = topology_from_payload(&request.payload)?;
+                let input: ReviewedCompilerInput = payload_value(
+                    &request.payload,
+                    "compiler_request",
+                )?;
+                let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
+                    refusal(
+                        "explicit_revision_required",
+                        "reviewed compilation requires the client-observed accepted review revision",
+                    )
+                })?;
+                let case_space_id = safe_id(&input.case_space_id)?;
+                let replay = NativeCaseStore::new(self.store_path.clone())
+                    .replay_current_case_space(&case_space_id)
+                    .map_err(store_refusal)?;
+                if replay.current_revision_id.as_str() != expected_revision {
+                    return Err(ControlPlaneRefusal::stale(
+                        expected_revision,
+                        replay.current_revision_id.to_string(),
+                    ));
                 }
-                write_exact_content(&bundle_directory.join("manifest.json"), &bundle.manifest_bytes)?;
-                Ok(json!({
-                    "manifest": bundle.manifest,
-                    "manifest_content_hash": bundle.manifest_content_hash,
-                    "bundle_directory": bundle_directory,
-                    "review_status": "unreviewed",
-                    "accepted": false
-                }))
+                let mode = reviewed_compilation_mode(&replay.case_space, &input.claim_cell_id)
+                    .map_err(|finding| findings_refusal(
+                        "reviewed_compilation_authority_refused",
+                        &finding,
+                    ))?;
+                let compiler_request = CompilerRequest {
+                    mode,
+                    target: CompilationTarget::GenericJsonlV0,
+                    case_space_id: input.case_space_id,
+                    base_revision_id: expected_revision.to_owned(),
+                    plan_id: input.plan_id,
+                    node_plan_mappings: input.node_plan_mappings,
+                    verification_policies: input.verification_policies,
+                    budget_policies: input.budget_policies,
+                    expansion_policies: input.expansion_policies,
+                };
+                let bundle = compile_execution_topology(&topology, &compiler_request)
+                    .map_err(|report| findings_refusal(
+                        "reviewed_compilation_refused",
+                        report.as_ref(),
+                    ))?;
+                persist_bundle(&self.artifact_path, bundle, true)
             }
             ControlPlaneTool::ReconcileRun => {
                 let topology = topology_from_payload(&request.payload)?;
@@ -228,6 +281,19 @@ impl DecisionDelegate for OperationalDelegate {
                         {
                             return Err(refusal("noncanonical_resource_reservation", "resource expectation does not name an exact allocator journal reservation"));
                         }
+                        let journaled_authority = self
+                            .allocator
+                            .reviewed_reservation_binding(
+                                &entry.declaration,
+                                &entry.reservation,
+                            )
+                            .map_err(allocator_refusal)?;
+                        if journaled_authority.as_ref() != entry.reviewed_deployment.as_ref() {
+                            return Err(refusal(
+                                "noncanonical_reviewed_deployment_reservation",
+                                "resource expectation does not retain the allocator journal deployment authority",
+                            ));
+                        }
                         for assertion in &entry.disposition_evidence {
                             if !self.allocator.contains_disposition(assertion).map_err(allocator_refusal)? {
                                 return Err(refusal("noncanonical_resource_disposition", "resource disposition evidence is absent from allocator journal"));
@@ -246,20 +312,42 @@ impl DecisionDelegate for OperationalDelegate {
                     .map_err(|error| refusal("serialization_failure", &error.to_string()))
             }
             ControlPlaneTool::ReserveResources => {
-                let topology = topology_from_payload(&request.payload)?;
                 let input: ResourceReservationInput = payload_value(&request.payload, "resource_request")?;
                 let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
                     refusal("explicit_revision_required", "resource allocation requires a base revision")
                 )?;
-                let outcome = self.allocator.reserve(
-                    &topology,
+                let case_space_id = safe_id(&input.deployment_authority.case_space_id)?;
+                let replay = NativeCaseStore::new(self.store_path.clone())
+                    .replay_current_case_space(&case_space_id)
+                    .map_err(store_refusal)?;
+                if replay.current_revision_id.as_str() != base_revision_id {
+                    return Err(ControlPlaneRefusal::stale(
+                        base_revision_id,
+                        replay.current_revision_id.to_string(),
+                    ));
+                }
+                let bundle = load_verified_bundle(
+                    &self.artifact_path,
+                    &input.deployment_authority.deployment_bundle_hash,
+                )?;
+                let authority = reviewed_deployment_authority(
+                    &replay.case_space,
+                    &input.deployment_authority.claim_cell_id,
+                    &bundle,
+                ).map_err(|finding| findings_refusal(
+                    "reviewed_deployment_authority_refused",
+                    &finding,
+                ))?;
+                let outcome = self.allocator.reserve_reviewed(
+                    bundle.topology(),
+                    &authority,
                     base_revision_id,
                     input.declaration,
                     input.reservation,
                     &request.idempotency_key,
                 ).map_err(allocator_refusal)?;
                 Ok(json!({
-                    "topology_content_hash": execution_topology_content_hash(&topology).expect("typed topology hashes"),
+                    "topology_content_hash": execution_topology_content_hash(bundle.topology()).expect("typed topology hashes"),
                     "base_revision_id": request.base_revision_id,
                     "allocator_event": outcome.event,
                     "allocator_generation": outcome.snapshot.generation,
@@ -273,7 +361,28 @@ impl DecisionDelegate for OperationalDelegate {
                 let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
                     refusal("explicit_revision_required", "resource disposition requires a base revision")
                 )?;
-                let outcome = self.allocator.disposition(
+                let binding = self
+                    .allocator
+                    .reviewed_reservation_binding_by_identity(
+                        &input.assertion.reservation_id,
+                        &input.assertion.attempt_id,
+                    )
+                    .map_err(allocator_refusal)?
+                    .ok_or_else(|| refusal(
+                        "reviewed_deployment_authority_required",
+                        "resource disposition target has no reviewed deployment authority",
+                    ))?;
+                let case_space_id = safe_id(&binding.case_space_id)?;
+                let replay = NativeCaseStore::new(self.store_path.clone())
+                    .replay_current_case_space(&case_space_id)
+                    .map_err(store_refusal)?;
+                if replay.current_revision_id.as_str() != base_revision_id {
+                    return Err(ControlPlaneRefusal::stale(
+                        base_revision_id,
+                        replay.current_revision_id.to_string(),
+                    ));
+                }
+                let outcome = self.allocator.disposition_reviewed(
                     base_revision_id,
                     input.assertion,
                     &request.idempotency_key,
@@ -373,12 +482,13 @@ impl DecisionDelegate for OperationalDelegate {
                     &integration,
                     &acceptance,
                 ).map_err(|findings| findings_refusal("streaming_resource_refused", &findings))?;
+                let observed_artifacts = reconciler.artifact_observations();
                 serde_json::to_value(reconcile_stream(StreamingReconciliationInput {
                     topology: &topology,
                     expectation: &input.expectation,
                     events: &input.events,
                     terminal_reports: &input.terminal_reports,
-                    observed_artifact_ids: &input.observed_artifact_ids,
+                    observed_artifacts: &observed_artifacts,
                     expected_case_revision_id: expected_revision,
                     resource_permits: Some(&permits),
                     acceptance: Some(&acceptance),
@@ -602,6 +712,78 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, ControlPlaneRefusal> {
         ));
     }
     Ok(path.to_path_buf())
+}
+
+fn persist_bundle(
+    artifact_root: &Path,
+    bundle: DeploymentBundle,
+    reviewed_authority: bool,
+) -> Result<Value, ControlPlaneRefusal> {
+    let bundle_directory = artifact_root
+        .join("bundles")
+        .join(bundle.manifest_content_hash.replace(':', "-"));
+    fs::create_dir_all(&bundle_directory).map_err(io_refusal)?;
+    for artifact in &bundle.artifacts {
+        let relative = safe_relative_path(&artifact.path)?;
+        let output = bundle_directory.join(relative);
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(io_refusal)?;
+        }
+        write_exact_content(&output, &artifact.bytes)?;
+    }
+    write_exact_content(
+        &bundle_directory.join("manifest.json"),
+        &bundle.manifest_bytes,
+    )?;
+    Ok(json!({
+        "manifest": bundle.manifest,
+        "manifest_content_hash": bundle.manifest_content_hash,
+        "bundle_directory": bundle_directory,
+        "deployment_authority": if reviewed_authority { "reviewed" } else { "proposal_only" },
+        "generated_plan_review_status": "unreviewed",
+        "accepted_runtime_output": false,
+        "accepted": false
+    }))
+}
+
+fn load_verified_bundle(
+    artifact_root: &Path,
+    manifest_content_hash: &str,
+) -> Result<VerifiedDeploymentBundle, ControlPlaneRefusal> {
+    if manifest_content_hash.len() != 64
+        || !manifest_content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(refusal(
+            "invalid_deployment_bundle_hash",
+            "deployment bundle hash must be a lowercase SHA-256 hex digest",
+        ));
+    }
+    let directory = artifact_root.join("bundles").join(manifest_content_hash);
+    let manifest_bytes = fs::read(directory.join("manifest.json")).map_err(io_refusal)?;
+    let manifest: BundleManifest = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| refusal("invalid_deployment_bundle_manifest", &error.to_string()))?;
+    let mut artifacts = Vec::with_capacity(manifest.artifacts.len());
+    for entry in &manifest.artifacts {
+        let relative = safe_relative_path(&entry.path)?;
+        let bytes = fs::read(directory.join(relative)).map_err(io_refusal)?;
+        artifacts.push(BundleArtifact {
+            path: entry.path.clone(),
+            content_hash: entry.content_hash.clone(),
+            bytes,
+        });
+    }
+    verify_deployment_bundle(
+        DeploymentBundle {
+            artifacts,
+            manifest,
+            manifest_bytes,
+            manifest_content_hash: manifest_content_hash.to_owned(),
+        },
+        manifest_content_hash,
+    )
+    .map_err(|finding| findings_refusal("deployment_bundle_integrity_failure", &finding))
 }
 
 fn write_exact_content(path: &Path, bytes: &[u8]) -> Result<(), ControlPlaneRefusal> {

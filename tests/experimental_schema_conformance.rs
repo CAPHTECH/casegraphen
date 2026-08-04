@@ -10,7 +10,10 @@ use casegraphen::{
     execution_topology::ExecutionTopology,
     graph_simulation::GraphSimulationRequest,
     native_review::ExecutionTopologyReviewArtifact,
-    resource_allocator::{ResourceAllocatorConfiguration, ResourceAllocatorEvent},
+    resource_allocator::{
+        ResourceAllocatorConfiguration, ResourceAllocatorEvent,
+        ReviewedDeploymentReservationBinding,
+    },
     resource_protocol::{
         GitWorktreeRecord, RateLimitCapacity, ReservationDispositionAssertion, ResourceDeclaration,
         ResourceReconciliation, ResourceReservation, RuntimeResourceAllocation,
@@ -18,7 +21,7 @@ use casegraphen::{
     runtime_integration::ResourceExpectationBundle,
     runtime_protocol::RuntimeNodeReport,
     streaming_reconciliation::RuntimeStreamEvent,
-    verification_policy::VerificationPolicy,
+    verification_policy::{VerificationLineageDeclarations, VerificationPolicy},
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -67,6 +70,7 @@ fn representative_rust_roundtrips_validate_against_shipped_schemas() {
         json!({"schema_id":"casegraphen.experimental.resource.rate_limit_capacity.v0","instance":roundtrip::<RateLimitCapacity>("resource.rate_limit_capacity.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.allocator_configuration.v0","instance":roundtrip::<ResourceAllocatorConfiguration>("resource.allocator_configuration.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.allocator_event.v0","instance":roundtrip::<ResourceAllocatorEvent>("resource.allocator_event.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.resource.reviewed_deployment_binding.v0","instance":roundtrip::<ReviewedDeploymentReservationBinding>("resource.reviewed_deployment_binding.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.runtime.resource_allocation.v0","instance":roundtrip::<RuntimeResourceAllocation>("runtime.resource_allocation.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.reconciliation.v0","instance":roundtrip::<ResourceReconciliation>("resource.reconciliation.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.git.worktree_record.v0","instance":roundtrip::<GitWorktreeRecord>("git.worktree_record.v0.example.json")}),
@@ -74,6 +78,7 @@ fn representative_rust_roundtrips_validate_against_shipped_schemas() {
         json!({"schema_id":"casegraphen.experimental.runtime.resource_expectation_bundle.v0","instance":roundtrip::<ResourceExpectationBundle>("runtime.resource_expectation_bundle.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.runtime.stream_event.v0","instance":roundtrip::<RuntimeStreamEvent>("runtime.stream_event.example.json")}),
         json!({"schema_id":"casegraphen.experimental.verification_policy.v0","instance":roundtrip::<VerificationPolicy>("verification.policy.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.verification_lineage_declarations.v0","instance":roundtrip::<VerificationLineageDeclarations>("verification_lineage_declarations.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.control_plane.request.v0","instance":roundtrip::<ControlPlaneRequest>("control_plane.request.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.control_plane.response.v0","instance":roundtrip::<ControlPlaneResponse>("control_plane.response.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.control_plane.notification.v0","instance":roundtrip::<ControlPlaneNotification>("control_plane.notification.v0.example.json")}),

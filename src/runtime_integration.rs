@@ -5,15 +5,19 @@
 
 use crate::{
     execution_topology::{execution_topology_content_hash, ExecutionTopology},
-    graph_lint::{lint_execution_topology, FindingClassification, LintSeverity},
+    graph_lint::lint_execution_topology,
+    resource_allocator::{
+        resource_declaration_content_hash, ReviewedDeploymentReservationBinding,
+        REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA,
+    },
     resource_protocol::{
         reconcile_resource_allocations, validate_resource_declaration, ResourceDeclaration,
         ResourceReconciliation, ResourceReservation, RuntimeResourceAllocation,
     },
     runtime_protocol::{
-        canonical_runtime_node_report, parse_runtime_node_report, reconcile_runtime_reports,
-        ExpectedRuntimeNode, RuntimeCompleteness, RuntimeGraphExpectation, RuntimeNodeReport,
-        RuntimeNodeStatus,
+        canonical_runtime_node_report, derive_runtime_graph_expectation, observe_runtime_artifact,
+        parse_runtime_node_report, reconcile_runtime_reports, RuntimeArtifactObservation,
+        RuntimeCompleteness, RuntimeNodeReport, RuntimeNodeStatus,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -43,6 +47,8 @@ pub struct ResourceExpectationBundle {
 pub struct ResourceExpectationBundleEntry {
     pub node_id: String,
     pub attempt_id: String,
+    #[serde(default)]
+    pub reviewed_deployment: Option<ReviewedDeploymentReservationBinding>,
     pub declaration: ResourceDeclaration,
     pub reservation: ResourceReservation,
     pub allocations: Vec<RuntimeResourceAllocation>,
@@ -110,6 +116,29 @@ impl ResourceExpectationBundle {
                     "resource_bundle_join_mismatch",
                     &format!("{} identities do not join", entry.node_id),
                 ));
+            }
+            match &entry.reviewed_deployment {
+                Some(binding)
+                    if binding.schema == REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA
+                        && binding.schema_version == 0
+                        && binding.reviewed_topology_hash == self.topology_content_hash
+                        && binding.accepted_review_revision == self.case_revision_id
+                        && binding.case_space_id == topology.case_space_id
+                        && binding.node_id == entry.node_id
+                        && binding.attempt_id == entry.attempt_id
+                        && binding.resource_declaration_hash
+                            == resource_declaration_content_hash(&entry.declaration) => {}
+                Some(_) => findings.push(bundle_finding(
+                    "resource_bundle_reviewed_deployment_mismatch",
+                    &format!(
+                        "{} does not match its reviewed deployment authority",
+                        entry.node_id
+                    ),
+                )),
+                None => findings.push(bundle_finding(
+                    "resource_bundle_reviewed_deployment_missing",
+                    &format!("{} has no reviewed deployment authority", entry.node_id),
+                )),
             }
             for allocation in &entry.allocations {
                 if !allocations.insert(allocation.allocation_id.as_str()) {
@@ -444,6 +473,17 @@ impl GenericJsonlReconciler {
         self.reconcile_with_resources(topology, base_revision_id, &[])
     }
 
+    /// Reconstructs content proofs from the exact bytes accepted by this ingest boundary.
+    pub fn artifact_observations(&self) -> Vec<RuntimeArtifactObservation> {
+        self.artifacts
+            .iter()
+            .map(|(artifact_id, (_, _, bytes))| {
+                observe_runtime_artifact(artifact_id.clone(), bytes)
+                    .expect("ingest already verified the content address")
+            })
+            .collect()
+    }
+
     /// Reconciles runtime observations with both graph completeness and the
     /// independently granted resource contracts. Resource decisions delegate
     /// to `resource_protocol`; this adapter only performs cross-contract joins.
@@ -457,45 +497,40 @@ impl GenericJsonlReconciler {
             execution_topology_content_hash(topology).expect("typed execution topology serializes");
         let lint = lint_execution_topology(topology);
         let mut local_findings = self.ingest_findings.clone();
-        for finding in lint.findings.iter().filter(|finding| {
-            finding.classification == FindingClassification::Deterministic
-                && finding.severity == LintSeverity::Error
-        }) {
+        for finding in lint
+            .findings
+            .iter()
+            .filter(|finding| finding.is_deterministic_error())
+        {
             local_findings.push(IngestFinding {
                 code: "topology_lint_error".to_owned(),
                 line: None,
                 detail: format!("{}: {}", finding.code, finding.detail),
             });
         }
-        let mut nodes = Vec::new();
-        for node in &topology.nodes {
-            if node.outputs.len() != 1 {
-                local_findings.push(IngestFinding {
-                    code: "unsupported_output_cardinality".to_owned(),
-                    line: None,
-                    detail: format!(
-                        "{} must declare exactly one v0 runtime output",
-                        node.node_id
-                    ),
-                });
-                continue;
+        let expectation = derive_runtime_graph_expectation(topology).unwrap_or_else(|findings| {
+            local_findings.extend(findings.into_iter().map(|finding| IngestFinding {
+                code: finding.code,
+                line: None,
+                detail: finding.detail,
+            }));
+            // Validation errors above already make the integration incomplete. A
+            // canonical empty projection keeps diagnostics deterministic.
+            crate::runtime_protocol::RuntimeGraphExpectation {
+                schema: crate::runtime_protocol::RUNTIME_GRAPH_EXPECTATION_SCHEMA.to_owned(),
+                schema_version: 0,
+                runtime_graph_id: topology.topology_id.clone(),
+                runtime_graph_content_hash: topology_hash.clone(),
+                nodes: Vec::new(),
+                edges: Vec::new(),
             }
-            nodes.push(ExpectedRuntimeNode {
-                node_id: node.node_id.clone(),
-                expected_output_schema_id: node.outputs[0].schema_id.clone(),
-            });
-        }
-        let expectation = RuntimeGraphExpectation {
-            runtime_graph_id: topology.topology_id.clone(),
-            runtime_graph_content_hash: topology_hash.clone(),
-            nodes,
-        };
+        });
         let reports = self
             .reports
             .values()
             .map(|(_, report)| report.clone())
             .collect::<Vec<_>>();
-        let observed_artifacts = self.artifacts.keys().cloned().collect::<Vec<_>>();
+        let observed_artifacts = self.artifact_observations();
         for report in &reports {
             for artifact_id in &report.output_artifact_ids {
                 if !is_content_addressed_artifact_id(artifact_id) {

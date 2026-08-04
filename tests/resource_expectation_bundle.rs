@@ -2,6 +2,10 @@
 
 use casegraphen::{
     execution_topology::{execution_topology_content_hash, parse_execution_topology},
+    resource_allocator::{
+        resource_declaration_content_hash, ReviewedDeploymentReservationBinding,
+        REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA,
+    },
     resource_protocol::{
         declaration_grants, ResourceDeclaration, ResourceReservation, RuntimeResourceAllocation,
         RESOURCE_ALLOCATION_SCHEMA, RESOURCE_DECLARATION_SCHEMA, RESOURCE_RESERVATION_SCHEMA,
@@ -65,6 +69,20 @@ fn fixture() -> (
         expectations: vec![ResourceExpectationBundleEntry {
             node_id: node.node_id.clone(),
             attempt_id: reservation.attempt_id.clone(),
+            reviewed_deployment: Some(ReviewedDeploymentReservationBinding {
+                schema: REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA.to_owned(),
+                schema_version: 0,
+                claim_cell_id: "evidence:execution-topology".to_owned(),
+                accepted_review_id: "review:execution-topology".to_owned(),
+                reviewed_topology_hash: execution_topology_content_hash(&topology).unwrap(),
+                policy_manifest_hash: "a".repeat(64),
+                deployment_bundle_hash: "b".repeat(64),
+                accepted_review_revision: "revision:bundle".to_owned(),
+                case_space_id: topology.case_space_id.clone(),
+                node_id: node.node_id.clone(),
+                attempt_id: reservation.attempt_id.clone(),
+                resource_declaration_hash: resource_declaration_content_hash(&declaration),
+            }),
             declaration,
             reservation,
             allocations: vec![allocation],

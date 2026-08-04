@@ -17,6 +17,15 @@ runtime session freshness, model/provider identity, and actual context
 separation require runtime attestations or external anchors. Never describe
 those declarations as verified facts.
 
+Runtime-supplied producer/verifier lineage belongs to the declared lineage
+contract and cannot satisfy actor separation, capability, disposition, or
+quorum requirements. Only opaque ledger-derived proofs revalidated against the
+exact observed ledger enter the strong policy reconciler. Producer and verifier
+proofs may come from different historical authority morphisms, but they must
+bind the same trace-derived subject revision, claim, topology, node, and
+attempt. The strong reconciler also requires the current case space and
+rechecks every retained proof; proof construction is not timeless authority.
+
 Do not decide whether a concrete topology's verifier is sufficiently
 independent. Supply the policy references and metadata, run `graph lint`, and
 preserve its correlation or missing-anchor findings.

@@ -2,7 +2,9 @@
 
 use casegraphen::{
     execution_topology::{execution_topology_content_hash, parse_execution_topology},
-    resource_allocator::{AtomicResourceAllocator, ResourceAllocatorConfiguration},
+    resource_allocator::{
+        AtomicResourceAllocator, ResourceAllocatorConfiguration, UnreviewedResourceJournal,
+    },
     resource_protocol::{
         declaration_grants, RateLimitCapacity, ReservationAssertionKind,
         ReservationDispositionAssertion, ResourceDeclaration, ResourceReservation,
@@ -60,8 +62,8 @@ fn config(capacities: Vec<RateLimitCapacity>) -> ResourceAllocatorConfiguration 
     }
 }
 
-fn allocator(path: &PathBuf) -> AtomicResourceAllocator {
-    AtomicResourceAllocator::new(path, config(vec![])).unwrap()
+fn allocator(path: &PathBuf) -> UnreviewedResourceJournal {
+    UnreviewedResourceJournal::new(path, config(vec![])).unwrap()
 }
 
 fn temp(label: &str) -> PathBuf {
@@ -271,7 +273,7 @@ fn canonical_capacity_and_corrupt_or_partial_journal_fail_closed() {
         group_id: "rate_limit_group:api".to_owned(),
         capacity: 1,
     };
-    let allocator = AtomicResourceAllocator::new(&path, config(vec![capacity.clone()])).unwrap();
+    let allocator = UnreviewedResourceJournal::new(&path, config(vec![capacity.clone()])).unwrap();
     let left = declaration(&topology, 0);
     allocator
         .reserve(

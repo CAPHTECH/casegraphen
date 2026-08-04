@@ -9,6 +9,7 @@ The machine-readable source of truth is [`docs/product-surface.v0.json`](../prod
 | Workflow | MCP tool | Canonical decision owner | Output/refusal boundary |
 |---|---|---|---|
 | compile | `compile_deployment_bundle` | `graph_compiler` | content-addressed deployment bundle; proposal mode; never accepted |
+| reviewed compile | `compile_reviewed_deployment_bundle` | `graph_compiler` + canonical store replay | content-addressed bundle bound to the accepted topology/policy review; generated plan and runtime results remain unreviewed |
 | integrate/reconcile | `reconcile_run` | `runtime_integration` | untrusted runtime integration report and reviewable proposals |
 | simulate | `simulate_execution_topology` | `graph_simulation` | deterministic simulation report and unreviewed routing proposal |
 | resource reserve/release | `reserve_resources`, `release_resources` | `resource_allocator` delegating to `resource_protocol` | atomic durable reservation/disposition; revision and caller-declared audit context required; caller allocator state is rejected |
@@ -24,9 +25,9 @@ All MCP calls return `casegraphen.experimental.control_plane.response.v0`. A dom
 Without custom Rust code, an MCP client can:
 
 1. call `propose_execution_topology`, then `lint_execution_topology`;
-2. call `compile_deployment_bundle` with an explicit topology hash and observed base revision;
+2. either call `compile_deployment_bundle` for inspection, or attach and accept the exact topology/policy artifacts through the CLI and call `compile_reviewed_deployment_bundle` with the claim cell and accepted review revision;
 3. call `attach_runtime_report` for content-addressed JSONL bytes;
-4. for a resource-bearing run, reserve through the host and call `reconcile_run` with an exact `runtime.resource_expectation_bundle.v0`; otherwise call it with the same topology and revision;
+4. for a resource-bearing run, reserve the exact reviewed deployment through the host and call `reconcile_run` with the journal-derived authority in `runtime.resource_expectation_bundle.v0`; otherwise call it with the same topology and revision;
 5. observe `accepted: false`, completeness findings, and content-addressed proposals;
 6. stop at the independent CaseGraphen `topology-review` / evidence review seam.
 

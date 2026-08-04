@@ -367,6 +367,7 @@ fn sanitize(value: &str) -> String {
 pub(super) fn error(message: impl Into<String>) -> NativeReviewError {
     NativeReviewError {
         message: message.into(),
+        findings: Vec::new(),
     }
 }
 

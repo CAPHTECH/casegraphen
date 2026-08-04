@@ -1410,6 +1410,9 @@ impl NativeCliError {
             Self::GateViolation { witness_ids, .. } => Some(json!({
                 "witness_ids": witness_ids,
             })),
+            Self::Review(error) if !error.findings.is_empty() => Some(json!({
+                "findings": error.findings,
+            })),
             Self::Eval(error) => Some(json!({ "violations": error.violations })),
             Self::Store(NativeStoreError::MissingCase { case_space_id, .. }) => Some(json!({
                 "case_space_id": case_space_id,

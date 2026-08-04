@@ -48,6 +48,7 @@ def main() -> int:
         "caller_declared_audit_context_authorizes_nothing",
         "acceptance_ledger_mutations_require_canonical_operation_gates",
         "resource_allocator_state_is_host_canonical",
+        "operational_resource_reservations_require_reviewed_deployment_authority",
         "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle",
     ):
         if invariants.get(required_invariant) is not True:
@@ -76,7 +77,7 @@ def main() -> int:
                 failures.append(f"{name}: {skill} does not name {tool}")
 
     expected = {
-        "compile", "integrate_reconcile", "simulate", "resource_reserve",
+        "compile", "reviewed_compile", "integrate_reconcile", "simulate", "resource_reserve",
         "resource_release", "resource_reconcile", "expansion", "streaming", "redesign",
     }
     if seen != expected:

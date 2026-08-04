@@ -6,6 +6,7 @@
 
 use crate::{
     execution_topology::{execution_topology_content_hash, ExecutionTopology},
+    graph_compiler::ReviewedDeploymentAuthority,
     native_hash::sha256_hex,
     resource_protocol::{
         grant_topology_reservation, reservation_is_active, RateLimitCapacity,
@@ -28,6 +29,32 @@ pub const RESOURCE_ALLOCATOR_CONFIGURATION_SCHEMA: &str =
     "casegraphen.experimental.resource.allocator_configuration.v0";
 pub const RESOURCE_ALLOCATOR_EVENT_SCHEMA: &str =
     "casegraphen.experimental.resource.allocator_event.v0";
+pub const REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA: &str =
+    "casegraphen.experimental.resource.reviewed_deployment_binding.v0";
+
+pub fn resource_declaration_content_hash(declaration: &ResourceDeclaration) -> String {
+    digest(declaration)
+}
+
+/// Durable projection of an opaque reviewed-deployment authority. Callers may
+/// read this audit record, but only the graph compiler can mint the proof from
+/// which an operational reservation creates it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewedDeploymentReservationBinding {
+    pub schema: String,
+    pub schema_version: u32,
+    pub claim_cell_id: String,
+    pub accepted_review_id: String,
+    pub reviewed_topology_hash: String,
+    pub policy_manifest_hash: String,
+    pub deployment_bundle_hash: String,
+    pub accepted_review_revision: String,
+    pub case_space_id: String,
+    pub node_id: String,
+    pub attempt_id: String,
+    pub resource_declaration_hash: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -43,11 +70,15 @@ pub enum ResourceAllocatorEventPayload {
     Reserve {
         topology_content_hash: String,
         base_revision_id: String,
+        #[serde(default)]
+        reviewed_deployment: Option<ReviewedDeploymentReservationBinding>,
         declaration: ResourceDeclaration,
         reservation: ResourceReservation,
     },
     Disposition {
         base_revision_id: String,
+        #[serde(default)]
+        reviewed_deployment: Option<ReviewedDeploymentReservationBinding>,
         assertion: ReservationDispositionAssertion,
     },
 }
@@ -128,6 +159,56 @@ pub struct AtomicResourceAllocator {
     capacities: Vec<RateLimitCapacity>,
 }
 
+/// Journal-backed evaluator for allocator mechanics that deliberately carries
+/// no deployment authority. It is separate from the operational allocator so
+/// a library caller cannot accidentally use an unreviewed grant as an
+/// operational reservation.
+pub struct UnreviewedResourceJournal {
+    allocator: AtomicResourceAllocator,
+}
+
+impl UnreviewedResourceJournal {
+    pub fn new(
+        journal_directory: impl Into<PathBuf>,
+        configuration: ResourceAllocatorConfiguration,
+    ) -> Result<Self, ResourceAllocatorError> {
+        Ok(Self {
+            allocator: AtomicResourceAllocator::new(journal_directory, configuration)?,
+        })
+    }
+
+    pub fn reserve(
+        &self,
+        topology: &ExecutionTopology,
+        base_revision_id: &str,
+        declaration: ResourceDeclaration,
+        reservation: ResourceReservation,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        self.allocator.reserve_unreviewed(
+            topology,
+            base_revision_id,
+            declaration,
+            reservation,
+            idempotency_key,
+        )
+    }
+
+    pub fn disposition(
+        &self,
+        base_revision_id: &str,
+        assertion: ReservationDispositionAssertion,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        self.allocator
+            .disposition_unreviewed(base_revision_id, assertion, idempotency_key)
+    }
+
+    pub fn snapshot(&self) -> Result<ResourceAllocatorSnapshot, ResourceAllocatorError> {
+        self.allocator.snapshot()
+    }
+}
+
 impl AtomicResourceAllocator {
     pub fn new(
         journal_directory: impl Into<PathBuf>,
@@ -140,7 +221,7 @@ impl AtomicResourceAllocator {
         })
     }
 
-    pub fn reserve(
+    fn reserve_unreviewed(
         &self,
         topology: &ExecutionTopology,
         base_revision_id: &str,
@@ -153,6 +234,7 @@ impl AtomicResourceAllocator {
         let payload = ResourceAllocatorEventPayload::Reserve {
             topology_content_hash: topology_hash,
             base_revision_id: base_revision_id.to_owned(),
+            reviewed_deployment: None,
             declaration,
             reservation,
         };
@@ -182,7 +264,88 @@ impl AtomicResourceAllocator {
         })
     }
 
-    pub fn disposition(
+    pub fn reserve_reviewed(
+        &self,
+        topology: &ExecutionTopology,
+        authority: &ReviewedDeploymentAuthority,
+        base_revision_id: &str,
+        declaration: ResourceDeclaration,
+        reservation: ResourceReservation,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        let topology_hash =
+            execution_topology_content_hash(topology).expect("typed execution topology serializes");
+        if topology_hash != authority.topology_content_hash()
+            || base_revision_id != authority.accepted_review_revision_id()
+        {
+            return Err(ResourceAllocatorError::Integrity(
+                "reviewed deployment authority does not match topology or accepted revision"
+                    .to_owned(),
+            ));
+        }
+        let binding = ReviewedDeploymentReservationBinding {
+            schema: REVIEWED_DEPLOYMENT_RESERVATION_BINDING_SCHEMA.to_owned(),
+            schema_version: 0,
+            claim_cell_id: authority.claim_cell_id().to_owned(),
+            accepted_review_id: authority.accepted_review_id().to_owned(),
+            reviewed_topology_hash: authority.topology_content_hash().to_owned(),
+            policy_manifest_hash: authority.policy_manifest_content_hash().to_owned(),
+            deployment_bundle_hash: authority.deployment_bundle_hash().to_owned(),
+            accepted_review_revision: authority.accepted_review_revision_id().to_owned(),
+            case_space_id: authority.case_space_id().to_owned(),
+            node_id: declaration.node_id.clone(),
+            attempt_id: reservation.attempt_id.clone(),
+            resource_declaration_hash: resource_declaration_content_hash(&declaration),
+        };
+        let payload = ResourceAllocatorEventPayload::Reserve {
+            topology_content_hash: topology_hash,
+            base_revision_id: base_revision_id.to_owned(),
+            reviewed_deployment: Some(binding),
+            declaration,
+            reservation,
+        };
+        self.append(idempotency_key, payload, |state, payload| {
+            let ResourceAllocatorEventPayload::Reserve {
+                declaration,
+                reservation,
+                reviewed_deployment,
+                ..
+            } = payload
+            else {
+                unreachable!()
+            };
+            let binding = reviewed_deployment.as_ref().ok_or_else(|| {
+                ResourceAllocatorError::Integrity(
+                    "reviewed reservation is missing deployment authority".to_owned(),
+                )
+            })?;
+            if binding.node_id != declaration.node_id
+                || binding.attempt_id != reservation.attempt_id
+                || binding.resource_declaration_hash
+                    != resource_declaration_content_hash(declaration)
+            {
+                return Err(ResourceAllocatorError::Integrity(
+                    "reviewed reservation binding does not match declaration or attempt".to_owned(),
+                ));
+            }
+            grant_topology_reservation(
+                topology,
+                declaration,
+                reservation,
+                &state.reservations,
+                &state.dispositions,
+                &self.capacities,
+            )
+            .map(|_| ())
+            .map_err(|findings| {
+                ResourceAllocatorError::Refused(
+                    serde_json::to_value(findings).expect("findings serialize"),
+                )
+            })
+        })
+    }
+
+    fn disposition_unreviewed(
         &self,
         base_revision_id: &str,
         assertion: ReservationDispositionAssertion,
@@ -190,12 +353,140 @@ impl AtomicResourceAllocator {
     ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
         let payload = ResourceAllocatorEventPayload::Disposition {
             base_revision_id: base_revision_id.to_owned(),
+            reviewed_deployment: None,
             assertion,
         };
         self.append(idempotency_key, payload, |state, payload| {
             let ResourceAllocatorEventPayload::Disposition { assertion, .. } = payload else {
                 unreachable!()
             };
+            validate_disposition(state, assertion)
+        })
+    }
+
+    pub fn disposition_reviewed(
+        &self,
+        base_revision_id: &str,
+        assertion: ReservationDispositionAssertion,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        let state = self.replay()?;
+        let reviewed_deployment = state
+            .events_by_idempotency
+            .values()
+            .find_map(|event| {
+                let ResourceAllocatorEventPayload::Reserve {
+                    reviewed_deployment,
+                    reservation,
+                    ..
+                } = &event.payload
+                else {
+                    return None;
+                };
+                (reservation.reservation_id == assertion.reservation_id
+                    && reservation.attempt_id == assertion.attempt_id)
+                    .then_some(reviewed_deployment.clone())
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                ResourceAllocatorError::Integrity(
+                    "resource disposition target has no reviewed deployment authority".to_owned(),
+                )
+            })?;
+        let payload = ResourceAllocatorEventPayload::Disposition {
+            base_revision_id: base_revision_id.to_owned(),
+            reviewed_deployment: Some(reviewed_deployment),
+            assertion,
+        };
+        self.append(idempotency_key, payload, |state, payload| {
+            let ResourceAllocatorEventPayload::Disposition {
+                assertion,
+                reviewed_deployment,
+                ..
+            } = payload
+            else {
+                unreachable!()
+            };
+            let expected = state.events_by_idempotency.values().find_map(|event| {
+                let ResourceAllocatorEventPayload::Reserve {
+                    reviewed_deployment,
+                    reservation,
+                    ..
+                } = &event.payload
+                else {
+                    return None;
+                };
+                (reservation.reservation_id == assertion.reservation_id
+                    && reservation.attempt_id == assertion.attempt_id)
+                    .then_some(reviewed_deployment.as_ref())
+                    .flatten()
+            });
+            if expected != reviewed_deployment.as_ref() {
+                return Err(ResourceAllocatorError::Integrity(
+                    "resource disposition authority differs from the canonical reservation"
+                        .to_owned(),
+                ));
+            }
+            if assertion.kind == ReservationAssertionKind::Supersede {
+                let superseding = assertion
+                    .superseding_reservation_id
+                    .as_deref()
+                    .expect("validated by resource protocol");
+                let superseding_is_reviewed = state.events_by_idempotency.values().any(|event| {
+                    matches!(
+                        &event.payload,
+                        ResourceAllocatorEventPayload::Reserve {
+                            reviewed_deployment: Some(_),
+                            reservation,
+                            ..
+                        } if reservation.reservation_id == superseding
+                    )
+                });
+                if !superseding_is_reviewed {
+                    return Err(ResourceAllocatorError::Integrity(
+                        "superseding reservation has no reviewed deployment authority".to_owned(),
+                    ));
+                }
+                let superseding_binding = state.events_by_idempotency.values().find_map(|event| {
+                    let ResourceAllocatorEventPayload::Reserve {
+                        reviewed_deployment,
+                        reservation,
+                        ..
+                    } = &event.payload
+                    else {
+                        return None;
+                    };
+                    (reservation.reservation_id == superseding)
+                        .then_some(reviewed_deployment.as_ref())
+                        .flatten()
+                });
+                if !superseding_binding.is_some_and(|candidate| {
+                    candidate.case_space_id
+                        == reviewed_deployment
+                            .as_ref()
+                            .expect("reviewed disposition has authority")
+                            .case_space_id
+                        && candidate.deployment_bundle_hash
+                            == reviewed_deployment
+                                .as_ref()
+                                .expect("reviewed disposition has authority")
+                                .deployment_bundle_hash
+                        && candidate.reviewed_topology_hash
+                            == reviewed_deployment
+                                .as_ref()
+                                .expect("reviewed disposition has authority")
+                                .reviewed_topology_hash
+                        && candidate.policy_manifest_hash
+                            == reviewed_deployment
+                                .as_ref()
+                                .expect("reviewed disposition has authority")
+                                .policy_manifest_hash
+                }) {
+                    return Err(ResourceAllocatorError::Integrity(
+                        "superseding reservation belongs to another reviewed deployment".to_owned(),
+                    ));
+                }
+            }
             validate_disposition(state, assertion)
         })
     }
@@ -219,6 +510,49 @@ impl AtomicResourceAllocator {
                 .reservations
                 .iter()
                 .any(|candidate| candidate == reservation))
+    }
+
+    pub fn reviewed_reservation_binding(
+        &self,
+        declaration: &ResourceDeclaration,
+        reservation: &ResourceReservation,
+    ) -> Result<Option<ReviewedDeploymentReservationBinding>, ResourceAllocatorError> {
+        let state = self.replay()?;
+        Ok(state.events_by_idempotency.values().find_map(|event| {
+            let ResourceAllocatorEventPayload::Reserve {
+                reviewed_deployment,
+                declaration: candidate_declaration,
+                reservation: candidate_reservation,
+                ..
+            } = &event.payload
+            else {
+                return None;
+            };
+            (candidate_declaration == declaration && candidate_reservation == reservation)
+                .then_some(reviewed_deployment.clone())
+                .flatten()
+        }))
+    }
+
+    pub fn reviewed_reservation_binding_by_identity(
+        &self,
+        reservation_id: &str,
+        attempt_id: &str,
+    ) -> Result<Option<ReviewedDeploymentReservationBinding>, ResourceAllocatorError> {
+        let state = self.replay()?;
+        Ok(state.events_by_idempotency.values().find_map(|event| {
+            let ResourceAllocatorEventPayload::Reserve {
+                reviewed_deployment,
+                reservation,
+                ..
+            } = &event.payload
+            else {
+                return None;
+            };
+            (reservation.reservation_id == reservation_id && reservation.attempt_id == attempt_id)
+                .then_some(reviewed_deployment.clone())
+                .flatten()
+        }))
     }
 
     pub fn contains_disposition(

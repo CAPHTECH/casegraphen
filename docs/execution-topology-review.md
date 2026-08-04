@@ -26,11 +26,21 @@ contract remains distinct from generic evidence and plan reviews. The
 input bytes must reproduce the artifact id already joined to the claim by a
 `derives_from` relation, and their parsed topology must reproduce the recorded
 canonical topology hash. Artifact existence by itself never means acceptance.
-Accept also runs the canonical deterministic topology validator. Its stable
-finding code and JSON path are returned on refusal. Heuristic graph-lint
-findings remain reviewer advice and cannot by themselves prevent acceptance.
+Accept runs the canonical graph linter after typed JSON parsing. The linter is
+the single decision owner for both intrinsic semantic-contract findings (for
+example an unknown node or invalid data binding) and graph-shape findings (for
+example a dependency cycle). Review blocks exactly findings whose published
+classification is `deterministic` and whose severity is `error`; stable code,
+location, and detail fields are returned as structured CLI refusal data.
+Deterministic warnings and informational findings are not implicitly promoted
+to blockers. `heuristic` findings remain reviewer advice, are retained in the
+accepted review record, and cannot by themselves prevent acceptance.
+
 Reject and reopen retain the exact content binding but do not require the
-proposal to pass semantic validation, so invalid proposals remain auditable.
+proposal to pass semantic or graph-lint acceptance checks, so invalid proposals
+remain auditable. The operational MCP host does not mutate the acceptance
+ledger; a future host delegate must preserve the same typed `NativeReviewError`
+findings rather than parse or reconstruct lint decisions.
 
 ## Replay and migration
 
@@ -48,3 +58,10 @@ record. At compilation the policy documents are canonicalized into the same
 manifest and must reproduce its accepted hash. Missing, extra, or substituted
 policy content is refused. Current claim metadata and caller-supplied hashes
 are consistency data, not authority.
+
+After acceptance, an operational client may call
+`compile_reviewed_deployment_bundle` with the exact accepted revision,
+case-space ID, and claim-cell ID. The host replays the store and derives the
+opaque mode itself; callers cannot submit a mode, review record, or accepted
+hash. The generated execution plan and all later runtime output remain
+unreviewed and still stop at their independent review seams.

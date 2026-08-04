@@ -1,0 +1,17 @@
+{
+  "schema": "casegraphen.experimental.verification_lineage_declarations.v0",
+  "schema_version": 0,
+  "producer": {
+    "actor_id": "actor:runtime-declared-producer",
+    "capability_ids": ["capability:runtime-declared-research"]
+  },
+  "verifiers": [
+    {
+      "verifier_report_id": "runtime_report:declared-verifier:1",
+      "actor_id": "actor:runtime-declared-verifier",
+      "capability_ids": ["capability:runtime-declared-review"],
+      "disposition": "accept",
+      "runtime_attestations": ["separate_session"]
+    }
+  ]
+}

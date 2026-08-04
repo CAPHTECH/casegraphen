@@ -651,7 +651,16 @@ fn evidence_boundary(cell: &CaseCell) -> EvidenceBoundary {
 pub(crate) fn latest_evidence_review_statuses(
     case_space: &CaseSpace,
 ) -> BTreeMap<&str, ReviewStatus> {
-    let mut statuses = BTreeMap::new();
+    latest_evidence_review_entries(case_space)
+        .into_iter()
+        .map(|(evidence_id, entry)| (evidence_id, evidence_review_status(entry, evidence_id)))
+        .collect()
+}
+
+pub(crate) fn latest_evidence_review_entries(
+    case_space: &CaseSpace,
+) -> BTreeMap<&str, &crate::native_model::MorphismLogEntry> {
+    let mut entries = BTreeMap::new();
     for entry in &case_space.morphism_log {
         if entry
             .morphism
@@ -670,9 +679,9 @@ pub(crate) fn latest_evidence_review_statuses(
         else {
             continue;
         };
-        statuses.insert(evidence_id, evidence_review_status(entry, evidence_id));
+        entries.insert(evidence_id, entry);
     }
-    statuses
+    entries
 }
 
 fn evidence_review_status(

@@ -386,6 +386,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn json_review_refusal_renders_lint_findings_without_prose_parsing() {
+        use crate::{
+            execution_topology::ExecutionTopology, graph_lint::lint_execution_topology,
+            native_review::NativeReviewError,
+        };
+
+        let topology: ExecutionTopology = serde_json::from_str(include_str!(
+            "../schemas/experimental/execution.topology.file-review.example.json"
+        ))
+        .expect("typed topology fixture");
+        let finding = lint_execution_topology(&topology)
+            .findings
+            .into_iter()
+            .next()
+            .expect("fixture has lint findings");
+        let refusal = Refusal {
+            error: CliError::from(NativeCliError::Review(NativeReviewError {
+                message: "execution topology review refused".to_owned(),
+                findings: vec![finding.clone()],
+            })),
+            format: NativeOutputFormat::Json,
+            completed_through: None,
+        };
+
+        let value: serde_json::Value =
+            serde_json::from_str(&refusal_text(&refusal)).expect("refusal JSON");
+        assert_eq!(value["data"]["findings"][0]["code"], finding.code);
+        assert_eq!(value["data"]["findings"][0]["location"], finding.location);
+        assert_eq!(value["data"]["findings"][0]["detail"], finding.detail);
+    }
+
     fn id_lossy(value: &str) -> higher_graphen_core::Id {
         higher_graphen_core::Id::new(value.to_owned()).expect("test id")
     }

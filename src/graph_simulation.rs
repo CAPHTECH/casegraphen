@@ -8,7 +8,7 @@ use crate::{
     execution_topology::{
         execution_topology_content_hash, ExecutionTopology, ResourceMode, TopologyNode,
     },
-    graph_lint::{lint_execution_topology, LintSeverity},
+    graph_lint::lint_execution_topology,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -219,7 +219,7 @@ pub fn simulate_execution_topology(
     findings.extend(
         lint.findings
             .iter()
-            .filter(|finding| finding.severity == LintSeverity::Error)
+            .filter(|finding| finding.is_deterministic_error())
             .map(|lint| {
                 finding(
                     format!("lint_{}", lint.code),

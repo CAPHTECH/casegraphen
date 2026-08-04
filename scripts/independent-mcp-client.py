@@ -224,7 +224,8 @@ def assert_review_seam(result: dict[str, Any]) -> None:
     assert result["propose"]["review_status"] == "unreviewed"
     assert result["lint"]["accepted"] is False
     assert result["compiled"]["accepted"] is False
-    assert result["compiled"]["review_status"] == "unreviewed"
+    assert result["compiled"]["deployment_authority"] == "proposal_only"
+    assert result["compiled"]["generated_plan_review_status"] == "unreviewed"
     assert all(item["accepted"] is False for item in result["attachments"])
     assert all(item["review_status"] == "unreviewed" for item in result["attachments"])
     reconciliation = result["reconciliation"]

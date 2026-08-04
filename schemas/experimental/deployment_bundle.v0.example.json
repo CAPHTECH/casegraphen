@@ -6,5 +6,9 @@
   "case_space_id": "case-space:example",
   "base_revision_id": "revision:example",
   "mode": "proposal",
+  "policy_manifest_content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reviewed_claim_cell_id": null,
+  "accepted_review_id": null,
+  "accepted_review_revision_id": null,
   "artifacts": []
 }

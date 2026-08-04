@@ -22,6 +22,15 @@ const NATIVE_DIRECTORY: &str = "native_case_spaces";
 // morphism log remains the source of truth; snapshots are only disposable caches.
 const SNAPSHOT_INTERVAL: u64 = 32;
 
+pub(crate) fn is_execution_trace_anchor(
+    morphism_type: &crate::native_model::CaseMorphismType,
+) -> bool {
+    matches!(
+        morphism_type,
+        crate::native_model::CaseMorphismType::Custom(kind) if kind == "execution_trace_anchor"
+    )
+}
+
 #[cfg(test)]
 thread_local! {
     static KNOWN_IDS_CALL_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -165,6 +174,34 @@ impl NativeCaseStore {
         case_space_id: &Id,
         entry: MorphismLogEntry,
     ) -> NativeStoreResult<NativeCaseSpaceRecord> {
+        self.append_morphism_with_authority(case_space_id, entry, false)
+    }
+
+    /// Appends an execution-trace anchor minted by the canonical run path.
+    ///
+    /// Trace anchors are consumed as proof that CaseGraphen observed a run.
+    /// Keeping this method crate-private prevents public store callers from
+    /// turning caller-authored morphisms into tool-minted provenance.
+    pub(crate) fn append_execution_trace_anchor(
+        &self,
+        case_space_id: &Id,
+        entry: MorphismLogEntry,
+    ) -> NativeStoreResult<NativeCaseSpaceRecord> {
+        if !is_execution_trace_anchor(&entry.morphism.morphism_type) {
+            return Err(invalid_morphism(
+                &self.log_path(case_space_id),
+                "append_execution_trace_anchor requires custom:execution_trace_anchor",
+            ));
+        }
+        self.append_morphism_with_authority(case_space_id, entry, true)
+    }
+
+    fn append_morphism_with_authority(
+        &self,
+        case_space_id: &Id,
+        entry: MorphismLogEntry,
+        allow_execution_trace_anchor: bool,
+    ) -> NativeStoreResult<NativeCaseSpaceRecord> {
         let case_dir = self.case_dir(case_space_id);
         if !case_dir.is_dir() {
             return Err(NativeStoreError::MissingCase {
@@ -175,6 +212,13 @@ impl NativeCaseStore {
         let lock = CaseLockGuard::acquire(&case_dir)?;
         let replay = self.replay_current_case_space(case_space_id)?;
         let log_path = self.log_path(case_space_id);
+        if is_execution_trace_anchor(&entry.morphism.morphism_type) && !allow_execution_trace_anchor
+        {
+            return Err(invalid_morphism(
+                &log_path,
+                "custom:execution_trace_anchor is reserved for the canonical run path",
+            ));
+        }
         require_valid_operation_gate(&log_path, &replay.case_space, &entry)?;
         validate_append(&log_path, &replay.case_space, &entry, &replay.history)?;
 

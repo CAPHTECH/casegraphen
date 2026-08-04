@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.runtime.graph_expectation.v0",
+  "title": "CaseGraphen Experimental Runtime Graph Expectation",
+  "description": "The strict, content-addressed node and data-edge projection derived from an execution topology. It is an expectation, not runtime authority or acceptance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "runtime_graph_id", "runtime_graph_content_hash", "nodes", "edges"],
+  "properties": {
+    "schema": { "const": "casegraphen.experimental.runtime.graph_expectation.v0" },
+    "schema_version": { "const": 0 },
+    "runtime_graph_id": { "$ref": "#/$defs/non_empty" },
+    "runtime_graph_content_hash": { "$ref": "#/$defs/sha256" },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    }
+  },
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "id_list": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/non_empty" },
+      "uniqueItems": true
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "expected_output_schema_id", "expected_parent_node_ids"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/non_empty" },
+        "expected_output_schema_id": { "$ref": "#/$defs/non_empty" },
+        "expected_parent_node_ids": { "$ref": "#/$defs/id_list" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_id", "from_node_id", "to_node_id", "output_name", "input_name", "schema_id", "delivery"],
+      "properties": {
+        "edge_id": { "$ref": "#/$defs/non_empty" },
+        "from_node_id": { "$ref": "#/$defs/non_empty" },
+        "to_node_id": { "$ref": "#/$defs/non_empty" },
+        "output_name": { "$ref": "#/$defs/non_empty" },
+        "input_name": { "$ref": "#/$defs/non_empty" },
+        "schema_id": { "$ref": "#/$defs/non_empty" },
+        "delivery": { "enum": ["barrier", "streaming"] }
+      }
+    }
+  }
+}

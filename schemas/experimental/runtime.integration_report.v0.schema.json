@@ -14,7 +14,7 @@
     "accepted": {"const": false},
     "reconciliation_complete": {"type": "boolean"},
     "halt": {"enum": ["incomplete_runtime_reports", "resource_reconciliation_incomplete", "needs_review"]},
-    "completeness": {"type": "object"},
+    "completeness": {"$ref": "#/$defs/completeness"},
     "resource_reconciliations": {"type": "array", "items": {"$ref": "resource.reconciliation.v0.schema.json"}},
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
     "proposals": {"type": "array", "items": {"$ref": "#/$defs/proposal"}},
@@ -23,6 +23,55 @@
   "$defs": {
     "id": {"type": "string", "minLength": 1},
     "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runtime_finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "node_id", "attempt_id", "detail"],
+      "properties": {
+        "code": {"$ref": "#/$defs/id"},
+        "node_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "attempt_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
+        "detail": {"$ref": "#/$defs/id"}
+      }
+    },
+    "edge_proof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["edge_id", "from_node_id", "to_node_id", "output_name", "input_name", "schema_id", "delivery", "artifact_id", "artifact_content_sha256", "artifact_byte_length", "source_attempt_id", "target_attempt_id"],
+      "properties": {
+        "edge_id": {"$ref": "#/$defs/id"},
+        "from_node_id": {"$ref": "#/$defs/id"},
+        "to_node_id": {"$ref": "#/$defs/id"},
+        "output_name": {"$ref": "#/$defs/id"},
+        "input_name": {"$ref": "#/$defs/id"},
+        "schema_id": {"$ref": "#/$defs/id"},
+        "delivery": {"enum": ["barrier", "streaming"]},
+        "artifact_id": {"$ref": "#/$defs/id"},
+        "artifact_content_sha256": {"$ref": "#/$defs/hash"},
+        "artifact_byte_length": {"type": "integer", "minimum": 0},
+        "source_attempt_id": {"$ref": "#/$defs/id"},
+        "target_attempt_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "completeness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expected_node_count", "actual_report_count", "failed_node_count", "missing_report_count", "duplicate_attempt_count", "unaccounted_artifact_count", "node_complete", "expected_edge_count", "proven_edge_count", "missing_edge_count", "dataflow_complete", "edge_proofs", "terminal_attempt_ids", "complete", "findings"],
+      "properties": {
+        "expected_node_count": {"type": "integer", "minimum": 0},
+        "actual_report_count": {"type": "integer", "minimum": 0},
+        "failed_node_count": {"type": "integer", "minimum": 0},
+        "missing_report_count": {"type": "integer", "minimum": 0},
+        "duplicate_attempt_count": {"type": "integer", "minimum": 0},
+        "unaccounted_artifact_count": {"type": "integer", "minimum": 0},
+        "node_complete": {"type": "boolean"},
+        "expected_edge_count": {"type": "integer", "minimum": 0},
+        "proven_edge_count": {"type": "integer", "minimum": 0},
+        "missing_edge_count": {"type": "integer", "minimum": 0},
+        "dataflow_complete": {"type": "boolean"},
+        "edge_proofs": {"type": "array", "items": {"$ref": "#/$defs/edge_proof"}},
+        "terminal_attempt_ids": {"type": "object", "additionalProperties": {"$ref": "#/$defs/id"}},
+        "complete": {"type": "boolean"},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/runtime_finding"}}
+      }
+    },
     "artifact": {
       "type": "object", "additionalProperties": false,
       "required": ["artifact_id", "sha256", "media_type", "byte_length"],

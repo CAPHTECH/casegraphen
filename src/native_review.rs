@@ -159,6 +159,11 @@ pub type NativeReviewResult<T> = Result<T, NativeReviewError>;
 #[serde(deny_unknown_fields)]
 pub struct NativeReviewError {
     pub message: String,
+    /// Canonical graph-lint findings that caused the review refusal. Empty
+    /// for refusals outside execution-topology linting; callers never need
+    /// to recover codes, locations, or details by parsing `message`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<crate::graph_lint::GraphLintFinding>,
 }
 
 impl std::fmt::Display for NativeReviewError {
@@ -173,6 +178,7 @@ impl From<NativeEvalError> for NativeReviewError {
     fn from(error: NativeEvalError) -> Self {
         Self {
             message: format!("native case evaluation failed: {error:?}"),
+            findings: Vec::new(),
         }
     }
 }
@@ -211,7 +217,7 @@ pub fn execution_topology_review_morphism(
     topology_artifact_bytes: &[u8],
     policy_manifest_bytes: &[u8],
 ) -> NativeReviewResult<CaseMorphism> {
-    require_execution_topology_review_target(
+    let advisories = require_execution_topology_review_target(
         case_space,
         &request.target,
         request.action,
@@ -247,16 +253,6 @@ pub fn execution_topology_review_morphism(
         serde_json::to_value(target).expect("typed topology review target serializes"),
     );
     if action == ReviewAction::Accept {
-        let topology: crate::execution_topology::ExecutionTopology =
-            serde_json::from_slice(topology_artifact_bytes)
-                .expect("validated execution topology artifact still deserializes");
-        let advisories = crate::graph_lint::lint_execution_topology(&topology)
-            .findings
-            .into_iter()
-            .filter(|finding| {
-                finding.classification == crate::graph_lint::FindingClassification::Heuristic
-            })
-            .collect::<Vec<_>>();
         morphism.metadata.insert(
             "execution_topology_review_advisories".to_owned(),
             serde_json::to_value(advisories).expect("typed graph lint findings serialize"),
@@ -857,7 +853,7 @@ fn require_execution_topology_review_target(
     action: ReviewAction,
     topology_artifact_bytes: &[u8],
     policy_manifest_bytes: &[u8],
-) -> NativeReviewResult<()> {
+) -> NativeReviewResult<Vec<crate::graph_lint::GraphLintFinding>> {
     if target.case_space_id != case_space.case_space_id {
         return Err(error("execution topology review case_space_id mismatch"));
     }
@@ -879,22 +875,43 @@ fn require_execution_topology_review_target(
     let topology: crate::execution_topology::ExecutionTopology =
         serde_json::from_slice(topology_artifact_bytes)
             .map_err(|source| error(format!("invalid execution topology artifact: {source}")))?;
-    if action == ReviewAction::Accept {
-        let findings = crate::execution_topology::validate_execution_topology(&topology);
-        if !findings.is_empty() {
-            return Err(error(format!(
-                "execution_topology_validation:{}",
-                findings
-                    .iter()
-                    .map(|finding| format!(
-                        "{} at {}: {}",
-                        finding.code, finding.location, finding.detail
-                    ))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )));
+    let advisories = if action == ReviewAction::Accept {
+        // `graph_lint` is the single owner of graph-shape decisions and also
+        // projects intrinsic topology validation into typed deterministic
+        // findings. Review selects the published classification/severity;
+        // it does not reproduce cycle, resource, reachability, or contract
+        // rules locally.
+        let findings = crate::graph_lint::lint_execution_topology(&topology).findings;
+        let blockers = findings
+            .iter()
+            .filter(|finding| finding.is_deterministic_error())
+            .cloned()
+            .collect::<Vec<_>>();
+        if !blockers.is_empty() {
+            return Err(NativeReviewError {
+                message: format!(
+                    "execution_topology_graph_lint:{}",
+                    blockers
+                        .iter()
+                        .map(|finding| format!(
+                            "{} at {}: {}",
+                            finding.code, finding.location, finding.detail
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+                findings: blockers,
+            });
         }
-    }
+        findings
+            .into_iter()
+            .filter(|finding| {
+                finding.classification == crate::graph_lint::FindingClassification::Heuristic
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let actual_artifact_hash = crate::native_hash::sha256_hex(topology_artifact_bytes);
     if target.artifact_id.as_str() != format!("artifact:sha256-{actual_artifact_hash}") {
         return Err(error(
@@ -1005,7 +1022,7 @@ fn require_execution_topology_review_target(
             "execution topology claim is not joined to the artifact by validated lineage",
         ));
     }
-    Ok(())
+    Ok(advisories)
 }
 
 fn require_completion_target(case_space: &CaseSpace, target_id: &Id) -> NativeReviewResult<()> {

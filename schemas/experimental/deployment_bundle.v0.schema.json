@@ -4,7 +4,7 @@
   "title": "Experimental deployment bundle manifest v0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "compiler_version", "topology_id", "topology_content_hash", "case_space_id", "base_revision_id", "mode", "artifacts"],
+  "required": ["schema", "compiler_version", "topology_id", "topology_content_hash", "case_space_id", "base_revision_id", "mode", "policy_manifest_content_hash", "reviewed_claim_cell_id", "accepted_review_id", "accepted_review_revision_id", "artifacts"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.deployment_bundle.v0"},
     "compiler_version": {"$ref": "#/$defs/id"},
@@ -13,10 +13,15 @@
     "case_space_id": {"$ref": "#/$defs/id"},
     "base_revision_id": {"$ref": "#/$defs/id"},
     "mode": {"enum": ["proposal", "reviewed"]},
+    "policy_manifest_content_hash": {"$ref": "#/$defs/hash"},
+    "reviewed_claim_cell_id": {"$ref": "#/$defs/nullable_id"},
+    "accepted_review_id": {"$ref": "#/$defs/nullable_id"},
+    "accepted_review_revision_id": {"$ref": "#/$defs/nullable_id"},
     "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
   },
   "$defs": {
     "id": {"type": "string", "minLength": 1},
+    "nullable_id": {"oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]},
     "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "artifact": {
       "type": "object", "additionalProperties": false,

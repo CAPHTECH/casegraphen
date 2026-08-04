@@ -5,6 +5,7 @@
   "case_revision_id":"revision:resource-run-1",
   "expectations":[{
     "node_id":"node:refactor-a","attempt_id":"attempt:refactor-a:1",
+    "reviewed_deployment":{"schema":"casegraphen.experimental.resource.reviewed_deployment_binding.v0","schema_version":0,"claim_cell_id":"evidence:execution-topology","accepted_review_id":"review:execution-topology","reviewed_topology_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","policy_manifest_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","deployment_bundle_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","accepted_review_revision":"revision:resource-run-1","case_space_id":"case_space:resource-run-1","node_id":"node:refactor-a","attempt_id":"attempt:refactor-a:1","resource_declaration_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
     "declaration":{"schema":"casegraphen.experimental.resource.declaration.v0","schema_version":0,"declaration_id":"declaration:refactor-a","runtime_graph_id":"topology:worktree-review","runtime_graph_content_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","node_id":"node:refactor-a","claims":[]},
     "reservation":{"schema":"casegraphen.experimental.resource.reservation.v0","schema_version":0,"reservation_id":"reservation:refactor-a","declaration_id":"declaration:refactor-a","attempt_id":"attempt:refactor-a:1","granted_at":"2026-08-03T00:00:00Z","grants":[]},
     "allocations":[],"disposition_evidence":[]

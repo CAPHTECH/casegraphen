@@ -5,13 +5,21 @@
 //! supplied graph expectation; it does not accept evidence, review claims, or
 //! case transitions.
 
+use crate::execution_topology::{
+    execution_topology_content_hash, validate_execution_topology, DeliveryMode, EdgeKind,
+    ExecutionTopology,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Schema identity for the experimental external-runtime node report.
 pub const RUNTIME_NODE_REPORT_SCHEMA: &str = "casegraphen.experimental.runtime.node_report.v0";
 /// Schema version for the experimental external-runtime node report.
 pub const RUNTIME_NODE_REPORT_SCHEMA_VERSION: u32 = 0;
+/// Schema identity for the strict topology-derived runtime graph expectation.
+pub const RUNTIME_GRAPH_EXPECTATION_SCHEMA: &str =
+    "casegraphen.experimental.runtime.graph_expectation.v0";
 /// Trust marker required on every external-runtime report.
 pub const RUNTIME_REPORT_TRUST_BOUNDARY: &str =
     "runtime_reported_untrusted_until_independently_validated_and_reviewed";
@@ -114,15 +122,80 @@ pub struct RuntimeNodeReport {
 pub struct ExpectedRuntimeNode {
     pub node_id: String,
     pub expected_output_schema_id: String,
+    /// Canonical predecessor set derived from every topology dependency edge.
+    pub expected_parent_node_ids: Vec<String>,
+}
+
+/// One required data handoff projected from a canonical execution topology.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedRuntimeEdge {
+    pub edge_id: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub output_name: String,
+    pub input_name: String,
+    pub schema_id: String,
+    pub delivery: DeliveryMode,
 }
 
 /// The content-addressed graph boundary against which reports are reconciled.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGraphExpectation {
+    pub schema: String,
+    pub schema_version: u32,
     pub runtime_graph_id: String,
     pub runtime_graph_content_hash: String,
     pub nodes: Vec<ExpectedRuntimeNode>,
+    pub edges: Vec<ExpectedRuntimeEdge>,
+}
+
+/// Content-address observation constructed from bytes presented at an ingest boundary.
+///
+/// Its fields are private so callers cannot claim that a digest was observed without
+/// presenting bytes to [`observe_runtime_artifact`]. This is a content proof, not an
+/// acceptance or provenance proof.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RuntimeArtifactObservation {
+    artifact_id: String,
+    content_sha256: String,
+    byte_length: u64,
+}
+
+impl RuntimeArtifactObservation {
+    /// Returns the content-addressed artifact identifier verified from bytes.
+    pub fn artifact_id(&self) -> &str {
+        &self.artifact_id
+    }
+
+    /// Returns the lowercase SHA-256 digest computed from the observed bytes.
+    pub fn content_sha256(&self) -> &str {
+        &self.content_sha256
+    }
+
+    /// Returns the exact number of bytes presented to the observation constructor.
+    pub fn byte_length(&self) -> u64 {
+        self.byte_length
+    }
+}
+
+/// A successful proof that one topology data edge actually carried bytes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeEdgeProof {
+    pub edge_id: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub output_name: String,
+    pub input_name: String,
+    pub schema_id: String,
+    pub delivery: DeliveryMode,
+    pub artifact_id: String,
+    pub artifact_content_sha256: String,
+    pub artifact_byte_length: u64,
+    pub source_attempt_id: String,
+    pub target_attempt_id: String,
 }
 
 /// Stable diagnostic emitted by validation or reconciliation.
@@ -145,8 +218,122 @@ pub struct RuntimeCompleteness {
     pub missing_report_count: u64,
     pub duplicate_attempt_count: u64,
     pub unaccounted_artifact_count: u64,
+    /// Node/report completeness is retained separately for compatibility and diagnosis.
+    pub node_complete: bool,
+    pub expected_edge_count: u64,
+    pub proven_edge_count: u64,
+    pub missing_edge_count: u64,
+    pub dataflow_complete: bool,
+    pub edge_proofs: Vec<RuntimeEdgeProof>,
+    /// Canonical terminal attempt selected from each valid linear retry lineage.
+    pub terminal_attempt_ids: BTreeMap<String, String>,
+    /// Graph completeness: both nodes and every required data handoff are proven.
     pub complete: bool,
     pub findings: Vec<RuntimeProtocolFinding>,
+}
+
+/// Derives the only canonical runtime expectation from an execution topology.
+pub fn derive_runtime_graph_expectation(
+    topology: &ExecutionTopology,
+) -> Result<RuntimeGraphExpectation, Vec<RuntimeProtocolFinding>> {
+    let validation = validate_execution_topology(topology);
+    if !validation.is_empty() {
+        return Err(validation
+            .into_iter()
+            .map(|item| {
+                finding(
+                    "invalid_execution_topology",
+                    None,
+                    None,
+                    format!("{}: {}", item.location, item.detail),
+                )
+            })
+            .collect());
+    }
+    let mut parents: BTreeMap<&str, BTreeSet<String>> = topology
+        .nodes
+        .iter()
+        .map(|node| (node.node_id.as_str(), BTreeSet::new()))
+        .collect();
+    for edge in &topology.edges {
+        parents
+            .get_mut(edge.to.as_str())
+            .expect("validated edge target exists")
+            .insert(edge.from.clone());
+    }
+    let mut nodes = Vec::with_capacity(topology.nodes.len());
+    for node in &topology.nodes {
+        if node.outputs.len() != 1 {
+            return Err(vec![finding(
+                "unsupported_output_cardinality",
+                Some(node.node_id.clone()),
+                None,
+                "v0 runtime expectation requires exactly one node output",
+            )]);
+        }
+        nodes.push(ExpectedRuntimeNode {
+            node_id: node.node_id.clone(),
+            expected_output_schema_id: node.outputs[0].schema_id.clone(),
+            expected_parent_node_ids: parents
+                .remove(node.node_id.as_str())
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        });
+    }
+    let node_by_id = topology
+        .nodes
+        .iter()
+        .map(|node| (node.node_id.as_str(), node))
+        .collect::<BTreeMap<_, _>>();
+    let mut edges = topology
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Data)
+        .map(|edge| ExpectedRuntimeEdge {
+            edge_id: edge.edge_id.clone(),
+            from_node_id: edge.from.clone(),
+            to_node_id: edge.to.clone(),
+            output_name: edge.output.clone().expect("validated data output"),
+            input_name: edge.input.clone().expect("validated data input"),
+            schema_id: edge.schema_id.clone().expect("validated data schema"),
+            delivery: node_by_id[edge.from.as_str()].delivery,
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    edges.sort_by(|left, right| left.edge_id.cmp(&right.edge_id));
+    Ok(RuntimeGraphExpectation {
+        schema: RUNTIME_GRAPH_EXPECTATION_SCHEMA.to_owned(),
+        schema_version: 0,
+        runtime_graph_id: topology.topology_id.clone(),
+        runtime_graph_content_hash: execution_topology_content_hash(topology)
+            .expect("typed execution topology serializes"),
+        nodes,
+        edges,
+    })
+}
+
+/// Observes actual bytes and rejects an artifact identifier that is not their address.
+pub fn observe_runtime_artifact(
+    artifact_id: impl Into<String>,
+    bytes: &[u8],
+) -> Result<RuntimeArtifactObservation, RuntimeProtocolFinding> {
+    let artifact_id = artifact_id.into();
+    let content_sha256 = format!("{:x}", Sha256::digest(bytes));
+    let expected_id = format!("artifact:sha256-{content_sha256}");
+    if artifact_id != expected_id {
+        return Err(finding(
+            "artifact_content_hash_mismatch",
+            None,
+            None,
+            format!("artifact identifier must be {expected_id}"),
+        ));
+    }
+    Ok(RuntimeArtifactObservation {
+        artifact_id,
+        content_sha256,
+        byte_length: bytes.len() as u64,
+    })
 }
 
 /// Parses and semantically validates a node report.
@@ -380,26 +567,27 @@ pub fn canonical_runtime_node_report(
 
 /// Reconciles reports with an independently content-addressed topology.
 ///
-/// `observed_artifact_ids` is the artifact inventory observed by the ingest
-/// boundary. An artifact is unaccounted when no report declares it as an input
-/// or output. Runtime success alone never makes `complete` true: graph joins,
-/// retry lineage, output schemas, failures, missing reports, and artifact
-/// accounting must all agree.
+/// `observed_artifacts` contains content proofs constructed from actual bytes
+/// at the ingest boundary. Runtime success alone never makes `complete` true:
+/// graph joins, retry lineage, parent lineage, output schemas, failures,
+/// missing reports, and every declared data handoff must agree.
 pub fn reconcile_runtime_reports(
     expected: &RuntimeGraphExpectation,
     reports: &[RuntimeNodeReport],
-    observed_artifact_ids: &[String],
+    observed_artifacts: &[RuntimeArtifactObservation],
 ) -> RuntimeCompleteness {
     let mut findings = Vec::new();
+    if expected.schema != RUNTIME_GRAPH_EXPECTATION_SCHEMA || expected.schema_version != 0 {
+        findings.push(finding(
+            "unsupported_graph_expectation",
+            None,
+            None,
+            "runtime expectation must use runtime.graph_expectation.v0",
+        ));
+    }
     let mut expected_nodes = BTreeMap::new();
     for node in &expected.nodes {
-        if expected_nodes
-            .insert(
-                node.node_id.as_str(),
-                node.expected_output_schema_id.as_str(),
-            )
-            .is_some()
-        {
+        if expected_nodes.insert(node.node_id.as_str(), node).is_some() {
             findings.push(finding(
                 "duplicate_expected_node",
                 Some(node.node_id.clone()),
@@ -457,6 +645,7 @@ pub fn reconcile_runtime_reports(
     }
 
     let mut failed_nodes = BTreeSet::new();
+    let mut terminal_attempts: BTreeMap<&str, usize> = BTreeMap::new();
     for (node_id, indices) in &node_reports {
         let mut roots = Vec::new();
         let mut children: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -535,14 +724,17 @@ pub fn reconcile_runtime_reports(
         }
 
         let attempts_with_successors = valid_parent.values().copied().collect::<BTreeSet<_>>();
-        let successful_schema_match = indices
+        let terminal_indices = indices
             .iter()
             .filter(|&&index| {
                 !attempts_with_successors.contains(reports[index].attempt_id.as_str())
             })
-            .any(|&index| {
+            .copied()
+            .collect::<Vec<_>>();
+        let successful_schema_match = terminal_indices.len() == 1
+            && terminal_indices.first().is_some_and(|&index| {
                 let report = &reports[index];
-                let expected_schema = expected_nodes[node_id];
+                let expected_schema = expected_nodes[node_id].expected_output_schema_id.as_str();
                 let schema_matches = report.expected_output_schema_id == expected_schema
                     && report.actual_output_schema_id.as_deref() == Some(expected_schema);
                 if report.status == RuntimeNodeStatus::Succeeded && !schema_matches {
@@ -552,7 +744,34 @@ pub fn reconcile_runtime_reports(
                         "runtime success does not hide an expected/actual output schema mismatch",
                     ));
                 }
-                report.status == RuntimeNodeStatus::Succeeded && schema_matches
+                let expected_parents = expected_nodes[node_id]
+                    .expected_parent_node_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                let actual_parents = report
+                    .parent_node_ids
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                if expected_parents != actual_parents {
+                    findings.push(report_finding(
+                        report,
+                        "parent_node_lineage_mismatch",
+                        &format!(
+                            "terminal attempt parents {actual_parents:?} differ from topology parents {expected_parents:?}"
+                        ),
+                    ));
+                }
+                if report.status == RuntimeNodeStatus::Succeeded
+                    && schema_matches
+                    && expected_parents == actual_parents
+                {
+                    terminal_attempts.insert(*node_id, index);
+                    true
+                } else {
+                    false
+                }
             });
         if !successful_schema_match {
             failed_nodes.insert(*node_id);
@@ -573,9 +792,13 @@ pub fn reconcile_runtime_reports(
         ));
     }
 
-    let unaccounted = observed_artifact_ids
+    let observed_by_id = observed_artifacts
         .iter()
-        .map(String::as_str)
+        .map(|artifact| (artifact.artifact_id.as_str(), artifact))
+        .collect::<BTreeMap<_, _>>();
+    let unaccounted = observed_artifacts
+        .iter()
+        .map(|artifact| artifact.artifact_id.as_str())
         .collect::<BTreeSet<_>>()
         .difference(&accounted_artifacts)
         .copied()
@@ -587,6 +810,102 @@ pub fn reconcile_runtime_reports(
             None,
             format!("observed artifact {artifact_id:?} is not named by any report"),
         ));
+    }
+
+    let mut edge_ids = BTreeSet::new();
+    let mut edge_proofs = Vec::new();
+    for edge in &expected.edges {
+        if !edge_ids.insert(edge.edge_id.as_str()) {
+            findings.push(finding(
+                "duplicate_expected_edge",
+                Some(edge.to_node_id.clone()),
+                None,
+                format!("edge {} appears more than once", edge.edge_id),
+            ));
+            continue;
+        }
+        let (Some(&source_index), Some(&target_index)) = (
+            terminal_attempts.get(edge.from_node_id.as_str()),
+            terminal_attempts.get(edge.to_node_id.as_str()),
+        ) else {
+            findings.push(finding(
+                "edge_terminal_attempt_missing",
+                Some(edge.to_node_id.clone()),
+                None,
+                format!(
+                    "edge {} lacks a canonical source or target terminal attempt",
+                    edge.edge_id
+                ),
+            ));
+            continue;
+        };
+        let source = &reports[source_index];
+        let target = &reports[target_index];
+        let source_outputs = source
+            .output_artifact_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let target_inputs = target
+            .input_artifact_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let handoff = source_outputs
+            .intersection(&target_inputs)
+            .copied()
+            .collect::<Vec<_>>();
+        if handoff.is_empty() {
+            findings.push(finding(
+                "missing_edge_handoff_artifact",
+                Some(edge.to_node_id.clone()),
+                Some(target.attempt_id.clone()),
+                format!(
+                    "edge {} has no artifact shared by terminal source output and target input",
+                    edge.edge_id
+                ),
+            ));
+            continue;
+        }
+        if handoff.len() != 1 {
+            findings.push(finding(
+                "duplicated_edge_handoff_artifact",
+                Some(edge.to_node_id.clone()),
+                Some(target.attempt_id.clone()),
+                format!(
+                    "edge {} ambiguously carries artifacts {handoff:?}",
+                    edge.edge_id
+                ),
+            ));
+            continue;
+        }
+        let artifact_id = handoff[0];
+        let Some(observed) = observed_by_id.get(artifact_id).copied() else {
+            findings.push(finding(
+                "un_ingested_edge_handoff_artifact",
+                Some(edge.to_node_id.clone()),
+                Some(target.attempt_id.clone()),
+                format!(
+                    "edge {} names {artifact_id:?} without observed bytes",
+                    edge.edge_id
+                ),
+            ));
+            continue;
+        };
+        edge_proofs.push(RuntimeEdgeProof {
+            edge_id: edge.edge_id.clone(),
+            from_node_id: edge.from_node_id.clone(),
+            to_node_id: edge.to_node_id.clone(),
+            output_name: edge.output_name.clone(),
+            input_name: edge.input_name.clone(),
+            schema_id: edge.schema_id.clone(),
+            delivery: edge.delivery,
+            artifact_id: artifact_id.to_owned(),
+            artifact_content_sha256: observed.content_sha256.clone(),
+            artifact_byte_length: observed.byte_length,
+            source_attempt_id: source.attempt_id.clone(),
+            target_attempt_id: target.attempt_id.clone(),
+        });
     }
 
     findings.sort_by(|left, right| {
@@ -602,12 +921,16 @@ pub fn reconcile_runtime_reports(
     let failed_node_count = failed_nodes.len() as u64;
     let unaccounted_artifact_count = unaccounted.len() as u64;
     let duplicate_attempt_count = duplicate_attempt_indices.len() as u64;
-    let complete = expected_node_count > 0
-        && findings.is_empty()
+    let node_complete = expected_node_count > 0
         && missing_report_count == 0
         && failed_node_count == 0
         && duplicate_attempt_count == 0
         && unaccounted_artifact_count == 0;
+    let expected_edge_count = edge_ids.len() as u64;
+    let proven_edge_count = edge_proofs.len() as u64;
+    let missing_edge_count = expected_edge_count.saturating_sub(proven_edge_count);
+    let dataflow_complete = missing_edge_count == 0;
+    let complete = node_complete && dataflow_complete && findings.is_empty();
 
     RuntimeCompleteness {
         expected_node_count,
@@ -616,6 +939,16 @@ pub fn reconcile_runtime_reports(
         missing_report_count,
         duplicate_attempt_count,
         unaccounted_artifact_count,
+        node_complete,
+        expected_edge_count,
+        proven_edge_count,
+        missing_edge_count,
+        dataflow_complete,
+        edge_proofs,
+        terminal_attempt_ids: terminal_attempts
+            .iter()
+            .map(|(node_id, index)| ((*node_id).to_owned(), reports[*index].attempt_id.clone()))
+            .collect(),
         complete,
         findings,
     }
@@ -783,14 +1116,18 @@ mod tests {
 
     fn expectation(count: usize) -> RuntimeGraphExpectation {
         RuntimeGraphExpectation {
+            schema: RUNTIME_GRAPH_EXPECTATION_SCHEMA.to_owned(),
+            schema_version: 0,
             runtime_graph_id: "runtime_graph:example".to_owned(),
             runtime_graph_content_hash: HASH.to_owned(),
             nodes: (0..count)
                 .map(|index| ExpectedRuntimeNode {
                     node_id: format!("node:{index}"),
                     expected_output_schema_id: "schema:result".to_owned(),
+                    expected_parent_node_ids: Vec::new(),
                 })
                 .collect(),
+            edges: Vec::new(),
         }
     }
 
@@ -859,11 +1196,10 @@ mod tests {
     fn success_cannot_hide_schema_mismatch_or_unaccounted_artifact() {
         let mut runtime_report = report("node:0", "attempt:1");
         runtime_report.actual_output_schema_id = Some("schema:wrong".to_owned());
-        let result = reconcile_runtime_reports(
-            &expectation(1),
-            &[runtime_report],
-            &["artifact:orphan".to_owned()],
-        );
+        let orphan_bytes = b"orphan";
+        let orphan_id = format!("artifact:sha256-{:x}", Sha256::digest(orphan_bytes));
+        let orphan = observe_runtime_artifact(orphan_id, orphan_bytes).unwrap();
+        let result = reconcile_runtime_reports(&expectation(1), &[runtime_report], &[orphan]);
         assert!(!result.complete);
         assert_eq!(result.failed_node_count, 1);
         assert_eq!(result.unaccounted_artifact_count, 1);
@@ -940,11 +1276,11 @@ mod tests {
         let matched = report("node:0", "attempt:matched");
         let mut outside = report("node:outside", "attempt:outside");
         outside.output_artifact_ids = vec!["artifact:orphan".to_owned()];
-        let result = reconcile_runtime_reports(
-            &expected,
-            &[matched, outside],
-            &["artifact:orphan".to_owned()],
-        );
+        let orphan_bytes = b"orphan";
+        let orphan_id = format!("artifact:sha256-{:x}", Sha256::digest(orphan_bytes));
+        outside.output_artifact_ids = vec![orphan_id.clone()];
+        let orphan = observe_runtime_artifact(orphan_id, orphan_bytes).unwrap();
+        let result = reconcile_runtime_reports(&expected, &[matched, outside], &[orphan]);
         assert!(!result.complete);
         assert_eq!(result.unaccounted_artifact_count, 1);
     }

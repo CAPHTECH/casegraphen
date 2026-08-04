@@ -1,0 +1,14 @@
+{
+  "schema":"casegraphen.experimental.resource.reviewed_deployment_binding.v0",
+  "schema_version":0,
+  "claim_cell_id":"evidence:execution-topology",
+  "accepted_review_id":"review:execution-topology",
+  "reviewed_topology_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "policy_manifest_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "deployment_bundle_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "accepted_review_revision":"revision:reviewed-topology",
+  "case_space_id":"case_space:example",
+  "node_id":"node:refactor-a",
+  "attempt_id":"attempt:refactor-a:1",
+  "resource_declaration_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

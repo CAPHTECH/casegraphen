@@ -98,7 +98,7 @@ fn catalog_and_resource_transcript_is_mcp_compatible() {
         .handle_line(&request(4, "tools/list", json!({})))
         .unwrap();
     let tools = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 17);
+    assert_eq!(tools.len(), 18);
     let review = tools
         .iter()
         .find(|tool| tool["name"] == "review_accept")
@@ -272,7 +272,7 @@ fn external_binary_speaks_only_newline_delimited_json_rpc_on_stdout() {
         .collect::<Vec<_>>();
     assert_eq!(messages.len(), 3);
     assert!(messages.iter().all(|message| message["jsonrpc"] == "2.0"));
-    assert_eq!(messages[1]["result"]["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(messages[1]["result"]["tools"].as_array().unwrap().len(), 18);
     assert_eq!(messages[2]["result"]["isError"], false);
     assert!(messages[2]["result"]["structuredContent"]["result"]["findings"].is_array());
 }

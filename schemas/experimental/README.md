@@ -27,6 +27,18 @@ Rust owner, examples, references, and inventory atomically.
 - `verification.policy.v0.schema.json` separates ledger-verifiable
   constraints, runtime attestations, and properties that are not observable by
   CaseGraphen. Its reconciliation result is not evidence acceptance.
+- `verification_lineage_declarations.v0.schema.json` preserves caller-reported
+  producer/verifier identities, capabilities, dispositions, and attestations
+  under explicitly declared vocabulary. These records never satisfy the
+  ledger-derived policy path. Opaque Rust proofs for that path are constructible
+  only from an exact observed current ledger, canonical capability gate and
+  historical dispatch/review morphism, plus matching report and trace bytes.
+  Strong reconciliation joins producer and verifier on the trace-derived
+  subject revision and repeats its exact case/revision/claim/topology/node/
+  attempt scope so downstream code cannot mistake the proof for timeless
+  authority. It also consumes the current case space and rechecks gates,
+  capabilities, claims, authority morphisms, and current review status before
+  counting quorum.
 
 - `runtime.node_report.schema.json` defines
   `casegraphen.experimental.runtime.node_report.v0`. Every value is an
@@ -36,6 +48,10 @@ Rust owner, examples, references, and inventory atomically.
   themselves.
 - `runtime.node_report.example.json` is a round-trip fixture for the Rust
   validation and canonicalization implementation.
+- `runtime.graph_expectation.v0.schema.json` is the strict canonical
+  projection of topology nodes, predecessor lineage, and typed data edges used
+  by batch and streaming reconciliation. It is derived from
+  `execution.topology.v0`, not an alternate caller-owned graph rule.
 - `runtime.integration.jsonl-record.v0.schema.json` defines the strict generic
   JSONL envelopes consumed by `GenericJsonlReconciler`. Artifact content is
   UTF-8 text in v0 and must match its content-addressed identifier.
@@ -67,9 +83,12 @@ Rust owner, examples, references, and inventory atomically.
   topology claims, attempt grants, untrusted actual allocations, and their
   deterministic comparison separate. Reservation disposition and rate-limit
   capacity are explicit records; elapsed time never releases a reservation.
-- `resource.allocator_configuration.v0` and `resource.allocator_event.v0`
+- `resource.allocator_configuration.v0`,
+  `resource.reviewed_deployment_binding.v0`, and `resource.allocator_event.v0`
   define host-canonical capacity and the durable reservation/disposition
-  journal. `runtime.resource_expectation_bundle.v0` binds allocator records and
+  journal. Operational grants retain the accepted topology, policy manifest,
+  deployment bundle, review revision, node, attempt, and declaration hashes.
+  `runtime.resource_expectation_bundle.v0` binds that journal authority and
   runtime allocations to one topology hash and case revision before canonical
   reconciliation.
 - `git.worktree_record.v0` is the reference isolation record. The Rust
@@ -77,9 +96,12 @@ Rust owner, examples, references, and inventory atomically.
   worktrees from an exact base commit; integration fixtures use disposable
   repositories, and cleanup requires a matching release/supersede assertion.
 
-Runtime reports join to `execution.topology.v0` only through the exact topology
-identifier/content hash and node identifier. Completeness reconciliation is a
-diagnostic; it does not append evidence, accept a claim, or transition a case.
+Runtime reports join to `execution.topology.v0` through the exact topology
+identifier/content hash, canonical terminal retry attempts, parent lineage,
+and content-addressed edge handoffs. Node completeness and dataflow
+completeness are separately diagnostic; only their conjunction is graph
+`complete`. Reconciliation does not append evidence, accept a claim, or
+transition a case.
 Case graph meaning, execution topology, and actual runtime history remain
 separate. Parsing, linting, hashing, compiling, or reconciling an experimental
 artifact never makes it accepted.

@@ -90,6 +90,14 @@ library owners. Its persistence/authentication boundary is described in
 [operational walkthrough](docs/guides/graph-engineering-product-surface.md)
 shows the review-seamed end-to-end path.
 
+Proposal compilation remains inspection-only. The operational reviewed path
+attaches and accepts the exact topology plus policy manifest, then calls
+`compile_reviewed_deployment_bundle`; the host replays the accepted revision
+and derives authority instead of accepting a caller-created mode or hash.
+Resource reservations are available only for that content-addressed reviewed
+deployment and retain its review, node, attempt, and declaration binding in
+the allocator journal.
+
 Operational resource reservations are atomic, durable, and derived from a
 host-canonical append-only allocator journal. Resource-bearing runtime runs use
 a versioned expectation bundle bound to the exact topology hash and observed

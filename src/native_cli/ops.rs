@@ -929,14 +929,18 @@ fn validate_generic_morphism_metadata(morphism: &CaseMorphism) -> Result<(), Nat
     // coverage that clears a hard evidence requirement. The reserved metadata
     // keys above already made a forged review fail; this closes the same door
     // for the type itself, so both keys mean what they say: the tool minted it.
+    let tool_minted_trace_anchor =
+        crate::native_store::is_execution_trace_anchor(&morphism.morphism_type);
     if matches!(
         morphism.morphism_type,
         CaseMorphismType::Review | CaseMorphismType::EvidenceAttach
-    ) {
+    ) || tool_minted_trace_anchor
+    {
         return Err(NativeCliError::invalid(format!(
-            "generic morphism propose/apply cannot declare morphism_type {}: review and \
-             evidence_attach are minted by casegraphen review, evidence attach, and run --step, \
-             and are read back as proof that one of those ran",
+            "generic morphism propose/apply cannot declare morphism_type {}: review, \
+             evidence_attach, and custom:execution_trace_anchor are minted by casegraphen \
+             review, evidence attach, and run commands, and are read back as proof that one \
+             of those ran",
             morphism.morphism_type
         )));
     }
@@ -967,7 +971,11 @@ fn append_validated_morphism(
     validate_candidate_morphism(case_space, &morphism)?;
     let mut entry = entry_for_morphism(case_space, morphism, actor_id)?;
     entry.replay_checksum = checksum_after_append(case_space, &entry)?;
-    let record = store.append_morphism(&case_space.case_space_id, entry.clone())?;
+    let record = if crate::native_store::is_execution_trace_anchor(&entry.morphism.morphism_type) {
+        store.append_execution_trace_anchor(&case_space.case_space_id, entry.clone())?
+    } else {
+        store.append_morphism(&case_space.case_space_id, entry.clone())?
+    };
     Ok(report(command, json!({ "record": record, "entry": entry })))
 }
 
@@ -1159,5 +1167,27 @@ mod tests {
         .expect("predecessor hash");
 
         assert_eq!(entry.previous_entry_hash, Some(expected));
+    }
+
+    #[test]
+    fn generic_morphism_cannot_forge_an_execution_trace_anchor() {
+        let morphism = CaseMorphism {
+            morphism_id: id_lossy("morphism:forged-trace-anchor"),
+            morphism_type: CaseMorphismType::Custom("execution_trace_anchor".into()),
+            source_revision_id: Some(id_lossy("revision:source")),
+            target_revision_id: id_lossy("revision:target"),
+            added_ids: Vec::new(),
+            updated_ids: Vec::new(),
+            retired_ids: Vec::new(),
+            preserved_ids: Vec::new(),
+            violated_invariant_ids: Vec::new(),
+            review_status: ReviewStatus::Accepted,
+            evidence_ids: Vec::new(),
+            source_ids: Vec::new(),
+            metadata: Map::new(),
+        };
+        let error = validate_generic_morphism_metadata(&morphism)
+            .expect_err("caller-authored trace authority must be refused");
+        assert!(error.to_string().contains("custom:execution_trace_anchor"));
     }
 }

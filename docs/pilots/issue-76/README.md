@@ -23,6 +23,16 @@ generic JSONL boundary, and reconcile the exact resource-expectation bundle.
 All successful paths halt at `needs_review`; every failure output is an
 unreviewed audit/redesign proposal and cannot mutate accepted topology.
 
+As of the edge-completeness contract, a newly generated pilot may report
+`complete: true` only when both `node_complete` and `dataflow_complete` are
+true. For fan-out/reduce this means each reduce input is the exact
+content-addressed output of its canonical terminal parent attempt; node success
+alone is insufficient. The checked-in 2026-08-04 `pilot-report.json` predates
+that result shape and is retained as historical node/resource evidence, not as
+edge-completeness evidence. Re-run the command below to produce current
+edge-level evidence. Regardless of completeness, proposals remain unreviewed
+and execution stops at `needs_review`.
+
 Reproduce after building the host with Rust 1.80:
 
 ```sh

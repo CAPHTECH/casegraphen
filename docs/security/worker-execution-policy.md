@@ -111,12 +111,13 @@ evidence with no review naming it; that was reproduced against the shipped
 walkthrough genesis, with a control run confirming the coverage claim was the
 only difference.
 
-Both keys the log is read by — `review` and `evidence_attach` — are therefore
-reserved: `morphism propose` and `morphism apply` refuse a generic morphism that
-declares either `morphism_type`, alongside the canonical review metadata keys
-they already refused. A proposal file is written by the caller, so a type that
-is read back as proof that a command ran is a caller-declared trust value unless
-the tool is the only writer of it.
+All morphism types the log reads as proof that a tool path ran — `review`,
+`evidence_attach`, and `custom:execution_trace_anchor` — are therefore reserved:
+`morphism propose` and `morphism apply` refuse a generic morphism that declares
+one, alongside the canonical review metadata keys they already refused. A
+proposal file is written by the caller, so a type that is read back as proof
+that a command ran is a caller-declared trust value unless the tool is the only
+writer of it.
 
 A relation update may not change `relation_type`, `from_id`, `to_id`, or
 `relation_strength`. Those four are the identity of an edge, and leaving them

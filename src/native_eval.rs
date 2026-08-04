@@ -18,7 +18,7 @@ pub use validation::validate_native_case_space;
 // The close check's own crate-internal surface onto the same derivation the
 // evaluator and `effective_evidence_review_status` read, so `native_review`
 // can compute the map once and pass it down instead of re-deriving it.
-pub(crate) use sections::latest_evidence_review_statuses;
+pub(crate) use sections::{latest_evidence_review_entries, latest_evidence_review_statuses};
 
 use graph::NativeCaseIndex;
 #[cfg(test)]
