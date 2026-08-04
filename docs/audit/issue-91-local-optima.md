@@ -23,8 +23,8 @@ Observed runtime evidence:
   fields to profile 0.
 - `cargo clippy --lib -- -D warnings` and `cargo fmt --all --check` passed.
 - Experimental schema conformance passed for 41 governed contracts.
-- Promotion-review conformance passed with seven completed local triggers and
-  five open promotion blockers.
+- Promotion-review conformance passed with eight completed local triggers and
+  four open promotion blockers after the compatibility evidence was recorded.
 - The checked-in compiler performance report passed source/workload-aware
   verification. Rehashed over-budget, workload-substitution, and
   compiler-source-substitution fixtures were all refused.
@@ -275,7 +275,8 @@ Before stable promotion:
 4. Keep source-bound retained performance evidence current, while preserving
    the distinction between deterministic source/workload facts and observed
    binary/timing values.
-5. Keep the five promotion blockers reported by promotion conformance open;
+5. Keep the four remaining promotion blockers reported by promotion
+   conformance open;
    this audit does not convert local compatibility evidence into stable or
    production evidence.
 

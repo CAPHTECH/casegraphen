@@ -2,7 +2,7 @@
   "schema": "casegraphen.review.graph_engineering_promotion_inventory.v1",
   "schema_version": 1,
   "as_of_date": "2026-08-05",
-  "review_source_commit": "d353b160ebcca089c47d5df455c9357106389989",
+  "review_source_commit": "52dbe16d80d9d8e31ab0cbec3f5ba6edb66e0837",
   "decision": {
     "contract": "experimental-v0",
     "promotion_recommended": false,
@@ -107,8 +107,14 @@
     },
     {
       "id": "exact-compiler-profile-compatibility",
-      "status": "missing_release_evidence",
+      "status": "satisfied_repository",
+      "evidence_date": "2026-08-05",
+      "evidence_commit": "52dbe16d80d9d8e31ab0cbec3f5ba6edb66e0837",
       "owner_issue": 91,
+      "reference": {
+        "path": "docs/pilots/issue-91/compiler-verification-performance.json",
+        "content_hash": "sha256:e4daa09664fd85e743497bbc304a43224f386b496ecd9b6be07b810cc2a44468"
+      },
       "repository_baseline": {
         "current_profile": 1,
         "retained_exact_historical_profile": 0,
@@ -124,14 +130,14 @@
     {"id": "edge-completeness", "fact_ids": ["edge-level-runtime-completeness"]},
     {"id": "reviewed-compilation", "fact_ids": ["reviewed-compilation-runtime-chain"]},
     {"id": "bounded-durability", "fact_ids": ["bounded-runtime-durability-pilot"]},
-    {"id": "verification-product-surface", "fact_ids": ["verification-lineage-supported-surface"], "owner_issue": 87}
+    {"id": "verification-product-surface", "fact_ids": ["verification-lineage-supported-surface"], "owner_issue": 87},
+    {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91}
   ],
   "required_stable_blockers": [
     {"id": "provider-authority", "fact_ids": ["provider-attested-release-matrix"], "owner_issue": 76},
     {"id": "allocator-fleet-replay", "fact_ids": ["allocator-checkpoint-compaction"], "owner_issue": 88},
     {"id": "durable-runtime-evidence", "fact_ids": ["runtime-durability-retained-release"], "owner_issue": 89},
-    {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 89},
-    {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91}
+    {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 89}
   ],
   "optional_post_v0_enhancements": [
     "tool-specific stable MCP payload schemas",

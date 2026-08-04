@@ -12,8 +12,7 @@ The authority chain now binds accepted topology and policy bytes to reviewed
 compilation, reviewed resource reservation, canonical terminal attempts, and
 byte-observed data-edge handoffs. These are substantial local results. They do
 not replace provider-host authority, retained external evidence, sustained
-allocator evidence, exact compiler-profile compatibility evidence, or a
-production fleet observation.
+allocator evidence, or a production fleet observation.
 
 The machine-readable source for counts, retained references, completed local
 triggers, and open blockers is
@@ -65,6 +64,14 @@ this prose does not redefine those decision rules.
 - Issue #87 exposes verification-lineage proof derivation as a supported
   product workflow and documents the ordinary CLI-to-proof authority path.
 
+<!-- promotion-trigger:compiler-profile-compatibility -->
+
+- Issue #91 binds compiler identity and input-contract versions into topology
+  review and deployment bundles, retains exact profile-0 compatibility,
+  refuses identity substitution, emits review-required migration proposals,
+  and gates representative verification cost. This is repository lifecycle
+  evidence, not multi-release production history.
+
 All completed items above remain `accepted: false` unless and until an
 independent acceptance-ledger review records a separate decision.
 
@@ -100,15 +107,6 @@ independent acceptance-ledger review records a separate decision.
    real long-lived scheduler/fleet boundary, including remote failures and
    recovery. Local adapter diversity and bounded synthetic scale do not prove
    this behavior.
-
-<!-- promotion-trigger:compiler-profile-compatibility -->
-
-5. **Exact compiler-profile compatibility — Issue #91.** Retain the exact
-   compiler profile contract, historical verifier/migration evidence, and a
-   bounded verification performance report. The current profile-1
-   implementation and exact retained profile-0 path establish the mechanism;
-   stable promotion still requires governed compatibility evidence for the
-   supported historical boundary.
 
 These blockers are conjunctive. Satisfying one does not weaken another, and a
 runtime report or passing test never performs promotion automatically.

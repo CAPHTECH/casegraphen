@@ -34,7 +34,7 @@ trigger ledger; it does not implement acceptance or stable-promotion authority.
 | 2 | Treat local passing evidence as provider authority | Fast promotion narrative | Collapses trust boundary and reviewer provenance | Critical | High | Rejected; separate non-promotional/external statuses |
 | 3 | Copy canonical surface counts by hand | Readable snapshot | Drifts as workflows/contracts change | Medium | High | Rejected; conformance derives counts |
 | 4 | Mix stable blockers with improvements | One convenient backlog | Optional design work can indefinitely block promotion | High | High | Rejected; separate required and optional sections |
-| 5 | Mark mechanisms complete without retained release evidence | Rewards implementation | Inverts evidence and deployment authority | High | High | Rejected for #88, #89, and #91 |
+| 5 | Mark mechanisms complete without retained release evidence | Rewards implementation | Inverts evidence and deployment authority | High | High | Rejected for #88 and #89 |
 
 ## Candidate detail and compensation halo
 
@@ -45,9 +45,12 @@ asked for them. The inventory now names retained facts independently of the
 prose and rejects an open trigger once all its facts are satisfied.
 
 The same distinction prevents a second local optimum: declaring a repository
-mechanism “done” because its unit tests pass. Issues #76, #88, #89, and #91
+mechanism “done” because its unit tests pass. Issues #76, #88, and #89
 retain stable blockers for evidence produced at the external or release
 boundary, even where the implementation or bounded baseline already exists.
+Issue #91 is separately satisfied by its governed exact-profile contract,
+historical corpus, migration refusal tests, and source-bound performance gate;
+that does not claim multi-release production history.
 
 ## Widened-boundary comparison
 
@@ -90,5 +93,5 @@ The fact-status edit itself remains a reviewed human action. Future work could
 sign the inventory or derive more facts from retained release records, but it
 must not let a passing report promote the contract automatically. The next
 observations are the external provider authority (#76), 10k/100k allocator
-release reports (#88), published runtime-durability asset (#89), and governed
-historical compiler compatibility evidence (#91).
+release reports (#88), and published runtime-durability/production-fleet
+evidence (#89).
