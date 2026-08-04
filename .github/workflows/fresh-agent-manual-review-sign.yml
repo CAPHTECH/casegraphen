@@ -1,0 +1,107 @@
+name: Fresh Agent Manual Review Signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      review_source_sha:
+        description: Exact commit containing the unsigned manual review
+        required: true
+        type: string
+      unsigned_review_path:
+        description: Repository-relative unsigned JSON under docs/evals/fresh-agent/reviews
+        required: true
+        type: string
+      evidence_run_id:
+        description: Fresh Agent Release Evaluation run id reviewed by the signer
+        required: true
+        type: string
+      evidence_run_attempt:
+        description: Exact evaluation workflow run attempt reviewed by the signer
+        required: true
+        type: string
+      evaluated_commit_sha:
+        description: Exact evaluated commit shared by both provider artifacts
+        required: true
+        type: string
+
+jobs:
+  sign-review:
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
+    permissions:
+      actions: read
+      contents: read
+    environment: fresh-agent-manual-review-signer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact review source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.review_source_sha }}
+          path: review-source
+          persist-credentials: false
+      - name: Checkout exact trusted verifier source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          path: trusted-verifier
+          persist-credentials: false
+      - name: Sign independently reviewed judgments
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          EVIDENCE_RUN_ATTEMPT: ${{ inputs.evidence_run_attempt }}
+          EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+          REVIEW_SOURCE_SHA: ${{ inputs.review_source_sha }}
+          UNSIGNED_REVIEW_PATH: ${{ inputs.unsigned_review_path }}
+          TRUSTED_VERIFIER_SHA: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          REVIEWER_IDENTITY: ${{ vars.CASEGRAPHEN_REVIEWER_IDENTITY }}
+          REVIEWER_KEY_ID: ${{ vars.CASEGRAPHEN_REVIEWER_KEY_ID }}
+          REVIEWER_PRIVATE_KEY: ${{ secrets.CASEGRAPHEN_REVIEWER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$REVIEW_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TRUSTED_VERIFIER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVIDENCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          case "$UNSIGNED_REVIEW_PATH" in
+            docs/evals/fresh-agent/reviews/*.json) ;;
+            *) echo 'unsigned review must be JSON under docs/evals/fresh-agent/reviews' >&2; exit 2 ;;
+          esac
+          test "$(git -C review-source rev-parse HEAD)" = "$REVIEW_SOURCE_SHA"
+          test "$(git -C trusted-verifier rev-parse HEAD)" = "$TRUSTED_VERIFIER_SHA"
+          test -f "review-source/$UNSIGNED_REVIEW_PATH"
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$EVIDENCE_RUN_ID" \
+            --run-attempt "$EVIDENCE_RUN_ATTEMPT" --head-sha "$EVALUATED_COMMIT_SHA" \
+            --workflow-path .github/workflows/fresh-agent-release-eval.yml \
+            --artifact "fresh-agent-codex-$EVALUATED_COMMIT_SHA-run-$EVIDENCE_RUN_ID-attempt-$EVIDENCE_RUN_ATTEMPT=review-provenance/codex-artifact" \
+            --output review-provenance/codex.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$EVIDENCE_RUN_ID" \
+            --run-attempt "$EVIDENCE_RUN_ATTEMPT" --head-sha "$EVALUATED_COMMIT_SHA" \
+            --workflow-path .github/workflows/fresh-agent-release-eval.yml \
+            --artifact "fresh-agent-claude-$EVALUATED_COMMIT_SHA-run-$EVIDENCE_RUN_ID-attempt-$EVIDENCE_RUN_ATTEMPT=review-provenance/claude-artifact" \
+            --output review-provenance/claude.json
+          umask 077
+          key_file="$RUNNER_TEMP/casegraphen-reviewer-private.pem"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$REVIEWER_PRIVATE_KEY" > "$key_file"
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py sign-review \
+            --input "review-source/$UNSIGNED_REVIEW_PATH" \
+            --allowed-review-root review-source/docs/evals/fresh-agent/reviews \
+            --expected-provenance codex=review-provenance/codex.json \
+            --expected-provenance claude=review-provenance/claude.json \
+            --output signed-manual-review/manual-review.json \
+            --private-key "$key_file" \
+            --reviewer-identity "$REVIEWER_IDENTITY" \
+            --reviewer-key-id "$REVIEWER_KEY_ID"
+      - name: Publish signed manual review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-signed-manual-review-${{ inputs.review_source_sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: signed-manual-review/manual-review.json
+          if-no-files-found: error
+          retention-days: 90

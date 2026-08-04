@@ -650,7 +650,10 @@ fn workflow_conformance_rejects_api_key_or_github_secret_injection() {
     );
     reject(
         "non-main-dispatch.yml",
-        valid.replace("    if: github.ref == 'refs/heads/main'\n", ""),
+        valid.replace(
+            "    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA\n",
+            "",
+        ),
         "refuse non-main workflow dispatch refs",
     );
     reject(

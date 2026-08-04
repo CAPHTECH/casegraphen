@@ -9,13 +9,17 @@ evidence. Missing/unavailable/timed-out lanes can never become passing evidence.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
-import hmac
 import json
+import math
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -25,18 +29,89 @@ DEFAULT_MANIFEST = ROOT / "evals/fresh-agent/scenarios.v0.json"
 
 
 def canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
 
 
 def digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = item
+    return value
+
+
+def reject_nonfinite_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
 def load(path: pathlib.Path) -> dict[str, Any]:
-    value = json.loads(path.read_text())
+    value = json.loads(
+        path.read_text(),
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_nonfinite_constant,
+    )
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected JSON object")
     return value
+
+
+def valid_provider_provenance(value: Any) -> bool:
+    required = {
+        "evaluated_commit_sha",
+        "repository",
+        "source_workflow",
+        "source_workflow_id",
+        "source_workflow_path",
+        "source_run_id",
+        "source_run_attempt",
+        "source_head_ref",
+        "source_head_sha",
+        "source_event",
+        "source_conclusion",
+        "provider_artifact",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        return False
+    string_fields = required - {
+        "source_workflow_id",
+        "source_run_id",
+        "source_run_attempt",
+        "provider_artifact",
+    }
+    if not all(isinstance(value[field], str) and value[field] for field in string_fields):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{40}", value["evaluated_commit_sha"]):
+        return False
+    if value["source_head_sha"] != value["evaluated_commit_sha"]:
+        return False
+    if not all(
+        isinstance(value[field], int) and not isinstance(value[field], bool) and value[field] > 0
+        for field in ("source_workflow_id", "source_run_id", "source_run_attempt")
+    ):
+        return False
+    artifact = value["provider_artifact"]
+    return (
+        isinstance(artifact, dict)
+        and set(artifact) == {"id", "name", "digest"}
+        and isinstance(artifact["id"], int)
+        and not isinstance(artifact["id"], bool)
+        and artifact["id"] > 0
+        and isinstance(artifact["name"], str)
+        and bool(artifact["name"])
+        and isinstance(artifact["digest"], str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"]) is not None
+    )
 
 
 def validate_baseline(
@@ -83,39 +158,117 @@ def summary_hash(summary: dict[str, Any]) -> str:
     return actual
 
 
+def verify_ed25519(public_key: pathlib.Path, payload: bytes, signature: Any) -> bool:
+    if not isinstance(signature, str):
+        return False
+    try:
+        signature_bytes = base64.b64decode(signature, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    try:
+        key_type = subprocess.run(
+            [
+                "openssl",
+                "pkey",
+                "-pubin",
+                "-in",
+                str(public_key),
+                "-text_pub",
+                "-noout",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if key_type.returncode != 0 or not key_type.stdout.startswith(b"ED25519 Public-Key:"):
+        return False
+    with tempfile.TemporaryDirectory(prefix="casegraphen-signature-verify-") as directory:
+        payload_path = pathlib.Path(directory) / "payload"
+        signature_path = pathlib.Path(directory) / "signature"
+        payload_path.write_bytes(payload)
+        signature_path.write_bytes(signature_bytes)
+        try:
+            process = subprocess.run(
+                [
+                    "openssl",
+                    "pkeyutl",
+                    "-verify",
+                    "-pubin",
+                    "-inkey",
+                    str(public_key),
+                    "-rawin",
+                    "-in",
+                    str(payload_path),
+                    "-sigfile",
+                    str(signature_path),
+                ],
+                capture_output=True,
+                check=False,
+            )
+        except OSError:
+            return False
+        return process.returncode == 0
+
+
+def ed25519_public_key_spki_hash(public_key: pathlib.Path) -> str | None:
+    try:
+        key_type = subprocess.run(
+            ["openssl", "pkey", "-pubin", "-in", str(public_key), "-text_pub", "-noout"],
+            capture_output=True,
+            check=False,
+        )
+        der = subprocess.run(
+            ["openssl", "pkey", "-pubin", "-in", str(public_key), "-outform", "DER"],
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if (
+        key_type.returncode != 0
+        or not key_type.stdout.startswith(b"ED25519 Public-Key:")
+        or der.returncode != 0
+    ):
+        return None
+    return digest(der.stdout)
+
+
 def verify_host_attestation(
     provider: str,
     summary: dict[str, Any],
     run_hash: str | None,
     policy: dict[str, Any],
     attestation_path: pathlib.Path | None,
-    key_path: pathlib.Path | None,
+    public_key_path: pathlib.Path | None,
+    expected_provenance: dict[str, Any],
 ) -> tuple[str | None, list[str]]:
     findings: list[str] = []
-    if attestation_path is None or key_path is None:
+    if attestation_path is None:
         return None, [f"missing_host_attestation:{provider}"]
+    if public_key_path is None:
+        return None, [f"missing_host_attestation_public_key:{provider}"]
     try:
         attestation = load(attestation_path)
-        key = key_path.read_bytes()
     except (OSError, ValueError, json.JSONDecodeError):
         return None, [f"unreadable_host_attestation:{provider}"]
-    supplied_mac = attestation.pop("hmac_sha256", None)
-    if not isinstance(supplied_mac, str) or len(key) < 32:
-        return None, [f"invalid_host_attestation_signature:{provider}"]
-    expected_mac = hmac.new(key, canonical(attestation), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(supplied_mac, expected_mac):
+    signed_payload = dict(attestation)
+    supplied_signature = signed_payload.pop("ed25519_signature", None)
+    if not verify_ed25519(public_key_path, canonical(signed_payload), supplied_signature):
         findings.append(f"invalid_host_attestation_signature:{provider}")
     authentication = summary.get("provider", {}).get("authentication", {})
     pin = policy["runner_pins"][provider]
     expected = {
-        "schema": "casegraphen.eval.cli_session_host_attestation.v0",
+        "schema": "casegraphen.eval.cli_session_host_attestation.v1",
+        "signature_algorithm": "ed25519",
+        "signing_key_id": pin.get("host_attestation_key_id"),
         "provider": provider,
         "run_content_hash": run_hash,
         "host_attestation_challenge": summary.get("host_attestation_challenge"),
         "authentication_classification": authentication.get("classification"),
-        "credential_boundary": "dedicated_provider_os_account_with_brokered_session",
+        "credential_boundary": "evaluation_host_session_proven_by_external_attestor",
         "agent_credential_read_access": False,
-        "key_id": pin.get("host_attestation_key_id"),
+        "provenance": expected_provenance,
     }
     for field, value in expected.items():
         if attestation.get(field) != value:
@@ -123,6 +276,58 @@ def verify_host_attestation(
     runner_hash = attestation.get("runner_instance_id_hash")
     if not isinstance(runner_hash, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", runner_hash):
         findings.append(f"host_attestation_binding_mismatch:{provider}:runner_instance_id_hash")
+    proof_hash = attestation.get("evaluation_host_proof_content_hash")
+    if not isinstance(proof_hash, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", proof_hash):
+        findings.append(
+            f"host_attestation_binding_mismatch:{provider}:evaluation_host_proof_content_hash"
+        )
+    proof_key_id = attestation.get("evaluation_host_signing_key_id")
+    if not isinstance(proof_key_id, str) or not proof_key_id.strip():
+        findings.append(
+            f"host_attestation_binding_mismatch:{provider}:evaluation_host_signing_key_id"
+        )
+    proof_key_spki = attestation.get("evaluation_host_public_key_spki_sha256")
+    if not isinstance(proof_key_spki, str) or not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", proof_key_spki
+    ):
+        findings.append(
+            f"host_attestation_binding_mismatch:{provider}:evaluation_host_public_key_spki_sha256"
+        )
+    proof_path = attestation_path.with_name(f"{provider}-evaluation-host-proof.json")
+    proof_public_key_path = attestation_path.with_name(
+        f"{provider}-evaluation-host-public.pem"
+    )
+    try:
+        retained_proof = load(proof_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        retained_proof = None
+        findings.append(f"missing_or_invalid_evaluation_host_proof:{provider}")
+    if retained_proof is not None:
+        retained_signature = retained_proof.get("ed25519_signature")
+        retained_payload = dict(retained_proof)
+        retained_payload.pop("ed25519_signature", None)
+        if digest(canonical(retained_proof)) != proof_hash:
+            findings.append(f"evaluation_host_proof_hash_mismatch:{provider}")
+        if retained_payload.get("provider") != provider:
+            findings.append(f"evaluation_host_proof_binding_mismatch:{provider}:provider")
+        if retained_payload.get("run_content_hash") != run_hash:
+            findings.append(
+                f"evaluation_host_proof_binding_mismatch:{provider}:run_content_hash"
+            )
+        if retained_payload.get("runner_instance_id_hash") != runner_hash:
+            findings.append(
+                f"evaluation_host_proof_binding_mismatch:{provider}:runner_instance_id_hash"
+            )
+        if retained_payload.get("signing_key_id") != proof_key_id:
+            findings.append(
+                f"evaluation_host_proof_binding_mismatch:{provider}:signing_key_id"
+            )
+        if not verify_ed25519(
+            proof_public_key_path, canonical(retained_payload), retained_signature
+        ):
+            findings.append(f"invalid_evaluation_host_proof_signature:{provider}")
+    if ed25519_public_key_spki_hash(proof_public_key_path) != proof_key_spki:
+        findings.append(f"evaluation_host_public_key_mismatch:{provider}")
     return digest(attestation_path.read_bytes()), findings
 
 
@@ -162,16 +367,45 @@ def evidence_inventory(
 
 
 def manual_resolutions(
-    path: pathlib.Path | None, run_hashes: dict[str, str]
-) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]], list[str], str | None]:
+    path: pathlib.Path | None,
+    run_hashes: dict[str, str],
+    expected_provenance: dict[str, Any],
+    public_key_path: pathlib.Path | None,
+    expected_reviewer_identity: str | None,
+    expected_reviewer_key_id: str | None,
+) -> tuple[
+    dict[tuple[str, str], dict[str, Any]],
+    dict[str, dict[str, Any]],
+    list[str],
+    str | None,
+    dict[str, Any] | None,
+]:
     if path is None:
-        return {}, {}, ["manual_review_missing"], None
+        return {}, {}, ["manual_review_missing"], None, None
     document = load(path)
     findings: list[str] = []
-    if document.get("schema") != "casegraphen.eval.fresh_agent_manual_review.v0":
+    signed_payload = dict(document)
+    supplied_signature = signed_payload.pop("ed25519_signature", None)
+    signature_valid = public_key_path is not None and verify_ed25519(
+        public_key_path, canonical(signed_payload), supplied_signature
+    )
+    if not signature_valid:
+        findings.append("invalid_manual_review_signature")
+    if document.get("schema") != "casegraphen.eval.fresh_agent_manual_review.v1":
         findings.append("manual_review_schema_mismatch")
+    if document.get("signature_algorithm") != "ed25519":
+        findings.append("manual_review_signature_algorithm_mismatch")
+    if document.get("reviewer_identity") != expected_reviewer_identity:
+        findings.append("manual_review_reviewer_identity_mismatch")
+    if document.get("reviewer_key_id") != expected_reviewer_key_id:
+        findings.append("manual_review_reviewer_key_id_mismatch")
     if document.get("run_content_hashes") != run_hashes:
         findings.append("manual_review_run_binding_mismatch")
+    if document.get("expected_provider_provenance") != expected_provenance:
+        findings.append("manual_review_provenance_binding_mismatch")
+    for provider in ("codex", "claude"):
+        if not valid_provider_provenance(expected_provenance.get(provider)):
+            findings.append(f"invalid_expected_provider_provenance:{provider}")
     resolved: dict[tuple[str, str], dict[str, Any]] = {}
     for judgment in document.get("judgments", []):
         key = (judgment.get("provider"), judgment.get("scenario_id"))
@@ -179,7 +413,7 @@ def manual_resolutions(
             findings.append(f"duplicate_manual_judgment:{key[0]}:{key[1]}")
         if judgment.get("outcome") not in {"pass", "fail"}:
             findings.append(f"invalid_manual_judgment:{key[0]}:{key[1]}")
-        if not judgment.get("reviewer") or not judgment.get("reason"):
+        if not judgment.get("reason"):
             findings.append(f"incomplete_manual_judgment:{key[0]}:{key[1]}")
         resolved[key] = judgment
     cost_waivers: dict[str, dict[str, Any]] = {}
@@ -190,15 +424,24 @@ def manual_resolutions(
         maximum_usd = waiver.get("maximum_usd")
         if (
             provider not in run_hashes
-            or not waiver.get("reviewer")
             or not waiver.get("reason")
             or not isinstance(maximum_usd, (int, float))
             or isinstance(maximum_usd, bool)
+            or not math.isfinite(maximum_usd)
             or maximum_usd <= 0
         ):
             findings.append(f"invalid_cost_waiver:{provider}")
         cost_waivers[provider] = waiver
-    return resolved, cost_waivers, findings, digest(path.read_bytes())
+    authority = {
+        "reviewer_identity": document.get("reviewer_identity"),
+        "reviewer_key_id": document.get("reviewer_key_id"),
+        "signature_algorithm": document.get("signature_algorithm"),
+        "signature_verified": signature_valid,
+    }
+    if findings:
+        # Invalid authority must not contribute judgments or financial waivers.
+        resolved, cost_waivers = {}, {}
+    return resolved, cost_waivers, findings, digest(path.read_bytes()), authority
 
 
 def content_addressed_proposal(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -215,7 +458,12 @@ def content_addressed_proposal(kind: str, payload: dict[str, Any]) -> dict[str, 
 def aggregate(
     run_paths: list[pathlib.Path], policy_path: pathlib.Path, baseline_path: pathlib.Path,
     manifest_path: pathlib.Path, manual_path: pathlib.Path | None, output: pathlib.Path,
-    host_attestations: dict[str, pathlib.Path], attestation_keys: dict[str, pathlib.Path],
+    host_attestations: dict[str, pathlib.Path],
+    attestation_public_keys: dict[str, pathlib.Path],
+    manual_review_public_key: pathlib.Path | None,
+    expected_reviewer_identity: str | None,
+    expected_reviewer_key_id: str | None,
+    expected_provenance: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
     policy, baseline, manifest = load(policy_path), load(baseline_path), load(manifest_path)
     findings = validate_baseline(baseline, policy, manifest)
@@ -255,13 +503,19 @@ def aggregate(
             run_hashes.get(provider),
             policy,
             host_attestations.get(provider),
-            attestation_keys.get(provider),
+            attestation_public_keys.get(provider),
+            expected_provenance.get(provider, {}),
         )
         findings.extend(attestation_findings)
         if attestation_hash is not None:
             host_attestation_hashes[provider] = attestation_hash
-    manual, cost_waivers, manual_findings, manual_hash = manual_resolutions(
-        manual_path, run_hashes
+    manual, cost_waivers, manual_findings, manual_hash, manual_authority = manual_resolutions(
+        manual_path,
+        run_hashes,
+        expected_provenance,
+        manual_review_public_key,
+        expected_reviewer_identity,
+        expected_reviewer_key_id,
     )
     findings.extend(manual_findings)
     matrix: list[dict[str, Any]] = []
@@ -401,6 +655,17 @@ def aggregate(
         findings.append("manual_judgment_failed")
     for provider, summary in summaries.items():
         budget = summary.get("budget", {})
+        observed_usd = budget.get("observed_usd")
+        maximum_usd = budget.get("maximum_usd")
+        budget_numbers_valid = all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+            for value in (observed_usd, maximum_usd)
+        )
+        if not budget_numbers_valid:
+            findings.append(f"invalid_provider_budget:{provider}")
         if (
             threshold["cost_must_be_observed_or_explicitly_waived"]
             and not budget.get("observable")
@@ -412,7 +677,7 @@ def aggregate(
             declared_maximum = budget.get("maximum_usd")
             if not isinstance(declared_maximum, (int, float)) or declared_maximum > waiver["maximum_usd"]:
                 findings.append(f"cost_waiver_limit_exceeded:{provider}")
-        if budget.get("observable") and budget.get("observed_usd", 0) > budget.get("maximum_usd", -1):
+        if budget.get("observable") and budget_numbers_valid and observed_usd > maximum_usd:
             findings.append(f"cost_budget_exceeded:{provider}")
 
     findings = sorted(set(findings))
@@ -460,6 +725,8 @@ def aggregate(
         "baseline_content_hash": digest(baseline_path.read_bytes()),
         "scenario_manifest_content_hash": digest(manifest_path.read_bytes()),
         "manual_review_content_hash": manual_hash,
+        "manual_review_authority": manual_authority,
+        "expected_source_provenance": expected_provenance,
         "provider_run_content_hashes": run_hashes,
         "host_attestation_content_hashes": host_attestation_hashes,
         "counts": counts,
@@ -479,12 +746,22 @@ def aggregate(
     report_hash = digest(canonical(report))
     report["content_hash"] = report_hash
     report_name = f"{report_hash.replace(':', '-')}.release-report.json"
-    (output / report_name).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    (output / "release-report.pointer.json").write_text(json.dumps({
-        "schema": "casegraphen.eval.fresh_agent_release_report_pointer.v0",
-        "content_hash": report_hash,
-        "path": report_name,
-    }, indent=2, sort_keys=True) + "\n")
+    (output / report_name).write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    (output / "release-report.pointer.json").write_text(
+        json.dumps(
+            {
+                "schema": "casegraphen.eval.fresh_agent_release_report_pointer.v0",
+                "content_hash": report_hash,
+                "path": report_name,
+            },
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
     return report, 0 if status == "pass" else 1
 
 
@@ -504,6 +781,13 @@ def provider_paths(values: list[str], argument: str) -> dict[str, pathlib.Path]:
     return parsed
 
 
+def positive_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider-run", action="append", type=pathlib.Path, default=[])
@@ -512,8 +796,18 @@ def main() -> int:
     parser.add_argument("--baseline", type=pathlib.Path, default=DEFAULT_BASELINE)
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--manual-review", type=pathlib.Path)
+    parser.add_argument("--manual-review-public-key", type=pathlib.Path)
+    parser.add_argument("--expected-reviewer-identity")
+    parser.add_argument("--expected-reviewer-key-id")
     parser.add_argument("--host-attestation", action="append", default=[])
-    parser.add_argument("--attestation-key", action="append", default=[])
+    parser.add_argument("--attestation-public-key", action="append", default=[])
+    parser.add_argument("--evaluated-commit-sha")
+    parser.add_argument("--source-repository")
+    parser.add_argument("--source-workflow")
+    parser.add_argument("--source-run-id", type=positive_integer)
+    parser.add_argument("--source-run-attempt", type=positive_integer)
+    parser.add_argument("--source-head-ref")
+    parser.add_argument("--expected-provenance", action="append", default=[])
     parser.add_argument("--output-dir", type=pathlib.Path)
     parser.add_argument("--check-baseline", action="store_true")
     args = parser.parse_args()
@@ -532,9 +826,30 @@ def main() -> int:
         runs.extend(discover_runs(args.runs_root))
     try:
         host_attestations = provider_paths(args.host_attestation, "--host-attestation")
-        attestation_keys = provider_paths(args.attestation_key, "--attestation-key")
+        attestation_public_keys = provider_paths(
+            args.attestation_public_key, "--attestation-public-key"
+        )
+        expected_provenance_paths = provider_paths(
+            args.expected_provenance, "--expected-provenance"
+        )
     except ValueError as error:
         parser.error(str(error))
+    if expected_provenance_paths:
+        expected_provenance = {
+            provider: load(path) for provider, path in expected_provenance_paths.items()
+        }
+    else:
+        common_provenance = {
+            "evaluated_commit_sha": args.evaluated_commit_sha,
+            "repository": args.source_repository,
+            "source_workflow": args.source_workflow,
+            "source_run_id": args.source_run_id,
+            "source_run_attempt": args.source_run_attempt,
+            "source_head_ref": args.source_head_ref,
+        }
+        expected_provenance = {
+            provider: common_provenance for provider in ("codex", "claude")
+        }
     report, code = aggregate(
         runs,
         args.policy,
@@ -543,10 +858,23 @@ def main() -> int:
         args.manual_review,
         args.output_dir,
         host_attestations,
-        attestation_keys,
+        attestation_public_keys,
+        args.manual_review_public_key,
+        args.expected_reviewer_identity,
+        args.expected_reviewer_key_id,
+        expected_provenance,
     )
-    print(json.dumps({"status": report["status"], "content_hash": report["content_hash"],
-                      "finding_count": len(report["findings"])}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": report["status"],
+                "content_hash": report["content_hash"],
+                "finding_count": len(report["findings"]),
+            },
+            sort_keys=True,
+            allow_nan=False,
+        )
+    )
     return code
 
 

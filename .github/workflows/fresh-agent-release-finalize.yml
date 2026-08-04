@@ -7,120 +7,311 @@ on:
         description: Fresh Agent Release Evaluation run id
         required: true
         type: string
+      evidence_run_attempt:
+        description: Exact evaluation workflow run attempt
+        required: true
+        type: string
       codex_attestation_run_id:
         description: Codex host-attestation workflow run id
+        required: true
+        type: string
+      codex_attestation_run_attempt:
+        description: Exact Codex attestation run attempt
+        required: true
+        type: string
+      codex_attestation_head_sha:
+        description: Exact source SHA of the Codex attestation workflow run
         required: true
         type: string
       claude_attestation_run_id:
         description: Claude host-attestation workflow run id
         required: true
         type: string
-      evaluated_commit_sha:
-        description: Exact 40-character commit shared by all evidence
+      claude_attestation_run_attempt:
+        description: Exact Claude attestation run attempt
         required: true
         type: string
-      manual_review_path:
-        description: Repository-relative review JSON under docs/evals/fresh-agent/reviews
+      claude_attestation_head_sha:
+        description: Exact source SHA of the Claude attestation workflow run
+        required: true
+        type: string
+      manual_review_run_id:
+        description: Signed manual-review workflow run id
+        required: true
+        type: string
+      manual_review_run_attempt:
+        description: Exact signed manual-review run attempt
+        required: true
+        type: string
+      manual_review_head_sha:
+        description: Exact source SHA of the manual-review signing workflow
+        required: true
+        type: string
+      manual_review_source_sha:
+        description: Exact commit containing the reviewed unsigned document
+        required: true
+        type: string
+      evaluated_commit_sha:
+        description: Exact 40-character commit shared by all provider evidence
         required: true
         type: string
 
 jobs:
   finalize:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
     permissions:
       actions: read
       contents: read
     environment: fresh-agent-release-verifier
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Checkout exact trusted verifier source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          path: trusted-verifier
           persist-credentials: false
-      - name: Validate evidence coordinates
+      - name: Validate coordinates and materialize exact evidence
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
           EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
-          CODEX_ATTESTATION_RUN_ID: ${{ inputs.codex_attestation_run_id }}
-          CLAUDE_ATTESTATION_RUN_ID: ${{ inputs.claude_attestation_run_id }}
+          EVIDENCE_RUN_ATTEMPT: ${{ inputs.evidence_run_attempt }}
           EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+          CODEX_ATTESTATION_RUN_ID: ${{ inputs.codex_attestation_run_id }}
+          CODEX_ATTESTATION_RUN_ATTEMPT: ${{ inputs.codex_attestation_run_attempt }}
+          CODEX_ATTESTATION_HEAD_SHA: ${{ inputs.codex_attestation_head_sha }}
+          CLAUDE_ATTESTATION_RUN_ID: ${{ inputs.claude_attestation_run_id }}
+          CLAUDE_ATTESTATION_RUN_ATTEMPT: ${{ inputs.claude_attestation_run_attempt }}
+          CLAUDE_ATTESTATION_HEAD_SHA: ${{ inputs.claude_attestation_head_sha }}
+          MANUAL_REVIEW_RUN_ID: ${{ inputs.manual_review_run_id }}
+          MANUAL_REVIEW_RUN_ATTEMPT: ${{ inputs.manual_review_run_attempt }}
+          MANUAL_REVIEW_HEAD_SHA: ${{ inputs.manual_review_head_sha }}
+          MANUAL_REVIEW_SOURCE_SHA: ${{ inputs.manual_review_source_sha }}
+          TRUSTED_VERIFIER_SHA: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          CODEX_PROVIDER_ARTIFACT: fresh-agent-codex-${{ inputs.evaluated_commit_sha }}-run-${{ inputs.evidence_run_id }}-attempt-${{ inputs.evidence_run_attempt }}
+          CLAUDE_PROVIDER_ARTIFACT: fresh-agent-claude-${{ inputs.evaluated_commit_sha }}-run-${{ inputs.evidence_run_id }}-attempt-${{ inputs.evidence_run_attempt }}
+          CODEX_ATTESTATION_ARTIFACT: fresh-agent-host-attestation-codex-${{ inputs.evaluated_commit_sha }}-source-${{ inputs.evidence_run_id }}-attempt-${{ inputs.evidence_run_attempt }}-broker-${{ inputs.codex_attestation_run_id }}-attempt-${{ inputs.codex_attestation_run_attempt }}
+          CLAUDE_ATTESTATION_ARTIFACT: fresh-agent-host-attestation-claude-${{ inputs.evaluated_commit_sha }}-source-${{ inputs.evidence_run_id }}-attempt-${{ inputs.evidence_run_attempt }}-broker-${{ inputs.claude_attestation_run_id }}-attempt-${{ inputs.claude_attestation_run_attempt }}
         run: |
-          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$CODEX_ATTESTATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$CLAUDE_ATTESTATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$EVALUATED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
-      - name: Download immutable evaluator
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: fresh-agent-evaluator-${{ inputs.evaluated_commit_sha }}
-          path: fresh-agent-bundle
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.evidence_run_id }}
-      - name: Download exact Codex evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: fresh-agent-codex-${{ inputs.evaluated_commit_sha }}
-          path: provider-runs/codex
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.evidence_run_id }}
-      - name: Download exact Claude evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: fresh-agent-claude-${{ inputs.evaluated_commit_sha }}
-          path: provider-runs/claude
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.evidence_run_id }}
-      - name: Download exact Codex host attestation
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: fresh-agent-host-attestation-codex-${{ inputs.evaluated_commit_sha }}
-          path: host-attestations/codex
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.codex_attestation_run_id }}
-      - name: Download exact Claude host attestation
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: fresh-agent-host-attestation-claude-${{ inputs.evaluated_commit_sha }}
-          path: host-attestations/claude
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.claude_attestation_run_id }}
+          set -euo pipefail
+          for value in "$EVIDENCE_RUN_ID" "$EVIDENCE_RUN_ATTEMPT" \
+            "$CODEX_ATTESTATION_RUN_ID" "$CODEX_ATTESTATION_RUN_ATTEMPT" \
+            "$CLAUDE_ATTESTATION_RUN_ID" "$CLAUDE_ATTESTATION_RUN_ATTEMPT" \
+            "$MANUAL_REVIEW_RUN_ID" "$MANUAL_REVIEW_RUN_ATTEMPT"; do
+            [[ "$value" =~ ^[1-9][0-9]*$ ]]
+          done
+          for value in "$EVALUATED_COMMIT_SHA" "$CODEX_ATTESTATION_HEAD_SHA" \
+            "$CLAUDE_ATTESTATION_HEAD_SHA" "$MANUAL_REVIEW_HEAD_SHA" \
+            "$MANUAL_REVIEW_SOURCE_SHA" "$TRUSTED_VERIFIER_SHA"; do
+            [[ "$value" =~ ^[0-9a-f]{40}$ ]]
+          done
+          test "$(git -C trusted-verifier rev-parse HEAD)" = "$TRUSTED_VERIFIER_SHA"
+          test "$CODEX_ATTESTATION_HEAD_SHA" = "$TRUSTED_VERIFIER_SHA"
+          test "$CLAUDE_ATTESTATION_HEAD_SHA" = "$TRUSTED_VERIFIER_SHA"
+          test "$MANUAL_REVIEW_HEAD_SHA" = "$TRUSTED_VERIFIER_SHA"
+
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$EVIDENCE_RUN_ID" \
+            --run-attempt "$EVIDENCE_RUN_ATTEMPT" --head-sha "$EVALUATED_COMMIT_SHA" \
+            --workflow-path .github/workflows/fresh-agent-release-eval.yml \
+            --artifact "$CODEX_PROVIDER_ARTIFACT=provider-runs/codex" \
+            --output provenance/codex.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$EVIDENCE_RUN_ID" \
+            --run-attempt "$EVIDENCE_RUN_ATTEMPT" --head-sha "$EVALUATED_COMMIT_SHA" \
+            --workflow-path .github/workflows/fresh-agent-release-eval.yml \
+            --artifact "$CLAUDE_PROVIDER_ARTIFACT=provider-runs/claude" \
+            --output provenance/claude.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$CODEX_ATTESTATION_RUN_ID" \
+            --run-attempt "$CODEX_ATTESTATION_RUN_ATTEMPT" --head-sha "$CODEX_ATTESTATION_HEAD_SHA" \
+            --workflow-path .github/workflows/fresh-agent-host-attest.yml \
+            --artifact "$CODEX_ATTESTATION_ARTIFACT=host-attestations/codex" \
+            --output provenance/codex-attestation-run.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$CLAUDE_ATTESTATION_RUN_ID" \
+            --run-attempt "$CLAUDE_ATTESTATION_RUN_ATTEMPT" --head-sha "$CLAUDE_ATTESTATION_HEAD_SHA" \
+            --workflow-path .github/workflows/fresh-agent-host-attest.yml \
+            --artifact "$CLAUDE_ATTESTATION_ARTIFACT=host-attestations/claude" \
+            --output provenance/claude-attestation-run.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py observe-run \
+            --repository "$SOURCE_REPOSITORY" --run-id "$MANUAL_REVIEW_RUN_ID" \
+            --run-attempt "$MANUAL_REVIEW_RUN_ATTEMPT" --head-sha "$MANUAL_REVIEW_HEAD_SHA" \
+            --workflow-path .github/workflows/fresh-agent-manual-review-sign.yml \
+            --artifact "fresh-agent-signed-manual-review-$MANUAL_REVIEW_SOURCE_SHA-run-$MANUAL_REVIEW_RUN_ID-attempt-$MANUAL_REVIEW_RUN_ATTEMPT=signed-manual-review" \
+            --output provenance/manual-review-run.json
+      - name: Verify public key provenance
+        shell: bash
+        env:
+          CODEX_PUBLIC_KEY: ${{ vars.CASEGRAPHEN_CODEX_ATTESTATION_PUBLIC_KEY }}
+          CODEX_PUBLIC_KEY_SPKI: ${{ vars.CASEGRAPHEN_CODEX_ATTESTATION_PUBLIC_KEY_SPKI_SHA256 }}
+          CLAUDE_PUBLIC_KEY: ${{ vars.CASEGRAPHEN_CLAUDE_ATTESTATION_PUBLIC_KEY }}
+          CLAUDE_PUBLIC_KEY_SPKI: ${{ vars.CASEGRAPHEN_CLAUDE_ATTESTATION_PUBLIC_KEY_SPKI_SHA256 }}
+          REVIEWER_PUBLIC_KEY: ${{ vars.CASEGRAPHEN_REVIEWER_PUBLIC_KEY }}
+          REVIEWER_PUBLIC_KEY_SPKI: ${{ vars.CASEGRAPHEN_REVIEWER_PUBLIC_KEY_SPKI_SHA256 }}
+          REVIEWER_KEY_ID: ${{ vars.CASEGRAPHEN_REVIEWER_KEY_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key_dir="$RUNNER_TEMP/casegraphen-release-public-keys"
+          mkdir -p "$key_dir" key-provenance
+          printf '%s' "$CODEX_PUBLIC_KEY" > "$key_dir/codex.pem"
+          printf '%s' "$CLAUDE_PUBLIC_KEY" > "$key_dir/claude.pem"
+          printf '%s' "$REVIEWER_PUBLIC_KEY" > "$key_dir/reviewer.pem"
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-public-key \
+            --input "$key_dir/codex.pem" --expected-spki-sha256 "$CODEX_PUBLIC_KEY_SPKI" \
+            --key-id codex-cli-session-host-v1 --output key-provenance/codex.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-public-key \
+            --input "$key_dir/claude.pem" --expected-spki-sha256 "$CLAUDE_PUBLIC_KEY_SPKI" \
+            --key-id claude-cli-session-host-v1 --output key-provenance/claude.json
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-public-key \
+            --input "$key_dir/reviewer.pem" --expected-spki-sha256 "$REVIEWER_PUBLIC_KEY_SPKI" \
+            --key-id "$REVIEWER_KEY_ID" --output key-provenance/reviewer.json
       - name: Verify and retain the complete release evidence lifecycle
         id: aggregate
         continue-on-error: true
         shell: bash
         env:
-          CASEGRAPHEN_CODEX_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_CODEX_ATTESTATION_KEY }}
-          CASEGRAPHEN_CLAUDE_ATTESTATION_KEY: ${{ secrets.CASEGRAPHEN_CLAUDE_ATTESTATION_KEY }}
-          CASEGRAPHEN_MANUAL_REVIEW_PATH: ${{ inputs.manual_review_path }}
+          REVIEWER_IDENTITY: ${{ vars.CASEGRAPHEN_REVIEWER_IDENTITY }}
+          REVIEWER_KEY_ID: ${{ vars.CASEGRAPHEN_REVIEWER_KEY_ID }}
         run: |
           set -euo pipefail
-          case "$CASEGRAPHEN_MANUAL_REVIEW_PATH" in
-            docs/evals/fresh-agent/reviews/*.json) ;;
-            *) echo 'manual review must be a JSON file under docs/evals/fresh-agent/reviews' >&2; exit 2 ;;
-          esac
-          test -f "$CASEGRAPHEN_MANUAL_REVIEW_PATH"
-          umask 077
-          key_dir="$RUNNER_TEMP/casegraphen-release-verifier"
-          mkdir -p "$key_dir"
-          trap 'rm -rf "$key_dir"' EXIT
-          printf '%s' "$CASEGRAPHEN_CODEX_ATTESTATION_KEY" > "$key_dir/codex.key"
-          printf '%s' "$CASEGRAPHEN_CLAUDE_ATTESTATION_KEY" > "$key_dir/claude.key"
-          python3 fresh-agent-bundle/scripts/fresh-agent-release.py \
+          key_dir="$RUNNER_TEMP/casegraphen-release-public-keys"
+          python3 trusted-verifier/scripts/fresh-agent-release.py \
             --provider-run provider-runs/codex \
             --provider-run provider-runs/claude \
-            --manual-review "$CASEGRAPHEN_MANUAL_REVIEW_PATH" \
+            --manual-review signed-manual-review/manual-review.json \
+            --manual-review-public-key "$key_dir/reviewer.pem" \
+            --expected-reviewer-identity "$REVIEWER_IDENTITY" \
+            --expected-reviewer-key-id "$REVIEWER_KEY_ID" \
             --host-attestation codex=host-attestations/codex/codex.json \
             --host-attestation claude=host-attestations/claude/claude.json \
-            --attestation-key codex="$key_dir/codex.key" \
-            --attestation-key claude="$key_dir/claude.key" \
+            --attestation-public-key codex="$key_dir/codex.pem" \
+            --attestation-public-key claude="$key_dir/claude.pem" \
+            --expected-provenance codex=provenance/codex.json \
+            --expected-provenance claude=provenance/claude.json \
             --output-dir fresh-agent-release-report
-      - name: Publish content-addressed final report
-        if: always()
+          cp -R key-provenance fresh-agent-release-report/key-provenance
+          cp -R provenance fresh-agent-release-report/workflow-provenance
+          mkdir -p fresh-agent-release-report/authority-material/public-keys \
+            fresh-agent-release-report/authority-material/contracts \
+            fresh-agent-release-report/authority-material/evaluation-host
+          cp "$key_dir/codex.pem" fresh-agent-release-report/authority-material/public-keys/codex.pem
+          cp "$key_dir/claude.pem" fresh-agent-release-report/authority-material/public-keys/claude.pem
+          cp "$key_dir/reviewer.pem" fresh-agent-release-report/authority-material/public-keys/reviewer.pem
+          cp trusted-verifier/evals/fresh-agent/release-policy.v0.json \
+            fresh-agent-release-report/authority-material/contracts/release-policy.v0.json
+          cp trusted-verifier/evals/fresh-agent/release-baseline.v0.json \
+            fresh-agent-release-report/authority-material/contracts/release-baseline.v0.json
+          cp trusted-verifier/evals/fresh-agent/scenarios.v0.json \
+            fresh-agent-release-report/authority-material/contracts/scenarios.v0.json
+          cp -R host-attestations/codex \
+            fresh-agent-release-report/authority-material/evaluation-host/codex
+          cp -R host-attestations/claude \
+            fresh-agent-release-report/authority-material/evaluation-host/claude
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py record-trusted-source \
+            --root trusted-verifier \
+            --repository "${{ github.repository }}" \
+            --source-sha "$(git -C trusted-verifier rev-parse HEAD)" \
+            --file scripts/fresh-agent-run-provenance.py \
+            --file scripts/fresh-agent-release.py \
+            --output fresh-agent-release-report/trusted-verifier-source.json
+      - name: Publish content-addressed final report for the review window
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fresh-agent-final-release-report-${{ inputs.evaluated_commit_sha }}
+          name: fresh-agent-final-release-report-${{ inputs.evaluated_commit_sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-release-report
           if-no-files-found: error
           retention-days: 90
       - name: Require a passing strict aggregate
         if: steps.aggregate.outcome != 'success'
         run: exit 1
+
+  publish-durable-evidence:
+    needs: finalize
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
+    permissions:
+      contents: write
+    environment: fresh-agent-evidence-publisher
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact trusted verifier source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          path: trusted-verifier
+          persist-credentials: false
+      - name: Download finalized evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: fresh-agent-final-release-report-${{ inputs.evaluated_commit_sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: fresh-agent-release-report
+      - name: Publish create-new content-addressed GitHub Release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVALUATED_COMMIT_SHA: ${{ inputs.evaluated_commit_sha }}
+          TRUSTED_VERIFIER_SHA: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+        run: |
+          set -euo pipefail
+          [[ "$TRUSTED_VERIFIER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C trusted-verifier rev-parse HEAD)" = "$TRUSTED_VERIFIER_SHA"
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-trusted-source \
+            --input fresh-agent-release-report/trusted-verifier-source.json \
+            --root trusted-verifier \
+            --repository "${{ github.repository }}" \
+            --source-sha "$TRUSTED_VERIFIER_SHA"
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py package \
+            --input fresh-agent-release-report \
+            --output durable-evidence/fresh-agent-release-evidence.tar.gz \
+            --metadata durable-evidence/package.json
+          package_hash="$(python3 -c 'import json; print(json.load(open("durable-evidence/package.json"))["sha256"].split(":",1)[1])')"
+          package_size="$(python3 -c 'import json; print(json.load(open("durable-evidence/package.json"))["byte_length"])')"
+          tag="fresh-agent-evidence-$package_hash"
+          asset="sha256-$package_hash.tar.gz"
+          mv durable-evidence/fresh-agent-release-evidence.tar.gz "durable-evidence/$asset"
+          if ! gh release view "$tag" --json tagName,targetCommitish,assets > durable-evidence/release.json 2>/dev/null; then
+            gh release create "$tag" \
+              --target "$EVALUATED_COMMIT_SHA" \
+              --title "Fresh-agent release evidence $package_hash" \
+              --notes 'Content-addressed durable evidence. This GitHub Release is not claimed to be WORM storage.' \
+              --latest=false || \
+              gh release view "$tag" --json tagName,targetCommitish,assets > durable-evidence/release.json
+          fi
+          gh release view "$tag" --json tagName,targetCommitish,assets > durable-evidence/release.json
+          asset_state="$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+            --input durable-evidence/release.json \
+            --tag "$tag" \
+            --target-sha "$EVALUATED_COMMIT_SHA" \
+            --asset-name "$asset" \
+            --expected-size "$package_size" \
+            --expected-sha256 "sha256:$package_hash")"
+          if test "$asset_state" = absent; then
+            if ! gh release upload "$tag" "durable-evidence/$asset"; then
+              gh release view "$tag" --json tagName,targetCommitish,assets > durable-evidence/release.json
+              test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+                --input durable-evidence/release.json \
+                --tag "$tag" \
+                --target-sha "$EVALUATED_COMMIT_SHA" \
+                --asset-name "$asset" \
+                --expected-size "$package_size" \
+                --expected-sha256 "sha256:$package_hash")" = present
+            fi
+          else
+            test "$asset_state" = present
+          fi
+          gh release view "$tag" --json tagName,targetCommitish,assets > durable-evidence/release.json
+          test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+            --input durable-evidence/release.json \
+            --tag "$tag" \
+            --target-sha "$EVALUATED_COMMIT_SHA" \
+            --asset-name "$asset" \
+            --expected-size "$package_size" \
+            --expected-sha256 "sha256:$package_hash")" = present
+          mkdir durable-evidence/redownload
+          gh release download "$tag" --pattern "$asset" --dir durable-evidence/redownload
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-file \
+            --input "durable-evidence/redownload/$asset" \
+            --expected-sha256 "sha256:$package_hash"

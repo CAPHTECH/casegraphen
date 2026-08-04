@@ -36,20 +36,18 @@ jobs:
           mkdir -p fresh-agent-bundle/bin fresh-agent-bundle/scripts
           cp target/release/casegraphen fresh-agent-bundle/bin/casegraphen
           cp scripts/fresh-agent-eval.py fresh-agent-bundle/scripts/fresh-agent-eval.py
-          cp scripts/fresh-agent-host-attest.py fresh-agent-bundle/scripts/fresh-agent-host-attest.py
-          cp scripts/fresh-agent-release.py fresh-agent-bundle/scripts/fresh-agent-release.py
           cp -R evals skills schemas fresh-agent-bundle/
           python3 -m pip install --target fresh-agent-bundle/python-deps jsonschema==4.26.0
       - name: Publish immutable evaluation bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fresh-agent-evaluator-${{ github.sha }}
+          name: fresh-agent-evaluator-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-bundle
           if-no-files-found: error
           retention-days: 90
 
   evaluate:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
     needs: prepare
     permissions:
       contents: read
@@ -68,7 +66,7 @@ jobs:
       - name: Download immutable evaluation bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: fresh-agent-evaluator-${{ github.sha }}
+          name: fresh-agent-evaluator-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-bundle
       - name: Prepare downloaded executable
         run: chmod 0755 fresh-agent-bundle/bin/casegraphen
@@ -109,11 +107,56 @@ jobs:
             --casegraphen-bin "$GITHUB_WORKSPACE/fresh-agent-bundle/bin/casegraphen" \
             --output-dir fresh-agent-claude
       - name: Publish raw and scored evidence
+        id: provider_artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fresh-agent-${{ matrix.provider }}-${{ github.sha }}
+          name: fresh-agent-${{ matrix.provider }}-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-${{ matrix.provider }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Obtain proof from the external evaluation-host attestor
+        if: success()
+        shell: bash
+        env:
+          CASEGRAPHEN_EVALUATION_HOST_ATTESTOR: ${{ vars.CASEGRAPHEN_EVALUATION_HOST_ATTESTOR }}
+          CASEGRAPHEN_EVALUATION_HOST_KEY_ID: ${{ vars.CASEGRAPHEN_EVALUATION_HOST_KEY_ID }}
+          PROVIDER: ${{ matrix.provider }}
+          PROVIDER_ARTIFACT_ID: ${{ steps.provider_artifact.outputs.artifact-id }}
+          PROVIDER_ARTIFACT_DIGEST: ${{ steps.provider_artifact.outputs.artifact-digest }}
+          PROVIDER_ARTIFACT_NAME: fresh-agent-${{ matrix.provider }}-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -x "$CASEGRAPHEN_EVALUATION_HOST_ATTESTOR"
+          [[ "$CASEGRAPHEN_EVALUATION_HOST_KEY_ID" =~ ^[A-Za-z0-9._:-]+$ ]]
+          [[ "$PROVIDER_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          if [[ "$PROVIDER_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+            PROVIDER_ARTIFACT_DIGEST="sha256:$PROVIDER_ARTIFACT_DIGEST"
+          fi
+          [[ "$PROVIDER_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p evaluation-host-proof
+          "$CASEGRAPHEN_EVALUATION_HOST_ATTESTOR" attest-fresh-agent \
+            --provider "$PROVIDER" \
+            --summary "fresh-agent-$PROVIDER/summary.json" \
+            --signing-key-id "$CASEGRAPHEN_EVALUATION_HOST_KEY_ID" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --source-workflow "$GITHUB_WORKFLOW" \
+            --source-workflow-path .github/workflows/fresh-agent-release-eval.yml \
+            --source-run-id "$GITHUB_RUN_ID" \
+            --source-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-head-ref "$GITHUB_REF" \
+            --source-head-sha "$GITHUB_SHA" \
+            --source-event "$GITHUB_EVENT_NAME" \
+            --provider-artifact-id "$PROVIDER_ARTIFACT_ID" \
+            --provider-artifact-name "$PROVIDER_ARTIFACT_NAME" \
+            --provider-artifact-digest "$PROVIDER_ARTIFACT_DIGEST" \
+            --output "evaluation-host-proof/$PROVIDER.json"
+      - name: Publish evaluation-host proof separately from provider evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-agent-evaluation-host-proof-${{ matrix.provider }}-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: evaluation-host-proof/${{ matrix.provider }}.json
           if-no-files-found: error
           retention-days: 90
 
@@ -129,7 +172,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: fresh-agent-*-${{ github.sha }}
+          pattern: fresh-agent-*-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-inputs
       - name: Build strict content-addressed matrix report
         id: aggregate
@@ -142,13 +185,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fresh-agent-release-report-${{ github.sha }}
+          name: fresh-agent-release-report-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: fresh-agent-release-report
           if-no-files-found: error
           retention-days: 90
-      - name: Require independent manual review before promotion
+      - name: Record the independent review seam
         if: steps.aggregate.outcome != 'success'
         run: |
           echo 'The strict matrix is incomplete or awaits a run-bound manual review.' >&2
-          echo 'Download the provider artifacts, create the bound manual-review document, and rerun fresh-agent-release.py.' >&2
-          exit 1
+          echo 'Provider evidence remains available for the separately trusted attestation, review, and finalization workflows.' >&2
