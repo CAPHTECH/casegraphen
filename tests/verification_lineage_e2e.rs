@@ -14,8 +14,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -156,6 +157,50 @@ fn review(store: &Path, action: &str, base_revision: &str, claim_id: &str) -> Va
     ];
     mutation_gate_args(&mut args, "actor:native-evidence-cli");
     json_output(&cli(&args))
+}
+
+fn run_lineage_host(store: &Path, calls: &[Value]) -> Vec<Value> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_casegraphen-mcp-host"))
+        .args(["--state"])
+        .arg(store.join("lineage-control-plane.state.json"))
+        .args(["--store"])
+        .arg(store)
+        .args(["--artifacts"])
+        .arg(store)
+        .args(["--auth-token-env", "CASEGRAPHEN_LINEAGE_E2E_TOKEN"])
+        .env("CASEGRAPHEN_LINEAGE_E2E_TOKEN", "token:lineage-e2e")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start operational MCP host");
+    {
+        let input = child.stdin.as_mut().unwrap();
+        writeln!(input, "{}", json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).unwrap();
+        writeln!(
+            input,
+            "{}",
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .unwrap();
+        for (index, call) in calls.iter().enumerate() {
+            writeln!(input, "{}", json!({
+                "jsonrpc":"2.0", "id":index + 2, "method":"tools/call",
+                "params":{"authorization":"token:lineage-e2e", "name":"reconcile_verification_lineage", "arguments":call}
+            })).unwrap();
+        }
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait for MCP host");
+    assert!(
+        output.status.success(),
+        "MCP host stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 #[test]
@@ -445,6 +490,84 @@ fn real_cli_run_and_review_derive_live_opaque_lineage_proofs() {
         trace["base_revision_id"],
         json!(retry_base),
         "the producer/verifier subject is the run base, not the later review revision"
+    );
+
+    // Exercise the supported product surface as an external MCP process. The
+    // host derives the same opaque authority internally and exposes only the
+    // read-only policy result.
+    let relative = |path: &Path| {
+        path.strip_prefix(&store)
+            .expect("retained run file under artifact root")
+            .to_string_lossy()
+            .to_string()
+    };
+    let lineage_payload = json!({
+        "verification_lineage": {
+            "case_space_id": CASE_SPACE_ID,
+            "claim_cell_id": claim_id,
+            "policy": policy.clone(),
+            "producer_files": {
+                "worker_report_path": relative(&run_dir.join("worker.report.json")),
+                "execution_trace_path": relative(&trace_path),
+                "stdout_path": relative(&run_dir.join("stdout")),
+                "stderr_path": relative(&run_dir.join("stderr"))
+            },
+            "review_morphism_ids": [review_morphism_id.clone()],
+            "anchors": [{"kind":"execution_trace","anchor_id":"anchor:lineage-run"}]
+        }
+    });
+    let host_revision = current_revision(&store);
+    let mut duplicate_payload = lineage_payload.clone();
+    duplicate_payload["verification_lineage"]["review_morphism_ids"] =
+        json!([review_morphism_id.clone(), review_morphism_id.clone()]);
+    let mut mixed_attempt_payload = lineage_payload.clone();
+    mixed_attempt_payload["verification_lineage"]["producer_files"]["worker_report_path"] =
+        json!(relative(&first_run_dir.join("worker.report.json")));
+    mixed_attempt_payload["verification_lineage"]["producer_files"]["stdout_path"] =
+        json!(relative(&first_run_dir.join("stdout")));
+    mixed_attempt_payload["verification_lineage"]["producer_files"]["stderr_path"] =
+        json!(relative(&first_run_dir.join("stderr")));
+    let responses = run_lineage_host(
+        &store,
+        &[
+            json!({
+                "request_id":"request:lineage-positive",
+                "idempotency_key":"lineage:positive",
+                "base_revision_id":host_revision.clone(),
+                "payload":lineage_payload
+            }),
+            json!({
+                "request_id":"request:lineage-duplicate-review",
+                "idempotency_key":"lineage:duplicate-review",
+                "base_revision_id":host_revision.clone(),
+                "payload":duplicate_payload
+            }),
+            json!({
+                "request_id":"request:lineage-mixed-attempt",
+                "idempotency_key":"lineage:mixed-attempt",
+                "base_revision_id":host_revision.clone(),
+                "payload":mixed_attempt_payload
+            }),
+        ],
+    );
+    let host_result = &responses[1]["result"]["structuredContent"]["result"];
+    assert_eq!(host_result["result"]["policy_satisfied"], true);
+    assert_eq!(host_result["proofs_serialized"], false);
+    assert_eq!(host_result["read_only"], true);
+    assert_eq!(host_result["mutation_performed"], false);
+    assert_eq!(host_result["accepted"], false);
+    assert_eq!(
+        responses[2]["result"]["structuredContent"]["refusal"]["code"],
+        "duplicate_or_empty_review_morphism_id"
+    );
+    assert_eq!(
+        responses[3]["result"]["structuredContent"]["refusal"]["code"],
+        "verification_producer_derivation_refused"
+    );
+    assert_eq!(
+        current_revision(&store),
+        host_revision,
+        "operational lineage reconciliation and refusal are both read-only"
     );
 
     // A proof that was valid on the reviewed current revision is not valid on

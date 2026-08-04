@@ -1,0 +1,27 @@
+{
+  "schema": "casegraphen.experimental.deployment_bundle.migration_proposal.v0",
+  "source_compiler_identity": {
+    "compiler_version": "casegraphen-graph-compiler/0",
+    "compiler_identity": {"implementation":"casegraphen-graph-compiler","profile_version":0,"semantic_profile":"casegraphen.experimental.graph_compiler.semantic_profile.v0"},
+    "compiler_inputs_schema": "casegraphen.experimental.graph_compiler.inputs.v0",
+    "compiler_contract_versions_content_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "target_compiler_identity": {
+    "compiler_version": "casegraphen-graph-compiler/1",
+    "compiler_identity": {"implementation":"casegraphen-graph-compiler","profile_version":1,"semantic_profile":"casegraphen.experimental.graph_compiler.semantic_profile.v1"},
+    "compiler_inputs_schema": "casegraphen.experimental.graph_compiler.inputs.v1",
+    "compiler_contract_versions_content_hash": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "source_bundle_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "proposed_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "topology_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "policy_manifest_content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "changed_artifact_paths": ["compiler.inputs.json", "compiler.report.json"],
+  "semantic_differences": [
+    {"area":"compiler_identity","source":"casegraphen-graph-compiler/0","target":"casegraphen-graph-compiler/1"},
+    {"area":"compiler_inputs_contract","source":"casegraphen.experimental.graph_compiler.inputs.v0","target":"casegraphen.experimental.graph_compiler.inputs.v1"}
+  ],
+  "accepted": false,
+  "requires_review": true,
+  "proposal_content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

@@ -1,0 +1,57 @@
+{
+  "authority": "none; timing and memory observations cannot grant deployment authority",
+  "benchmark_source_sha256": "fc2cadf38b7f5848c6d9ded493b1d387a4f4dfa6510ed4d64fa86fb251f100eb",
+  "cases": [
+    {
+      "artifact_count": 12,
+      "canonical_verification_elapsed_micros": 7476,
+      "latency_budget_ms": 1000,
+      "memory_budget_kb": 98304,
+      "name": "small",
+      "node_count": 4,
+      "passed": true,
+      "peak_rss_kb": 4672,
+      "policy_document_count": 12,
+      "recompile_count": 1,
+      "topology_edge_count": 2,
+      "verified_input_bytes": 28166,
+      "wall_elapsed_ms": 16.262625
+    },
+    {
+      "artifact_count": 12,
+      "canonical_verification_elapsed_micros": 187723,
+      "latency_budget_ms": 2000,
+      "memory_budget_kb": 196608,
+      "name": "medium",
+      "node_count": 128,
+      "passed": true,
+      "peak_rss_kb": 15888,
+      "policy_document_count": 384,
+      "recompile_count": 1,
+      "topology_edge_count": 64,
+      "verified_input_bytes": 651463,
+      "wall_elapsed_ms": 330.784959
+    },
+    {
+      "artifact_count": 12,
+      "canonical_verification_elapsed_micros": 786285,
+      "latency_budget_ms": 8000,
+      "memory_budget_kb": 393216,
+      "name": "large",
+      "node_count": 512,
+      "passed": true,
+      "peak_rss_kb": 47936,
+      "policy_document_count": 1536,
+      "recompile_count": 1,
+      "topology_edge_count": 256,
+      "verified_input_bytes": 2581842,
+      "wall_elapsed_ms": 1377.24625
+    }
+  ],
+  "compiler_source_sha256": "7e1463cf6a42a1a2fe05f1de7ac5b1024ee71ca60a6420f0e65780e651a96479",
+  "observed_compiler_binary_sha256": "66587c011a1912229ca1bd760544ce15658e994d190c0a764bb19da40b0bb56a",
+  "profile": "debug-bounded-pilot",
+  "promotion_gate_passed": true,
+  "report_content_hash": "3886503f31b80f8c347feaafbc0fd10e46441ef262b2330b767f1d08004a841c",
+  "schema": "casegraphen.experimental.graph_compiler.verification_performance_report.v0"
+}

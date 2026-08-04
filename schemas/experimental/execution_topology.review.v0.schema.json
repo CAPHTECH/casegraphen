@@ -25,6 +25,10 @@
     "claim_cell_id": { "$ref": "#/$defs/id" },
     "artifact_id": { "type": "string", "pattern": "^artifact:sha256-[0-9a-f]{64}$" },
     "policy_manifest_content_hash": { "$ref": "#/$defs/hash" },
+    "compiler_version": { "$ref": "#/$defs/id" },
+    "compiler_semantic_profile": { "$ref": "#/$defs/id" },
+    "compiler_inputs_schema": { "$ref": "#/$defs/id" },
+    "compiler_contract_versions_content_hash": { "$ref": "#/$defs/hash" },
     "expansion_proposal_id": { "$ref": "#/$defs/id" }
   },
   "$defs": {

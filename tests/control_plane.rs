@@ -71,7 +71,7 @@ fn request(tool: ControlPlaneTool, id: &str) -> ControlPlaneRequest {
 #[test]
 fn catalog_contains_the_required_mcp_compatible_surface() {
     assert_eq!(RESOURCE_TEMPLATES.len(), 7);
-    assert_eq!(TOOLS.len(), 18);
+    assert_eq!(TOOLS.len(), 19);
     assert_eq!(NOTIFICATIONS.len(), 7);
     for required in [
         "casegraphen://spaces/{id}/status",
@@ -98,6 +98,7 @@ fn catalog_contains_the_required_mcp_compatible_surface() {
         "simulate_execution_topology",
         "evaluate_expansion_round",
         "reconcile_streaming_run",
+        "reconcile_verification_lineage",
         "propose_topology_redesign",
     ] {
         assert!(tools.as_array().unwrap().contains(&json!(workflow)));

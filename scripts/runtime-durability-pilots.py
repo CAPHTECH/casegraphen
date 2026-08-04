@@ -38,6 +38,20 @@ LIMITS = {
     "allocator_replay_ms": 5_000,
 }
 
+EVIDENCE_ROLES = {
+    "durability-report.json": "aggregate_report",
+    "promotion-report.json": "promotion_report",
+    "canonical-binary-artifact.bin": "binary_artifact",
+    "canonical-canonical-runtime-report.json": "runtime_pilot_report",
+    "canonical-execution.topology.json": "execution_topology",
+    "canonical-runtime.completeness.json": "runtime_completeness",
+    "canonical-runtime.expectation.json": "runtime_expectation",
+    "canonical-runtime.reports.json": "runtime_node_reports",
+    "allocator-durability-report.json": "allocator_report",
+    "reviewed-resource-report.json": "reviewed_resource_report",
+    "remote.journal.jsonl": "remote_journal",
+}
+
 
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -240,7 +254,7 @@ def run(repo: Path, output: Path, allocator_report: Path, canonical_runtime_dir:
                "topology_content_hash":canonical_report["topology_content_hash"],
                "reviewed_deployment_hash":canonical_report["reviewed_deployment_hash"],
                "reports":reports,
-               "blockers":["#76 provider-specific broker-signed host/session attestations are absent"],
+               "blockers":["#76 provider-specific evaluation-host proof, broker countersignature, and signed review are absent"],
                "failure_disposition":"audit_or_redesign_proposal_only",
                "proposals":[{"kind":"runtime_durability_audit", "review_status":"unreviewed",
                              "accepted":False, "finding_codes":[] if all_passed else [
@@ -260,10 +274,20 @@ def run(repo: Path, output: Path, allocator_report: Path, canonical_runtime_dir:
                "durability_thresholds_passed":all_passed, "blockers":summary["blockers"],
                "workflow_count":10, "review_seam":"operator_review_required"})
     names = ["durability-report.json", "promotion-report.json", *evidence_names]
-    manifest = {"schema":"casegraphen.experimental.runtime_durability_pilot.evidence_manifest.v0",
-                "accepted":False, "files":[{"path":name,
-                    "content_hash":"sha256:" + digest((output / name).read_bytes()),
-                    "byte_length":(output / name).stat().st_size} for name in names]}
+    manifest = {
+        "schema": "casegraphen.experimental.runtime_durability_pilot.evidence_manifest.v1",
+        "schema_version": 1,
+        "accepted": False,
+        "files": [
+            {
+                "path": name,
+                "role": EVIDENCE_ROLES[name],
+                "content_hash": "sha256:" + digest((output / name).read_bytes()),
+                "byte_length": (output / name).stat().st_size,
+            }
+            for name in names
+        ],
+    }
     write_json(output / "retained-evidence.manifest.json", manifest)
     return summary
 

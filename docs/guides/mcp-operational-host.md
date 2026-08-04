@@ -12,8 +12,18 @@ casegraphen-mcp-host \
   --artifacts /var/lib/casegraphen-mcp/projections \
   --resource-journal /var/lib/casegraphen-mcp/resource-journal \
   --resource-capacities /etc/casegraphen/resource-capacities.json \
+  --resource-retention-policy /etc/casegraphen/resource-retention-policy.json \
+  --resource-checkpoint-interval 512 \
   --auth-token-env CASEGRAPHEN_MCP_TOKEN
 ```
+
+The retention policy and checkpoint interval are optional but must be supplied
+together. At each committed interval the host derives a content-addressed
+checkpoint by full replay, independently verifies it, publishes an archival
+compaction record, and only then removes covered files from the active
+directory. Archived event bytes remain authoritative, so operators can always
+request or audit a complete replay. Pending files are ignored; published
+checkpoint, archive, or compaction corruption fails closed.
 
 Clients add `authorization` to each post-initialization request's `params`.
 The token is held in memory and is excluded from journal state and responses.
@@ -67,6 +77,15 @@ duplicate, substituted, or noncanonical records. Canonical reconciliation may
 then reach `needs_review`; it never changes `accepted: false`. Resource-free
 runs may omit the bundle and preserve the original v0 path.
 
+`reconcile_verification_lineage` is the supported no-custom-Rust path for the
+native shell-worker lineage chain. The request names the exact current case
+revision, evidence claim, canonical review morphism IDs, policy, and retained
+artifact-root-relative `worker.report.json`, `execution.trace.json`, stdout,
+and stderr paths. The host reads regular non-symlink files confined beneath
+the artifact root, derives opaque producer/verifier/anchor proofs through the
+canonical library, rejects duplicate review IDs, and returns only the policy
+result. It is read-only: `accepted` remains false and no proof is serialized.
+
 Configured resources are projections:
 
 - space status/frontier/reviews/revisions come from replay and canonical
@@ -80,7 +99,8 @@ The operational host binds the workflows in
 [`../product-surface.v0.json`](../product-surface.v0.json): topology
 proposal/lint and compilation, content-addressed runtime JSONL attachment and
 reconciliation, simulation, resource reservation/reconciliation, bounded
-expansion, streaming reconciliation, and redesign proposals. Acceptance-ledger
+expansion, streaming reconciliation, verification lineage reconciliation, and
+redesign proposals. Acceptance-ledger
 mutations refuse `unsupported_operational_host_tool` and remain owned by the
 main CLI. Host requests still require the client-observed base revision and
 caller audit context where applicable. An actual acceptance-ledger mutation is

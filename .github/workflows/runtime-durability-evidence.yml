@@ -1,0 +1,141 @@
+name: Runtime Durability Evidence
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3887e42e9fc0dcb4ce1d793231536d4a233d0979
+        with:
+          toolchain: 1.80.0
+      - name: Generate canonical bounded durability evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}"
+          CASEGRAPHEN_REVIEWED_RESOURCE_PILOT_REPORT=/tmp/reviewed-resource.json \
+            cargo test --locked --test resource_host_e2e \
+              operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review \
+              -- --exact
+          reviewed_hash="$(python3 -c 'import json; print(json.load(open("/tmp/reviewed-resource.json"))["reviewed_deployment_hash"])')"
+          /usr/bin/time -f '%M' -o /tmp/canonical-runtime-peak-kib \
+            cargo run --locked --example runtime_reconciliation_durability_pilot -- \
+              /tmp/canonical-runtime "$reviewed_hash"
+          cargo run --locked --example resource_allocator_durability_pilot -- \
+            /tmp/allocator-durability-report.json
+          peak_bytes="$(( $(cat /tmp/canonical-runtime-peak-kib) * 1024 ))"
+          python3 scripts/runtime-durability-pilots.py \
+            --repo . \
+            --allocator-report /tmp/allocator-durability-report.json \
+            --canonical-runtime-dir /tmp/canonical-runtime \
+            --reviewed-resource-report /tmp/reviewed-resource.json \
+            --canonical-peak-memory-bytes "$peak_bytes" \
+            --output /tmp/runtime-durability-evidence
+          python3 scripts/runtime-durability-evidence.py build-package \
+            --evidence-dir /tmp/runtime-durability-evidence \
+            --repository "${{ github.repository }}" \
+            --evaluated-commit "${{ github.sha }}" \
+            --workflow-run-id "${{ github.run_id }}" \
+            --workflow-run-attempt "${{ github.run_attempt }}" \
+            --output-dir runtime-durability-publication
+      - name: Publish immutable package input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-durability-publication-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: runtime-durability-publication
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: generate
+    if: github.ref == 'refs/heads/main' && github.sha == vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA
+    permissions:
+      contents: write
+    environment: runtime-durability-evidence-publisher
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact trusted publication verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+          path: trusted-verifier
+          persist-credentials: false
+      - name: Download exact generated package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: runtime-durability-publication-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: runtime-durability-publication
+      - name: Publish create-new content-addressed Release evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_SHA: ${{ vars.CASEGRAPHEN_TRUSTED_VERIFIER_SHA }}
+        run: |
+          set -euo pipefail
+          test "$(git -C trusted-verifier rev-parse HEAD)" = "$TRUSTED_SHA"
+          record=runtime-durability-publication/retention-record.json
+          package=runtime-durability-publication/runtime-durability-evidence.tar.gz
+          package_hash="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["package_sha256"])' "$record")"
+          package_size="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["byte_length"])' "$record")"
+          tag="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["tag"])' "$record")"
+          asset="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["asset_name"])' "$record")"
+          cp "$package" "runtime-durability-publication/$asset"
+          if ! gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json 2>/dev/null; then
+            gh release create "$tag" \
+              --target "${{ github.sha }}" \
+              --title "Runtime durability evidence ${package_hash#sha256:}" \
+              --notes 'Content-addressed runtime durability evidence. This GitHub Release is not WORM storage.' \
+              --latest=false || \
+              gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+          fi
+          gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+          state="$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+            --input /tmp/runtime-release.json \
+            --tag "$tag" \
+            --target-sha "${{ github.sha }}" \
+            --asset-name "$asset" \
+            --expected-size "$package_size" \
+            --expected-sha256 "$package_hash")"
+          if test "$state" = absent; then
+            if ! gh release upload "$tag" "runtime-durability-publication/$asset"; then
+              gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+              test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+                --input /tmp/runtime-release.json --tag "$tag" --target-sha "${{ github.sha }}" \
+                --asset-name "$asset" --expected-size "$package_size" \
+                --expected-sha256 "$package_hash")" = present
+            fi
+          else
+            test "$state" = present
+          fi
+          gh release view "$tag" --json tagName,targetCommitish,assets > /tmp/runtime-release.json
+          test "$(python3 trusted-verifier/scripts/fresh-agent-run-provenance.py inspect-release \
+            --input /tmp/runtime-release.json --tag "$tag" --target-sha "${{ github.sha }}" \
+            --asset-name "$asset" --expected-size "$package_size" \
+            --expected-sha256 "$package_hash")" = present
+          mkdir /tmp/runtime-durability-redownload
+          gh release download "$tag" --pattern "$asset" --dir /tmp/runtime-durability-redownload
+          python3 trusted-verifier/scripts/fresh-agent-run-provenance.py verify-file \
+            --input "/tmp/runtime-durability-redownload/$asset" \
+            --expected-sha256 "$package_hash"
+          python3 trusted-verifier/scripts/runtime-durability-evidence.py mark-retained \
+            --manifest "$record" \
+            --output runtime-durability-publication/retained-release-record.json
+          python3 trusted-verifier/scripts/runtime-durability-evidence.py verify-offline \
+            --manifest runtime-durability-publication/retained-release-record.json \
+            --asset "/tmp/runtime-durability-redownload/$asset"
+      - name: Retain the small checked-in-manifest candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-durability-retention-record-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: runtime-durability-publication/retained-release-record.json
+          if-no-files-found: error
+          retention-days: 30

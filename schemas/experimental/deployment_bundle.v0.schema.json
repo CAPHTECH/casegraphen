@@ -4,10 +4,22 @@
   "title": "Experimental deployment bundle manifest v0",
   "type": "object",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"compiler_version": {"const": "casegraphen-graph-compiler/1"}}, "required": ["compiler_version"]},
+      "then": {"required": ["compiler_identity", "compiler_input_contract_versions"]}
+    },
+    {
+      "if": {"properties": {"compiler_version": {"const": "casegraphen-graph-compiler/0"}}, "required": ["compiler_version"]},
+      "then": {"not": {"anyOf": [{"required": ["compiler_identity"]}, {"required": ["compiler_input_contract_versions"]}]}}
+    }
+  ],
   "required": ["schema", "compiler_version", "topology_id", "topology_content_hash", "case_space_id", "base_revision_id", "mode", "policy_manifest_content_hash", "reviewed_claim_cell_id", "accepted_review_id", "accepted_review_revision_id", "artifacts"],
   "properties": {
     "schema": {"const": "casegraphen.experimental.deployment_bundle.v0"},
-    "compiler_version": {"$ref": "#/$defs/id"},
+    "compiler_version": {"enum": ["casegraphen-graph-compiler/0", "casegraphen-graph-compiler/1"]},
+    "compiler_identity": {"$ref": "compiler.inputs.v1.schema.json#/properties/compiler_identity"},
+    "compiler_input_contract_versions": {"$ref": "compiler.inputs.v1.schema.json#/properties/contract_versions"},
     "topology_id": {"$ref": "#/$defs/id"},
     "topology_content_hash": {"$ref": "#/$defs/hash"},
     "case_space_id": {"$ref": "#/$defs/id"},

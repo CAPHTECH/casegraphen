@@ -4,7 +4,10 @@ use casegraphen::{
     execution_topology::{
         execution_topology_content_hash, parse_execution_topology, ExecutionTopology,
     },
-    resource_allocator::{ResourceAllocatorConfiguration, UnreviewedResourceJournal},
+    resource_allocator::{
+        ResourceAllocatorConfiguration, ResourceAllocatorRetentionPolicy,
+        UnreviewedResourceJournal, RESOURCE_ALLOCATOR_RETENTION_POLICY_SCHEMA,
+    },
     resource_protocol::{
         declaration_grants, ReservationAssertionKind, ReservationDispositionAssertion,
         ResourceDeclaration, ResourceReservation, RESERVATION_ASSERTION_SCHEMA,
@@ -15,12 +18,13 @@ use serde_json::json;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Barrier},
     thread,
     time::Instant,
 };
 
-const EVENT_TARGET: usize = 512;
+const DEFAULT_EVENT_TARGET: usize = 512;
 const REPLAY_LIMIT_MS: u128 = 5_000;
 const APPEND_LIMIT_MS: u128 = 60_000;
 
@@ -86,6 +90,11 @@ fn disposition(
 
 fn main() {
     let output = PathBuf::from(env::args().nth(1).expect("output JSON path"));
+    let event_target = env::var("CASEGRAPHEN_ALLOCATOR_EVENT_TARGET")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("positive even event target"))
+        .unwrap_or(DEFAULT_EVENT_TARGET);
+    assert!(event_target > 0 && event_target % 2 == 0);
     let root = output.with_extension("journal");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
@@ -95,7 +104,10 @@ fn main() {
     .unwrap();
 
     let total_started = Instant::now();
-    for index in 0..(EVENT_TARGET / 2) {
+    let mut append_pair_ms = Vec::with_capacity(event_target / 2);
+    let mut peak_rss_bytes = observed_rss_bytes();
+    for index in 0..(event_target / 2) {
+        let pair_started = Instant::now();
         let declaration = declaration(&topology, 0, &format!("long-{index}"));
         let reservation = reservation(&declaration, &format!("long-{index}"));
         allocator(&root)
@@ -119,18 +131,60 @@ fn main() {
                 &format!("idem:release:{index}"),
             )
             .unwrap();
+        append_pair_ms.push(pair_started.elapsed().as_millis() as u64);
+        if index % 128 == 0 {
+            peak_rss_bytes = peak_rss_bytes.max(observed_rss_bytes());
+        }
     }
+    append_pair_ms.sort_unstable();
+    let percentile = |numerator: usize, denominator: usize| -> u64 {
+        append_pair_ms[((append_pair_ms.len() - 1) * numerator) / denominator]
+    };
     let append_ms = total_started.elapsed().as_millis();
     let replay_started = Instant::now();
     let restarted_snapshot = allocator(&root).snapshot().unwrap();
     let replay_ms = replay_started.elapsed().as_millis();
+    let checkpoint_started = Instant::now();
+    let checkpoint = allocator(&root).create_checkpoint().unwrap();
+    let checkpoint_create_ms = checkpoint_started.elapsed().as_millis();
+    let checkpoint_size_bytes = fs::metadata(
+        fs::read_dir(root.join("checkpoints"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path(),
+    )
+    .unwrap()
+    .len();
+    let verify_started = Instant::now();
+    let proof = allocator(&root).verify_checkpoint().unwrap();
+    let checkpoint_verify_ms = verify_started.elapsed().as_millis();
+    let compact_started = Instant::now();
+    let compaction = allocator(&root)
+        .compact(
+            &ResourceAllocatorRetentionPolicy {
+                schema: RESOURCE_ALLOCATOR_RETENTION_POLICY_SCHEMA.into(),
+                schema_version: 0,
+                retain_active_event_count: 32,
+            },
+            &proof,
+        )
+        .unwrap();
+    let compaction_ms = compact_started.elapsed().as_millis();
+    let suffix_replay_started = Instant::now();
+    let suffix_snapshot = allocator(&root).snapshot().unwrap();
+    let suffix_replay_ms = suffix_replay_started.elapsed().as_millis();
+    let full_after_compaction = allocator(&root).full_replay_snapshot().unwrap();
+    let checkpoint_full_replay_equivalent =
+        suffix_snapshot == full_after_compaction && suffix_snapshot == restarted_snapshot;
 
     // A process crash before create-new publication leaves only a pending file.
     fs::write(root.join(".pending-crashed-writer.tmp"), b"partial").unwrap();
     let crash_before_publication_ignored = allocator(&root).snapshot().is_ok();
 
     // A crash/corruption after publication is a hard integrity refusal.
-    let corrupt_path = root.join(format!("{:020}.json", EVENT_TARGET + 1));
+    let corrupt_path = root.join(format!("{:020}.json", event_target + 1));
     fs::write(&corrupt_path, b"partial").unwrap();
     let crash_after_publication_refused = allocator(&root).snapshot().is_err();
     fs::remove_file(corrupt_path).unwrap();
@@ -213,7 +267,7 @@ fn main() {
         .active_reservations
         == vec![new];
 
-    let passed = restarted_snapshot.generation as usize == EVENT_TARGET
+    let passed = restarted_snapshot.generation as usize == event_target
         && restarted_snapshot.active_reservations.is_empty()
         && append_ms <= APPEND_LIMIT_MS
         && replay_ms <= REPLAY_LIMIT_MS
@@ -221,13 +275,15 @@ fn main() {
         && crash_after_publication_refused
         && concurrent_grants == 1
         && supersede_active_successor;
+    let passed = passed && checkpoint_full_replay_equivalent;
     let report = json!({
         "schema":"casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
         "passed":passed,
         "accepted":false,
         "journal_event_count":restarted_snapshot.generation,
-        "event_threshold":EVENT_TARGET,
+        "event_threshold":event_target,
         "append_elapsed_ms":append_ms,
+        "append_pair_latency_ms":{"p50":percentile(50,100),"p95":percentile(95,100),"max":append_pair_ms.last().copied().unwrap_or(0)},
         "append_threshold_ms":APPEND_LIMIT_MS,
         "restart_replay_ms":replay_ms,
         "restart_replay_threshold_ms":REPLAY_LIMIT_MS,
@@ -239,9 +295,19 @@ fn main() {
         "supersede_active_successor":supersede_active_successor,
         "restart_observed":true,
         "checkpoint_compaction":{
-            "implemented":false,
-            "finding":"full replay is O(event_count); checkpoint/compaction remains required before long-lived production allocation"
+            "implemented":true,
+            "checkpoint_sequence":checkpoint.last_event_sequence,
+            "checkpoint_content_hash":checkpoint.checkpoint_content_hash,
+            "checkpoint_size_bytes":checkpoint_size_bytes,
+            "checkpoint_create_ms":checkpoint_create_ms,
+            "checkpoint_independent_verify_ms":checkpoint_verify_ms,
+            "compaction_ms":compaction_ms,
+            "archived_event_count":compaction.archived_event_count,
+            "active_event_count":compaction.active_event_count,
+            "suffix_replay_ms":suffix_replay_ms,
+            "full_replay_equivalent":checkpoint_full_replay_equivalent
         },
+        "observed_peak_rss_bytes":peak_rss_bytes,
         "authority_boundary":"unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
         "halt":"operator_review_required"
     });
@@ -252,4 +318,16 @@ fn main() {
     if !passed {
         std::process::exit(1);
     }
+}
+
+fn observed_rss_bytes() -> u64 {
+    Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+        .saturating_mul(1024)
 }

@@ -23,21 +23,123 @@ use higher_graphen_core::ReviewStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 /// Version of the deterministic compiler implementation.
-pub const GRAPH_COMPILER_VERSION: &str = "casegraphen-graph-compiler/0";
+pub const GRAPH_COMPILER_VERSION: &str = "casegraphen-graph-compiler/1";
+/// Historical compiler retained as an exact compatibility profile.
+pub const LEGACY_GRAPH_COMPILER_VERSION_V0: &str = "casegraphen-graph-compiler/0";
+/// Stable implementation identity, separated from the profile version.
+pub const GRAPH_COMPILER_IMPLEMENTATION: &str = "casegraphen-graph-compiler";
 /// Schema identity of the deployment-bundle manifest.
 pub const DEPLOYMENT_BUNDLE_SCHEMA: &str = "casegraphen.experimental.deployment_bundle.v0";
 /// Schema identity of compiler reports.
 pub const COMPILER_REPORT_SCHEMA: &str = "casegraphen.experimental.graph_compiler.report.v0";
 /// Schema identity of the retained canonical inputs used to prove compiler provenance.
-pub const COMPILER_INPUTS_SCHEMA: &str = "casegraphen.experimental.graph_compiler.inputs.v0";
+pub const COMPILER_INPUTS_SCHEMA: &str = "casegraphen.experimental.graph_compiler.inputs.v1";
+/// Historical retained-input schema used by compiler profile 0.
+pub const LEGACY_COMPILER_INPUTS_SCHEMA_V0: &str =
+    "casegraphen.experimental.graph_compiler.inputs.v0";
+/// Semantic profile of the current compiler. Changing lowering semantics must
+/// create a new profile rather than silently reinterpreting old inputs.
+pub const GRAPH_COMPILER_SEMANTIC_PROFILE: &str =
+    "casegraphen.experimental.graph_compiler.semantic_profile.v1";
+/// Semantic profile reconstructed for retained profile-0 inputs and reviews.
+pub const LEGACY_GRAPH_COMPILER_SEMANTIC_PROFILE_V0: &str =
+    "casegraphen.experimental.graph_compiler.semantic_profile.v0";
+
+const INLINE_BUDGET_POLICY_CONTRACT: &str =
+    "casegraphen.experimental.graph_compiler.inline_budget_policy.v0";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompilerProfile {
+    V0,
+    V1,
+}
+
+impl CompilerProfile {
+    fn version(self) -> &'static str {
+        match self {
+            Self::V0 => LEGACY_GRAPH_COMPILER_VERSION_V0,
+            Self::V1 => GRAPH_COMPILER_VERSION,
+        }
+    }
+
+    fn inputs_schema(self) -> &'static str {
+        match self {
+            Self::V0 => LEGACY_COMPILER_INPUTS_SCHEMA_V0,
+            Self::V1 => COMPILER_INPUTS_SCHEMA,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+/// Exact implementation and semantic profile selected for compilation.
+pub struct CompilerIdentity {
+    /// Compiler implementation family.
+    pub implementation: String,
+    /// Exact semantic profile number within the implementation family.
+    pub profile_version: u32,
+    /// Versioned semantic profile contract identity.
+    pub semantic_profile: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+/// Complete semantic contract inventory consumed by one compiler profile.
+pub struct CompilerInputContractVersions {
+    /// Execution-topology contract identity.
+    pub execution_topology: String,
+    /// Deployment-bundle contract identity.
+    pub deployment_bundle: String,
+    /// Retained compiler-input contract identity.
+    pub compiler_inputs: String,
+    /// Compiler-report contract identity.
+    pub compiler_report: String,
+    /// Deployment policy-manifest contract identity.
+    pub deployment_policy_manifest: String,
+    /// Generated execution-plan contract identity.
+    pub execution_plan: String,
+    /// Verification-policy contract identity.
+    pub verification_policy: String,
+    /// Expansion-policy contract identity.
+    pub expansion_policy: String,
+    /// Inline budget-policy shape interpreted by the compiler profile.
+    pub inline_budget_policy: String,
+}
+
+/// Exact compiler semantics included in a topology-review authority target.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompilerReviewIdentity {
+    /// Exact compiler implementation/profile identifier.
+    pub compiler_version: String,
+    /// Semantic profile contract identifier.
+    pub semantic_profile: String,
+    /// Retained compiler-input schema identifier.
+    pub compiler_inputs_schema: String,
+    /// Content hash of the complete semantic contract-version inventory.
+    pub contract_versions_content_hash: String,
+}
+
+/// Complete compiler identity retained by a non-authoritative migration
+/// proposal. The contract inventory stays content-addressed so a migration
+/// cannot describe only a friendly version label while changing semantics.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompilerMigrationIdentity {
+    pub compiler_version: String,
+    pub compiler_identity: CompilerIdentity,
+    pub compiler_inputs_schema: String,
+    pub compiler_contract_versions_content_hash: String,
+}
 
 /// Compilation for inspection, or compilation tied to a canonical accepted review.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompilationMode {
     Proposal,
-    Reviewed(ReviewedTopologyBinding),
+    Reviewed(Box<ReviewedTopologyBinding>),
 }
 
 /// Opaque proof that a topology hash was bound to a reviewed case claim.
@@ -53,6 +155,10 @@ pub struct ReviewedTopologyBinding {
     case_space_id: String,
     base_revision_id: String,
     expansion_proposal_id: Option<String>,
+    compiler_version: String,
+    compiler_semantic_profile: String,
+    compiler_inputs_schema: String,
+    compiler_contract_versions_content_hash: String,
 }
 
 impl ReviewedTopologyBinding {
@@ -119,7 +225,7 @@ pub struct CompilerRequest {
 /// deserializing this value does not itself mint an opaque review proof.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum RetainedCompilationMode {
+enum RetainedCompilationModeV0 {
     Proposal,
     Reviewed {
         claim_cell_id: String,
@@ -132,15 +238,58 @@ enum RetainedCompilationMode {
     },
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RetainedCompilationModeV1 {
+    Proposal,
+    Reviewed(Box<RetainedReviewedCompilationV1>),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedReviewedCompilationV1 {
+    claim_cell_id: String,
+    review_id: String,
+    topology_content_hash: String,
+    policy_manifest_content_hash: String,
+    case_space_id: String,
+    base_revision_id: String,
+    expansion_proposal_id: Option<String>,
+    compiler_version: String,
+    compiler_semantic_profile: String,
+    compiler_inputs_schema: String,
+    compiler_contract_versions_content_hash: String,
+}
+
 /// Canonical compiler inputs retained inside every bundle. This record is
 /// untrusted until the verifier deterministically recompiles it and compares
 /// every generated artifact byte.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct CompilerInputsArtifact {
+struct CompilerInputsArtifactV1 {
     schema: String,
     compiler_version: String,
-    mode: RetainedCompilationMode,
+    compiler_identity: CompilerIdentity,
+    contract_versions: CompilerInputContractVersions,
+    mode: RetainedCompilationModeV1,
+    target: CompilationTarget,
+    case_space_id: String,
+    base_revision_id: String,
+    plan_id: String,
+    node_plan_mappings: Vec<NodePlanMapping>,
+    verification_policies: BTreeMap<String, Value>,
+    budget_policies: BTreeMap<String, Value>,
+    expansion_policies: BTreeMap<String, Value>,
+}
+
+/// Exact historical profile-0 input record. It intentionally stays separate
+/// from v1 so a new verifier cannot fill defaults and reinterpret old bytes.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CompilerInputsArtifactV0 {
+    schema: String,
+    compiler_version: String,
+    mode: RetainedCompilationModeV0,
     target: CompilationTarget,
     case_space_id: String,
     base_revision_id: String,
@@ -227,6 +376,10 @@ pub struct BundleManifestEntry {
 pub struct BundleManifest {
     pub schema: String,
     pub compiler_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_identity: Option<CompilerIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_input_contract_versions: Option<CompilerInputContractVersions>,
     pub topology_id: String,
     pub topology_content_hash: String,
     pub case_space_id: String,
@@ -256,6 +409,54 @@ pub struct VerifiedDeploymentBundle {
     bundle: DeploymentBundle,
     topology: ExecutionTopology,
 }
+
+/// Non-authoritative observation of canonical semantic verification cost.
+/// The deterministic byte count is suitable for gates; elapsed time is pilot
+/// evidence and never participates in an authority decision.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BundleVerificationMetrics {
+    pub compiler_version: String,
+    pub topology_node_count: u64,
+    pub topology_edge_count: u64,
+    pub policy_document_count: u64,
+    pub artifact_count: u64,
+    pub verified_input_bytes: u64,
+    pub recompile_count: u64,
+    pub elapsed_micros: u128,
+}
+
+/// Content-addressed proposal for moving a historical exact compiler output to
+/// the current profile. It intentionally contains no bundle bytes or opaque
+/// authority and requires a distinct review before materialization.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeploymentBundleMigrationProposal {
+    pub schema: &'static str,
+    pub source_compiler_identity: CompilerMigrationIdentity,
+    pub target_compiler_identity: CompilerMigrationIdentity,
+    pub source_bundle_hash: String,
+    pub proposed_bundle_hash: String,
+    pub topology_content_hash: String,
+    pub policy_manifest_content_hash: String,
+    pub changed_artifact_paths: Vec<String>,
+    pub semantic_differences: Vec<CompilerMigrationSemanticDifference>,
+    pub accepted: bool,
+    pub requires_review: bool,
+    pub proposal_content_hash: String,
+}
+
+/// One explicit old/new semantic contract difference in a migration proposal.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompilerMigrationSemanticDifference {
+    pub area: String,
+    pub source: String,
+    pub target: String,
+}
+
+pub const DEPLOYMENT_BUNDLE_MIGRATION_SCHEMA: &str =
+    "casegraphen.experimental.deployment_bundle.migration_proposal.v0";
+/// Schema identity for non-authoritative compiler verification pilot reports.
+pub const COMPILER_VERIFICATION_PERFORMANCE_REPORT_SCHEMA: &str =
+    "casegraphen.experimental.graph_compiler.verification_performance_report.v0";
 
 impl VerifiedDeploymentBundle {
     pub fn manifest(&self) -> &BundleManifest {
@@ -300,6 +501,14 @@ pub fn verify_deployment_bundle(
     bundle: DeploymentBundle,
     expected_manifest_content_hash: &str,
 ) -> Result<VerifiedDeploymentBundle, CompilerFinding> {
+    verify_deployment_bundle_internal(bundle, expected_manifest_content_hash)
+        .map(|(verified, _recompile_count)| verified)
+}
+
+fn verify_deployment_bundle_internal(
+    bundle: DeploymentBundle,
+    expected_manifest_content_hash: &str,
+) -> Result<(VerifiedDeploymentBundle, u64), CompilerFinding> {
     let invalid = |location: &str, detail: &str| {
         compiler_finding("deployment_bundle_integrity_failure", location, detail)
     };
@@ -394,31 +603,81 @@ pub fn verify_deployment_bundle(
         .expect("required inventory was checked")
         .bytes
         .as_slice();
-    let retained: CompilerInputsArtifact =
-        serde_json::from_slice(inputs_bytes).map_err(|error| {
-            compiler_finding(
-                "deployment_bundle_semantic_mismatch",
-                "$.artifacts[compiler.inputs.json]",
-                error.to_string(),
-            )
-        })?;
-    let request = retained_compiler_request(retained).map_err(|detail| {
+    let retained_value: Value = serde_json::from_slice(inputs_bytes).map_err(|error| {
         compiler_finding(
             "deployment_bundle_semantic_mismatch",
             "$.artifacts[compiler.inputs.json]",
-            detail,
+            error.to_string(),
         )
     })?;
-    let reproduced = compile_execution_topology(&topology, &request).map_err(|report| {
-        compiler_finding(
-            "deployment_bundle_semantic_mismatch",
-            "$.artifacts",
-            format!(
-                "retained inputs do not produce a deployable bundle: {}",
-                serde_json::to_string(&report).expect("compiler report serializes")
-            ),
-        )
-    })?;
+    let retained_schema = retained_value
+        .get("schema")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let retained_version = retained_value
+        .get("compiler_version")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (profile, request) = match (retained_schema, retained_version) {
+        (COMPILER_INPUTS_SCHEMA, GRAPH_COMPILER_VERSION) => {
+            let retained: CompilerInputsArtifactV1 = serde_json::from_value(retained_value)
+                .map_err(|error| {
+                    compiler_finding(
+                        "deployment_bundle_semantic_mismatch",
+                        "$.artifacts[compiler.inputs.json]",
+                        error.to_string(),
+                    )
+                })?;
+            let request = retained_compiler_request_v1(retained).map_err(|detail| {
+                compiler_finding(
+                    "deployment_bundle_semantic_mismatch",
+                    "$.artifacts[compiler.inputs.json]",
+                    detail,
+                )
+            })?;
+            (CompilerProfile::V1, request)
+        }
+        (LEGACY_COMPILER_INPUTS_SCHEMA_V0, LEGACY_GRAPH_COMPILER_VERSION_V0) => {
+            let retained: CompilerInputsArtifactV0 = serde_json::from_value(retained_value)
+                .map_err(|error| {
+                    compiler_finding(
+                        "deployment_bundle_semantic_mismatch",
+                        "$.artifacts[compiler.inputs.json]",
+                        error.to_string(),
+                    )
+                })?;
+            (CompilerProfile::V0, retained_compiler_request_v0(retained))
+        }
+        _ => {
+            return Err(compiler_finding(
+                "unsupported_compiler_identity",
+                "$.artifacts[compiler.inputs.json]",
+                format!(
+                    "unsupported compiler input identity schema={retained_schema:?} compiler_version={retained_version:?}"
+                ),
+            ));
+        }
+    };
+    if bundle.manifest.compiler_version != profile.version() {
+        return Err(compiler_finding(
+            "compiler_identity_substitution",
+            "$.manifest.compiler_version",
+            "manifest compiler identity differs from retained canonical inputs",
+        ));
+    }
+    let mut recompile_count = 0_u64;
+    recompile_count = recompile_count.saturating_add(1);
+    let reproduced = compile_execution_topology_with_profile(&topology, &request, profile)
+        .map_err(|report| {
+            compiler_finding(
+                "deployment_bundle_semantic_mismatch",
+                "$.artifacts",
+                format!(
+                    "retained inputs do not produce a deployable bundle: {}",
+                    serde_json::to_string(&report).expect("compiler report serializes")
+                ),
+            )
+        })?;
     if !deployment_bundles_match(&bundle, &reproduced) {
         return Err(compiler_finding(
             "deployment_bundle_semantic_mismatch",
@@ -426,38 +685,304 @@ pub fn verify_deployment_bundle(
             "bundle artifact bytes or manifest differ from deterministic compiler output",
         ));
     }
-    Ok(VerifiedDeploymentBundle { bundle, topology })
+    Ok((
+        VerifiedDeploymentBundle { bundle, topology },
+        recompile_count,
+    ))
 }
 
-fn retained_compiler_request(retained: CompilerInputsArtifact) -> Result<CompilerRequest, String> {
-    if retained.schema != COMPILER_INPUTS_SCHEMA {
-        return Err("compiler input schema is unsupported".to_owned());
-    }
-    if retained.compiler_version != GRAPH_COMPILER_VERSION {
-        return Err("compiler input version differs from this verifier".to_owned());
-    }
-    let mode = match retained.mode {
-        RetainedCompilationMode::Proposal => CompilationMode::Proposal,
-        RetainedCompilationMode::Reviewed {
-            claim_cell_id,
-            review_id,
-            topology_content_hash,
-            policy_manifest_content_hash,
-            case_space_id,
-            base_revision_id,
-            expansion_proposal_id,
-        } => CompilationMode::Reviewed(ReviewedTopologyBinding {
-            claim_cell_id,
-            review_id,
-            topology_content_hash,
-            policy_manifest_content_hash,
-            case_space_id,
-            base_revision_id,
-            expansion_proposal_id,
-        }),
+/// Run the same canonical verifier while retaining bounded performance
+/// evidence. Metrics cannot be converted into deployment authority.
+pub fn verify_deployment_bundle_with_metrics(
+    bundle: DeploymentBundle,
+    expected_manifest_content_hash: &str,
+) -> Result<(VerifiedDeploymentBundle, BundleVerificationMetrics), CompilerFinding> {
+    let started = Instant::now();
+    let verified_input_bytes = bundle.manifest_bytes.len().saturating_add(
+        bundle
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.bytes.len())
+            .sum::<usize>(),
+    ) as u64;
+    let artifact_count = bundle.artifacts.len() as u64;
+    let compiler_version = bundle.manifest.compiler_version.clone();
+    let policy_document_count = bundle
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == "compiler.inputs.json")
+        .and_then(|artifact| serde_json::from_slice::<Value>(&artifact.bytes).ok())
+        .map(|value| {
+            [
+                "verification_policies",
+                "budget_policies",
+                "expansion_policies",
+            ]
+            .iter()
+            .map(|key| {
+                value
+                    .get(*key)
+                    .and_then(Value::as_object)
+                    .map_or(0, |entries| entries.len() as u64)
+            })
+            .sum()
+        })
+        .unwrap_or(0);
+    let (verified, recompile_count) =
+        verify_deployment_bundle_internal(bundle, expected_manifest_content_hash)?;
+    let metrics = BundleVerificationMetrics {
+        compiler_version,
+        topology_node_count: verified.topology.nodes.len() as u64,
+        topology_edge_count: verified.topology.edges.len() as u64,
+        policy_document_count,
+        artifact_count,
+        verified_input_bytes,
+        recompile_count,
+        elapsed_micros: started.elapsed().as_micros(),
     };
+    Ok((verified, metrics))
+}
+
+/// Propose, but never authorize or materialize, migration from the retained
+/// historical compiler profile to the current profile.
+pub fn propose_deployment_bundle_migration(
+    bundle: DeploymentBundle,
+    expected_manifest_content_hash: &str,
+) -> Result<DeploymentBundleMigrationProposal, CompilerFinding> {
+    let verified = verify_deployment_bundle(bundle, expected_manifest_content_hash)?;
+    if verified.manifest().compiler_version == GRAPH_COMPILER_VERSION {
+        return Err(compiler_finding(
+            "deployment_bundle_migration_not_required",
+            "$.manifest.compiler_version",
+            "bundle already uses the current exact compiler profile",
+        ));
+    }
+    if verified.manifest().compiler_version != LEGACY_GRAPH_COMPILER_VERSION_V0 {
+        return Err(compiler_finding(
+            "unsupported_compiler_identity",
+            "$.manifest.compiler_version",
+            "no exact migration implementation is registered for this compiler identity",
+        ));
+    }
+    let retained: CompilerInputsArtifactV0 = serde_json::from_slice(
+        verified
+            .artifact_bytes("compiler.inputs.json")
+            .expect("verified inventory contains retained compiler inputs"),
+    )
+    .map_err(|error| {
+        compiler_finding(
+            "deployment_bundle_migration_failure",
+            "$.artifacts[compiler.inputs.json]",
+            error.to_string(),
+        )
+    })?;
+    let request = retained_compiler_request_v0(retained);
+    let proposed = compile_execution_topology(verified.topology(), &request).map_err(|report| {
+        compiler_finding(
+            "deployment_bundle_migration_failure",
+            "$.artifacts",
+            serde_json::to_string(&report).expect("compiler report serializes"),
+        )
+    })?;
+    let source_artifacts = verified
+        .bundle
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.path.as_str(), artifact.content_hash.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let proposed_artifacts = proposed
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.path.as_str(), artifact.content_hash.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut changed_artifact_paths = source_artifacts
+        .keys()
+        .chain(proposed_artifacts.keys())
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|path| source_artifacts.get(path) != proposed_artifacts.get(path))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    changed_artifact_paths.sort();
+    let source_compiler_identity = legacy_compiler_migration_identity_v0();
+    let target_compiler_identity = current_compiler_migration_identity();
+    let semantic_differences =
+        migration_semantic_differences(&source_compiler_identity, &target_compiler_identity);
+    let mut proposal = DeploymentBundleMigrationProposal {
+        schema: DEPLOYMENT_BUNDLE_MIGRATION_SCHEMA,
+        source_compiler_identity,
+        target_compiler_identity,
+        source_bundle_hash: verified.manifest_content_hash().to_owned(),
+        proposed_bundle_hash: proposed.manifest_content_hash,
+        topology_content_hash: proposed.manifest.topology_content_hash,
+        policy_manifest_content_hash: proposed.manifest.policy_manifest_content_hash,
+        changed_artifact_paths,
+        semantic_differences,
+        accepted: false,
+        requires_review: true,
+        proposal_content_hash: String::new(),
+    };
+    proposal.proposal_content_hash = deployment_bundle_migration_proposal_content_hash(&proposal);
+    Ok(proposal)
+}
+
+/// Verify the proposal's self-address without treating it as a review or an
+/// authority-bearing deployment artifact.
+pub fn verify_deployment_bundle_migration_proposal(
+    proposal: &DeploymentBundleMigrationProposal,
+) -> Result<(), CompilerFinding> {
+    let is_sha256 = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    if proposal.schema != DEPLOYMENT_BUNDLE_MIGRATION_SCHEMA
+        || proposal.accepted
+        || !proposal.requires_review
+        || proposal.changed_artifact_paths.is_empty()
+        || proposal.semantic_differences.is_empty()
+        || ![
+            proposal.source_bundle_hash.as_str(),
+            proposal.proposed_bundle_hash.as_str(),
+            proposal.topology_content_hash.as_str(),
+            proposal.policy_manifest_content_hash.as_str(),
+            proposal.proposal_content_hash.as_str(),
+        ]
+        .iter()
+        .all(|value| is_sha256(value))
+    {
+        return Err(compiler_finding(
+            "invalid_deployment_bundle_migration_proposal",
+            "$",
+            "migration proposal shape or review seam is invalid",
+        ));
+    }
+    let source = legacy_compiler_migration_identity_v0();
+    let target = current_compiler_migration_identity();
+    if proposal.source_compiler_identity != source
+        || proposal.target_compiler_identity != target
+        || proposal.semantic_differences != migration_semantic_differences(&source, &target)
+    {
+        return Err(compiler_finding(
+            "unsupported_compiler_migration_identity",
+            "$.source_compiler_identity",
+            "migration identity or semantic difference inventory is not the registered exact path",
+        ));
+    }
+    let actual = deployment_bundle_migration_proposal_content_hash(proposal);
+    if actual != proposal.proposal_content_hash {
+        return Err(compiler_finding(
+            "deployment_bundle_migration_proposal_hash_mismatch",
+            "$.proposal_content_hash",
+            "migration proposal content differs from its content address",
+        ));
+    }
+    Ok(())
+}
+
+fn deployment_bundle_migration_proposal_content_hash(
+    proposal: &DeploymentBundleMigrationProposal,
+) -> String {
+    let without_hash = json!({
+        "schema": proposal.schema,
+        "source_compiler_identity": proposal.source_compiler_identity,
+        "target_compiler_identity": proposal.target_compiler_identity,
+        "source_bundle_hash": proposal.source_bundle_hash,
+        "proposed_bundle_hash": proposal.proposed_bundle_hash,
+        "topology_content_hash": proposal.topology_content_hash,
+        "policy_manifest_content_hash": proposal.policy_manifest_content_hash,
+        "changed_artifact_paths": proposal.changed_artifact_paths,
+        "semantic_differences": proposal.semantic_differences,
+        "accepted": proposal.accepted,
+        "requires_review": proposal.requires_review
+    });
+    crate::native_hash::sha256_hex(
+        &canonical_json_bytes(&without_hash).expect("typed migration proposal serializes"),
+    )
+}
+
+fn retained_mode_v0(mode: RetainedCompilationModeV0) -> CompilationMode {
+    let compiler = legacy_compiler_review_identity_v0();
+    match mode {
+        RetainedCompilationModeV0::Proposal => CompilationMode::Proposal,
+        RetainedCompilationModeV0::Reviewed {
+            claim_cell_id,
+            review_id,
+            topology_content_hash,
+            policy_manifest_content_hash,
+            case_space_id,
+            base_revision_id,
+            expansion_proposal_id,
+        } => CompilationMode::Reviewed(Box::new(ReviewedTopologyBinding {
+            claim_cell_id,
+            review_id,
+            topology_content_hash,
+            policy_manifest_content_hash,
+            case_space_id,
+            base_revision_id,
+            expansion_proposal_id,
+            compiler_version: compiler.compiler_version,
+            compiler_semantic_profile: compiler.semantic_profile,
+            compiler_inputs_schema: compiler.compiler_inputs_schema,
+            compiler_contract_versions_content_hash: compiler.contract_versions_content_hash,
+        })),
+    }
+}
+
+fn retained_mode_v1(mode: RetainedCompilationModeV1) -> CompilationMode {
+    match mode {
+        RetainedCompilationModeV1::Proposal => CompilationMode::Proposal,
+        RetainedCompilationModeV1::Reviewed(binding) => {
+            CompilationMode::Reviewed(Box::new(ReviewedTopologyBinding {
+                claim_cell_id: binding.claim_cell_id,
+                review_id: binding.review_id,
+                topology_content_hash: binding.topology_content_hash,
+                policy_manifest_content_hash: binding.policy_manifest_content_hash,
+                case_space_id: binding.case_space_id,
+                base_revision_id: binding.base_revision_id,
+                expansion_proposal_id: binding.expansion_proposal_id,
+                compiler_version: binding.compiler_version,
+                compiler_semantic_profile: binding.compiler_semantic_profile,
+                compiler_inputs_schema: binding.compiler_inputs_schema,
+                compiler_contract_versions_content_hash: binding
+                    .compiler_contract_versions_content_hash,
+            }))
+        }
+    }
+}
+
+fn retained_compiler_request_v0(retained: CompilerInputsArtifactV0) -> CompilerRequest {
+    CompilerRequest {
+        mode: retained_mode_v0(retained.mode),
+        target: retained.target,
+        case_space_id: retained.case_space_id,
+        base_revision_id: retained.base_revision_id,
+        plan_id: retained.plan_id,
+        node_plan_mappings: retained.node_plan_mappings,
+        verification_policies: retained.verification_policies,
+        budget_policies: retained.budget_policies,
+        expansion_policies: retained.expansion_policies,
+    }
+}
+
+fn retained_compiler_request_v1(
+    retained: CompilerInputsArtifactV1,
+) -> Result<CompilerRequest, String> {
+    if retained.schema != COMPILER_INPUTS_SCHEMA
+        || retained.compiler_version != GRAPH_COMPILER_VERSION
+    {
+        return Err("compiler input identity is unsupported".to_owned());
+    }
+    if retained.compiler_identity != current_compiler_identity() {
+        return Err("compiler identity does not match the registered semantic profile".to_owned());
+    }
+    if retained.contract_versions != current_compiler_contract_versions() {
+        return Err("semantic compiler-input contract versions are unsupported".to_owned());
+    }
     Ok(CompilerRequest {
-        mode,
+        mode: retained_mode_v1(retained.mode),
         target: retained.target,
         case_space_id: retained.case_space_id,
         base_revision_id: retained.base_revision_id,
@@ -467,6 +992,129 @@ fn retained_compiler_request(retained: CompilerInputsArtifact) -> Result<Compile
         budget_policies: retained.budget_policies,
         expansion_policies: retained.expansion_policies,
     })
+}
+
+fn current_compiler_identity() -> CompilerIdentity {
+    CompilerIdentity {
+        implementation: GRAPH_COMPILER_IMPLEMENTATION.to_owned(),
+        profile_version: 1,
+        semantic_profile: GRAPH_COMPILER_SEMANTIC_PROFILE.to_owned(),
+    }
+}
+
+fn legacy_compiler_identity_v0() -> CompilerIdentity {
+    CompilerIdentity {
+        implementation: GRAPH_COMPILER_IMPLEMENTATION.to_owned(),
+        profile_version: 0,
+        semantic_profile: LEGACY_GRAPH_COMPILER_SEMANTIC_PROFILE_V0.to_owned(),
+    }
+}
+
+fn current_compiler_contract_versions() -> CompilerInputContractVersions {
+    CompilerInputContractVersions {
+        execution_topology: crate::execution_topology::EXECUTION_TOPOLOGY_SCHEMA.to_owned(),
+        deployment_bundle: DEPLOYMENT_BUNDLE_SCHEMA.to_owned(),
+        compiler_inputs: COMPILER_INPUTS_SCHEMA.to_owned(),
+        compiler_report: COMPILER_REPORT_SCHEMA.to_owned(),
+        deployment_policy_manifest: crate::deployment_policy::DEPLOYMENT_POLICY_MANIFEST_SCHEMA
+            .to_owned(),
+        execution_plan: crate::exec::EXECUTION_PLAN_SCHEMA.to_owned(),
+        verification_policy: crate::verification_policy::VERIFICATION_POLICY_SCHEMA.to_owned(),
+        expansion_policy: crate::dynamic_expansion::EXPANSION_POLICY_SCHEMA.to_owned(),
+        inline_budget_policy: INLINE_BUDGET_POLICY_CONTRACT.to_owned(),
+    }
+}
+
+/// Compiler semantics that a new topology-review acceptance authorizes.
+pub fn current_compiler_review_identity() -> CompilerReviewIdentity {
+    let contracts = current_compiler_contract_versions();
+    let contract_versions_content_hash = crate::native_hash::sha256_hex(
+        &canonical_json_bytes(&contracts).expect("compiler contract inventory serializes"),
+    );
+    CompilerReviewIdentity {
+        compiler_version: GRAPH_COMPILER_VERSION.to_owned(),
+        semantic_profile: GRAPH_COMPILER_SEMANTIC_PROFILE.to_owned(),
+        compiler_inputs_schema: COMPILER_INPUTS_SCHEMA.to_owned(),
+        contract_versions_content_hash,
+    }
+}
+
+/// Exact compiler semantics assigned when replaying a pre-profile review.
+pub fn legacy_compiler_review_identity_v0() -> CompilerReviewIdentity {
+    CompilerReviewIdentity {
+        compiler_version: LEGACY_GRAPH_COMPILER_VERSION_V0.to_owned(),
+        semantic_profile: LEGACY_GRAPH_COMPILER_SEMANTIC_PROFILE_V0.to_owned(),
+        compiler_inputs_schema: LEGACY_COMPILER_INPUTS_SCHEMA_V0.to_owned(),
+        contract_versions_content_hash:
+            "027b96c63d7feddbe70cbf696718b5946c8b5acb1550a7248bd3ce2b1d698011".to_owned(),
+    }
+}
+
+fn current_compiler_migration_identity() -> CompilerMigrationIdentity {
+    let review = current_compiler_review_identity();
+    CompilerMigrationIdentity {
+        compiler_version: review.compiler_version,
+        compiler_identity: current_compiler_identity(),
+        compiler_inputs_schema: review.compiler_inputs_schema,
+        compiler_contract_versions_content_hash: review.contract_versions_content_hash,
+    }
+}
+
+fn legacy_compiler_migration_identity_v0() -> CompilerMigrationIdentity {
+    let review = legacy_compiler_review_identity_v0();
+    CompilerMigrationIdentity {
+        compiler_version: review.compiler_version,
+        compiler_identity: legacy_compiler_identity_v0(),
+        compiler_inputs_schema: review.compiler_inputs_schema,
+        compiler_contract_versions_content_hash: review.contract_versions_content_hash,
+    }
+}
+
+fn migration_semantic_differences(
+    source: &CompilerMigrationIdentity,
+    target: &CompilerMigrationIdentity,
+) -> Vec<CompilerMigrationSemanticDifference> {
+    [
+        (
+            "compiler_version",
+            source.compiler_version.clone(),
+            target.compiler_version.clone(),
+        ),
+        (
+            "compiler_implementation",
+            source.compiler_identity.implementation.clone(),
+            target.compiler_identity.implementation.clone(),
+        ),
+        (
+            "compiler_profile_version",
+            source.compiler_identity.profile_version.to_string(),
+            target.compiler_identity.profile_version.to_string(),
+        ),
+        (
+            "compiler_semantic_profile",
+            source.compiler_identity.semantic_profile.clone(),
+            target.compiler_identity.semantic_profile.clone(),
+        ),
+        (
+            "compiler_inputs_contract",
+            source.compiler_inputs_schema.clone(),
+            target.compiler_inputs_schema.clone(),
+        ),
+        (
+            "compiler_contract_inventory",
+            source.compiler_contract_versions_content_hash.clone(),
+            target.compiler_contract_versions_content_hash.clone(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(area, source, target)| {
+        (source != target).then_some(CompilerMigrationSemanticDifference {
+            area: area.to_owned(),
+            source,
+            target,
+        })
+    })
+    .collect()
 }
 
 fn deployment_bundles_match(left: &DeploymentBundle, right: &DeploymentBundle) -> bool {
@@ -549,12 +1197,58 @@ pub fn reviewed_deployment_authority(
         compiler_finding("reviewed_deployment_binding_mismatch", location, detail)
     };
     if manifest.schema != DEPLOYMENT_BUNDLE_SCHEMA
-        || manifest.compiler_version != GRAPH_COMPILER_VERSION
+        || !matches!(
+            manifest.compiler_version.as_str(),
+            GRAPH_COMPILER_VERSION | LEGACY_GRAPH_COMPILER_VERSION_V0
+        )
         || manifest.mode != "reviewed"
     {
         return Err(mismatch(
             "$.manifest",
-            "bundle is not a reviewed deployment manifest from this compiler version",
+            "bundle is not a reviewed deployment manifest from a supported exact compiler profile",
+        ));
+    }
+    if manifest.compiler_version != binding.compiler_version {
+        return Err(mismatch(
+            "$.manifest.compiler_version",
+            "bundle compiler profile differs from the profile accepted by the topology review",
+        ));
+    }
+    let manifest_compiler = if manifest.compiler_version == GRAPH_COMPILER_VERSION {
+        let identity = manifest.compiler_identity.as_ref().ok_or_else(|| {
+            mismatch(
+                "$.manifest.compiler_identity",
+                "current compiler bundle omits its reviewed semantic identity",
+            )
+        })?;
+        let contracts = manifest
+            .compiler_input_contract_versions
+            .as_ref()
+            .ok_or_else(|| {
+                mismatch(
+                    "$.manifest.compiler_input_contract_versions",
+                    "current compiler bundle omits its semantic contract inventory",
+                )
+            })?;
+        CompilerReviewIdentity {
+            compiler_version: manifest.compiler_version.clone(),
+            semantic_profile: identity.semantic_profile.clone(),
+            compiler_inputs_schema: contracts.compiler_inputs.clone(),
+            contract_versions_content_hash: crate::native_hash::sha256_hex(
+                &canonical_json_bytes(contracts).expect("typed compiler contracts serialize"),
+            ),
+        }
+    } else {
+        legacy_compiler_review_identity_v0()
+    };
+    if manifest_compiler.semantic_profile != binding.compiler_semantic_profile
+        || manifest_compiler.compiler_inputs_schema != binding.compiler_inputs_schema
+        || manifest_compiler.contract_versions_content_hash
+            != binding.compiler_contract_versions_content_hash
+    {
+        return Err(mismatch(
+            "$.manifest.compiler_identity",
+            "bundle compiler semantics differ from the accepted topology review",
         ));
     }
     if manifest.case_space_id != binding.case_space_id
@@ -692,29 +1386,45 @@ pub fn reviewed_compilation_mode(
         .expect("canonical_review validates review_id")
         .to_owned();
 
-    Ok(CompilationMode::Reviewed(ReviewedTopologyBinding {
-        claim_cell_id: claim_cell_id.to_owned(),
-        review_id,
-        topology_content_hash: target.topology_content_hash.clone(),
-        policy_manifest_content_hash: target.policy_manifest_content_hash.clone(),
-        case_space_id: target.case_space_id.to_string(),
-        // The reviewer observed the topology at `observed_base_revision_id`,
-        // retained inside the canonical target. Deployment starts from the
-        // review morphism's target revision, where that acceptance actually
-        // exists; using the observed predecessor would generate a plan that
-        // the current ledger immediately rejects as stale.
-        base_revision_id: latest.0.target_revision_id.to_string(),
-        expansion_proposal_id: target
-            .expansion_proposal_id
-            .as_ref()
-            .map(ToString::to_string),
-    }))
+    Ok(CompilationMode::Reviewed(Box::new(
+        ReviewedTopologyBinding {
+            claim_cell_id: claim_cell_id.to_owned(),
+            review_id,
+            topology_content_hash: target.topology_content_hash.clone(),
+            policy_manifest_content_hash: target.policy_manifest_content_hash.clone(),
+            case_space_id: target.case_space_id.to_string(),
+            // The reviewer observed the topology at `observed_base_revision_id`,
+            // retained inside the canonical target. Deployment starts from the
+            // review morphism's target revision, where that acceptance actually
+            // exists; using the observed predecessor would generate a plan that
+            // the current ledger immediately rejects as stale.
+            base_revision_id: latest.0.target_revision_id.to_string(),
+            expansion_proposal_id: target
+                .expansion_proposal_id
+                .as_ref()
+                .map(ToString::to_string),
+            compiler_version: target.compiler_version.clone(),
+            compiler_semantic_profile: target.compiler_semantic_profile.clone(),
+            compiler_inputs_schema: target.compiler_inputs_schema.clone(),
+            compiler_contract_versions_content_hash: target
+                .compiler_contract_versions_content_hash
+                .clone(),
+        },
+    )))
 }
 
 /// Compile a topology without mutating or accepting any CaseGraphen state.
 pub fn compile_execution_topology(
     topology: &ExecutionTopology,
     request: &CompilerRequest,
+) -> Result<DeploymentBundle, Box<CompilerReport>> {
+    compile_execution_topology_with_profile(topology, request, CompilerProfile::V1)
+}
+
+fn compile_execution_topology_with_profile(
+    topology: &ExecutionTopology,
+    request: &CompilerRequest,
+    profile: CompilerProfile,
 ) -> Result<DeploymentBundle, Box<CompilerReport>> {
     let canonical_topology = canonical_execution_topology(topology)
         .expect("typed execution topology serializes deterministically");
@@ -727,7 +1437,7 @@ pub fn compile_execution_topology(
         mode_report_fields(&request.mode);
     let mut report = CompilerReport {
         schema: COMPILER_REPORT_SCHEMA,
-        compiler_version: GRAPH_COMPILER_VERSION,
+        compiler_version: profile.version(),
         status: CompilerStatus::Refused,
         mode: mode_name.to_owned(),
         target: request.target,
@@ -773,7 +1483,7 @@ pub fn compile_execution_topology(
     required_request_field(&request.case_space_id, "$.case_space_id", &mut report);
     required_request_field(&request.base_revision_id, "$.base_revision_id", &mut report);
     required_request_field(&request.plan_id, "$.plan_id", &mut report);
-    validate_reviewed_binding(request, &topology_hash, &mut report);
+    validate_reviewed_binding(request, &topology_hash, profile, &mut report);
     validate_reviewed_policy_binding(topology, request, &topology_hash, &mut report);
     validate_policy_documents(topology, request, &mut report);
     let mappings = validate_plan_mappings(topology, request, &mut report);
@@ -783,17 +1493,19 @@ pub fn compile_execution_topology(
         return Err(Box::new(report));
     }
 
-    let plan = build_execution_plan(topology, request, &mappings).map_err(|finding| {
-        report.unsupported_semantics.push(finding);
-        sort_report(&mut report);
-        Box::new(report.clone())
-    })?;
+    let plan = build_execution_plan(topology, request, &mappings, profile.version()).map_err(
+        |finding| {
+            report.unsupported_semantics.push(finding);
+            sort_report(&mut report);
+            Box::new(report.clone())
+        },
+    )?;
     debug_assert_eq!(plan.review_status, ReviewStatus::Unreviewed);
 
     let mut artifact_values = build_artifact_values(topology, request, &analysis, &plan, &report);
     artifact_values.insert(
         "compiler.inputs.json",
-        serde_json::to_value(retained_compiler_inputs(request)).expect("compiler inputs serialize"),
+        retained_compiler_inputs_value(request, profile),
     );
     let mut artifacts = Vec::new();
     for (path, value) in artifact_values {
@@ -817,7 +1529,10 @@ pub fn compile_execution_topology(
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
     let manifest = BundleManifest {
         schema: DEPLOYMENT_BUNDLE_SCHEMA.to_owned(),
-        compiler_version: GRAPH_COMPILER_VERSION.to_owned(),
+        compiler_version: profile.version().to_owned(),
+        compiler_identity: (profile == CompilerProfile::V1).then(current_compiler_identity),
+        compiler_input_contract_versions: (profile == CompilerProfile::V1)
+            .then(current_compiler_contract_versions),
         topology_id: topology.topology_id.clone(),
         topology_content_hash: topology_hash,
         case_space_id: request.case_space_id.clone(),
@@ -855,10 +1570,10 @@ pub fn compile_execution_topology(
     })
 }
 
-fn retained_compiler_inputs(request: &CompilerRequest) -> CompilerInputsArtifact {
-    let mode = match &request.mode {
-        CompilationMode::Proposal => RetainedCompilationMode::Proposal,
-        CompilationMode::Reviewed(binding) => RetainedCompilationMode::Reviewed {
+fn retained_compilation_mode_v0(request: &CompilerRequest) -> RetainedCompilationModeV0 {
+    match &request.mode {
+        CompilationMode::Proposal => RetainedCompilationModeV0::Proposal,
+        CompilationMode::Reviewed(binding) => RetainedCompilationModeV0::Reviewed {
             claim_cell_id: binding.claim_cell_id.clone(),
             review_id: binding.review_id.clone(),
             topology_content_hash: binding.topology_content_hash.clone(),
@@ -867,21 +1582,66 @@ fn retained_compiler_inputs(request: &CompilerRequest) -> CompilerInputsArtifact
             base_revision_id: binding.base_revision_id.clone(),
             expansion_proposal_id: binding.expansion_proposal_id.clone(),
         },
-    };
+    }
+}
+
+fn retained_compilation_mode_v1(request: &CompilerRequest) -> RetainedCompilationModeV1 {
+    match &request.mode {
+        CompilationMode::Proposal => RetainedCompilationModeV1::Proposal,
+        CompilationMode::Reviewed(binding) => {
+            RetainedCompilationModeV1::Reviewed(Box::new(RetainedReviewedCompilationV1 {
+                claim_cell_id: binding.claim_cell_id.clone(),
+                review_id: binding.review_id.clone(),
+                topology_content_hash: binding.topology_content_hash.clone(),
+                policy_manifest_content_hash: binding.policy_manifest_content_hash.clone(),
+                case_space_id: binding.case_space_id.clone(),
+                base_revision_id: binding.base_revision_id.clone(),
+                expansion_proposal_id: binding.expansion_proposal_id.clone(),
+                compiler_version: binding.compiler_version.clone(),
+                compiler_semantic_profile: binding.compiler_semantic_profile.clone(),
+                compiler_inputs_schema: binding.compiler_inputs_schema.clone(),
+                compiler_contract_versions_content_hash: binding
+                    .compiler_contract_versions_content_hash
+                    .clone(),
+            }))
+        }
+    }
+}
+
+fn retained_compiler_inputs_value(request: &CompilerRequest, profile: CompilerProfile) -> Value {
     let mut node_plan_mappings = request.node_plan_mappings.clone();
     node_plan_mappings.sort_by(|left, right| left.node_id.cmp(&right.node_id));
-    CompilerInputsArtifact {
-        schema: COMPILER_INPUTS_SCHEMA.to_owned(),
-        compiler_version: GRAPH_COMPILER_VERSION.to_owned(),
-        mode,
-        target: request.target,
-        case_space_id: request.case_space_id.clone(),
-        base_revision_id: request.base_revision_id.clone(),
-        plan_id: request.plan_id.clone(),
-        node_plan_mappings,
-        verification_policies: request.verification_policies.clone(),
-        budget_policies: request.budget_policies.clone(),
-        expansion_policies: request.expansion_policies.clone(),
+    match profile {
+        CompilerProfile::V0 => serde_json::to_value(CompilerInputsArtifactV0 {
+            schema: profile.inputs_schema().to_owned(),
+            compiler_version: profile.version().to_owned(),
+            mode: retained_compilation_mode_v0(request),
+            target: request.target,
+            case_space_id: request.case_space_id.clone(),
+            base_revision_id: request.base_revision_id.clone(),
+            plan_id: request.plan_id.clone(),
+            node_plan_mappings,
+            verification_policies: request.verification_policies.clone(),
+            budget_policies: request.budget_policies.clone(),
+            expansion_policies: request.expansion_policies.clone(),
+        })
+        .expect("legacy compiler inputs serialize"),
+        CompilerProfile::V1 => serde_json::to_value(CompilerInputsArtifactV1 {
+            schema: profile.inputs_schema().to_owned(),
+            compiler_version: profile.version().to_owned(),
+            compiler_identity: current_compiler_identity(),
+            contract_versions: current_compiler_contract_versions(),
+            mode: retained_compilation_mode_v1(request),
+            target: request.target,
+            case_space_id: request.case_space_id.clone(),
+            base_revision_id: request.base_revision_id.clone(),
+            plan_id: request.plan_id.clone(),
+            node_plan_mappings,
+            verification_policies: request.verification_policies.clone(),
+            budget_policies: request.budget_policies.clone(),
+            expansion_policies: request.expansion_policies.clone(),
+        })
+        .expect("compiler inputs serialize"),
     }
 }
 
@@ -922,10 +1682,15 @@ fn validate_reviewed_policy_binding(
 fn validate_reviewed_binding(
     request: &CompilerRequest,
     topology_hash: &str,
+    profile: CompilerProfile,
     report: &mut CompilerReport,
 ) {
     let CompilationMode::Reviewed(binding) = &request.mode else {
         return;
+    };
+    let compiler = match profile {
+        CompilerProfile::V0 => legacy_compiler_review_identity_v0(),
+        CompilerProfile::V1 => current_compiler_review_identity(),
     };
     for (matches, code, location, detail) in [
         (
@@ -945,6 +1710,31 @@ fn validate_reviewed_binding(
             "stale_reviewed_base_revision",
             "$.base_revision_id",
             "request must name the exact revision observed by the accepted review",
+        ),
+        (
+            binding.compiler_version == compiler.compiler_version,
+            "reviewed_compiler_version_mismatch",
+            "$.mode.compiler_version",
+            "accepted topology review authorizes a different exact compiler profile",
+        ),
+        (
+            binding.compiler_semantic_profile == compiler.semantic_profile,
+            "reviewed_compiler_semantic_profile_mismatch",
+            "$.mode.compiler_semantic_profile",
+            "accepted topology review authorizes different compiler semantics",
+        ),
+        (
+            binding.compiler_inputs_schema == compiler.compiler_inputs_schema,
+            "reviewed_compiler_inputs_schema_mismatch",
+            "$.mode.compiler_inputs_schema",
+            "accepted topology review authorizes a different retained input contract",
+        ),
+        (
+            binding.compiler_contract_versions_content_hash
+                == compiler.contract_versions_content_hash,
+            "reviewed_compiler_contract_versions_mismatch",
+            "$.mode.compiler_contract_versions_content_hash",
+            "accepted topology review authorizes a different semantic contract inventory",
         ),
     ] {
         if !matches {
@@ -1149,6 +1939,7 @@ fn build_execution_plan(
     topology: &ExecutionTopology,
     request: &CompilerRequest,
     mappings: &BTreeMap<&str, &NodePlanMapping>,
+    compiler_version: &str,
 ) -> Result<ExecutionPlan, CompilerFinding> {
     let mut nodes = topology.nodes.iter().collect::<Vec<_>>();
     nodes.sort_by(|left, right| left.node_id.cmp(&right.node_id));
@@ -1172,7 +1963,7 @@ fn build_execution_plan(
             "source": {"kind": "code", "title": "CaseGraphen graph compiler proposal"},
             "confidence": 1.0,
             "review_status": "unreviewed",
-            "extraction_method": GRAPH_COMPILER_VERSION
+            "extraction_method": compiler_version
         },
         "review_status": "unreviewed",
         "metadata": {}
@@ -1579,6 +2370,27 @@ mod tests {
         bundle.manifest_content_hash = crate::native_hash::sha256_hex(&bundle.manifest_bytes);
     }
 
+    fn replace_artifact_and_readdress(bundle: &mut DeploymentBundle, path: &str, value: &Value) {
+        let artifact = bundle
+            .artifacts
+            .iter_mut()
+            .find(|artifact| artifact.path == path)
+            .expect("test artifact exists");
+        artifact.bytes = canonical_json_bytes(value).expect("test value serializes");
+        artifact.content_hash = crate::native_hash::sha256_hex(&artifact.bytes);
+        let entry = bundle
+            .manifest
+            .artifacts
+            .iter_mut()
+            .find(|entry| entry.path == path)
+            .expect("manifest entry exists");
+        entry.content_hash = artifact.content_hash.clone();
+        entry.byte_length = artifact.bytes.len() as u64;
+        bundle.manifest_bytes =
+            canonical_json_bytes(&bundle.manifest).expect("manifest serializes");
+        bundle.manifest_content_hash = crate::native_hash::sha256_hex(&bundle.manifest_bytes);
+    }
+
     #[test]
     fn self_consistent_artifact_substitution_cannot_mint_compiler_provenance() {
         let topology = topology();
@@ -1697,7 +2509,8 @@ mod tests {
         let topology_hash = execution_topology_content_hash(&topology).unwrap();
         let mut request = request(&topology);
         let policy_manifest_content_hash = request_policy_manifest_hash(&topology, &request);
-        request.mode = CompilationMode::Reviewed(ReviewedTopologyBinding {
+        let compiler = current_compiler_review_identity();
+        request.mode = CompilationMode::Reviewed(Box::new(ReviewedTopologyBinding {
             claim_cell_id: "evidence:reviewed-topology".to_owned(),
             review_id: "review:accepted-topology".to_owned(),
             topology_content_hash: topology_hash,
@@ -1705,9 +2518,39 @@ mod tests {
             case_space_id: request.case_space_id.clone(),
             base_revision_id: request.base_revision_id.clone(),
             expansion_proposal_id: None,
-        });
+            compiler_version: compiler.compiler_version,
+            compiler_semantic_profile: compiler.semantic_profile,
+            compiler_inputs_schema: compiler.compiler_inputs_schema,
+            compiler_contract_versions_content_hash: compiler.contract_versions_content_hash,
+        }));
         let reviewed = compile_execution_topology(&topology, &request).expect("reviewed bundle");
         assert_eq!(reviewed.manifest.mode, "reviewed");
+        let retained_inputs: Value = serde_json::from_slice(
+            &reviewed
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path == "compiler.inputs.json")
+                .expect("reviewed compiler inputs")
+                .bytes,
+        )
+        .expect("reviewed compiler inputs parse");
+        assert_eq!(retained_inputs["mode"]["kind"], "reviewed");
+        assert_eq!(
+            retained_inputs["mode"]["compiler_version"],
+            GRAPH_COMPILER_VERSION
+        );
+
+        if let CompilationMode::Reviewed(binding) = &mut request.mode {
+            binding.compiler_version = LEGACY_GRAPH_COMPILER_VERSION_V0.to_owned();
+        }
+        let profile_substitution = compile_execution_topology(&topology, &request).unwrap_err();
+        assert!(profile_substitution
+            .unsupported_semantics
+            .iter()
+            .any(|finding| finding.code == "reviewed_compiler_version_mismatch"));
+        if let CompilationMode::Reviewed(binding) = &mut request.mode {
+            binding.compiler_version = GRAPH_COMPILER_VERSION.to_owned();
+        }
 
         request
             .budget_policies
@@ -1736,7 +2579,8 @@ mod tests {
         let request = request(&reviewed_topology);
         let policy_manifest_content_hash =
             request_policy_manifest_hash(&reviewed_topology, &request);
-        let mode = CompilationMode::Reviewed(ReviewedTopologyBinding {
+        let compiler = current_compiler_review_identity();
+        let mode = CompilationMode::Reviewed(Box::new(ReviewedTopologyBinding {
             claim_cell_id: "evidence:reviewed-expansion".to_owned(),
             review_id: "review:accepted-expansion".to_owned(),
             topology_content_hash: topology_hash,
@@ -1744,7 +2588,11 @@ mod tests {
             case_space_id: reviewed_topology.case_space_id.clone(),
             base_revision_id: "revision:accepted-expansion".to_owned(),
             expansion_proposal_id: Some(proposal_id.to_owned()),
-        });
+            compiler_version: compiler.compiler_version,
+            compiler_semantic_profile: compiler.semantic_profile,
+            compiler_inputs_schema: compiler.compiler_inputs_schema,
+            compiler_contract_versions_content_hash: compiler.contract_versions_content_hash,
+        }));
         assert!(crate::dynamic_expansion::accepted_expansion_review_binding(
             &mode,
             proposal_id,
@@ -1785,5 +2633,224 @@ mod tests {
             .iter()
             .any(|finding| finding.code.starts_with("lint_contract_")
                 || finding.code == "lint_dependency_cycle"));
+    }
+
+    #[test]
+    fn current_bundle_binds_exact_compiler_identity_contracts_and_metrics() {
+        let topology = topology();
+        let request = request(&topology);
+        let bundle = compile_execution_topology(&topology, &request).expect("compile current");
+        assert_eq!(bundle.manifest.compiler_version, GRAPH_COMPILER_VERSION);
+        assert_eq!(
+            bundle.manifest.compiler_identity,
+            Some(current_compiler_identity())
+        );
+        assert_eq!(
+            bundle.manifest.compiler_input_contract_versions,
+            Some(current_compiler_contract_versions())
+        );
+        let inputs: Value = serde_json::from_slice(
+            &bundle
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path == "compiler.inputs.json")
+                .expect("compiler inputs")
+                .bytes,
+        )
+        .expect("compiler inputs parse");
+        assert_eq!(inputs["schema"], COMPILER_INPUTS_SCHEMA);
+        assert_eq!(
+            inputs["compiler_identity"],
+            serde_json::to_value(current_compiler_identity()).unwrap()
+        );
+        assert_eq!(
+            inputs["contract_versions"],
+            serde_json::to_value(current_compiler_contract_versions()).unwrap()
+        );
+
+        let expected_hash = bundle.manifest_content_hash.clone();
+        let (_, metrics) = verify_deployment_bundle_with_metrics(bundle, &expected_hash)
+            .expect("current exact profile verifies");
+        assert_eq!(metrics.compiler_version, GRAPH_COMPILER_VERSION);
+        assert_eq!(metrics.topology_node_count, topology.nodes.len() as u64);
+        assert_eq!(metrics.topology_edge_count, topology.edges.len() as u64);
+        assert_eq!(metrics.recompile_count, 1);
+        assert!(metrics.verified_input_bytes > 0);
+    }
+
+    #[test]
+    fn exact_historical_profile_verifies_and_only_proposes_reviewed_migration() {
+        let topology = topology();
+        let request = request(&topology);
+        let legacy =
+            compile_execution_topology_with_profile(&topology, &request, CompilerProfile::V0)
+                .expect("compile retained profile zero");
+        assert_eq!(
+            legacy.manifest.compiler_version,
+            LEGACY_GRAPH_COMPILER_VERSION_V0
+        );
+        assert!(legacy.manifest.compiler_identity.is_none());
+        assert!(legacy.manifest.compiler_input_contract_versions.is_none());
+        assert_eq!(
+            legacy.manifest_content_hash,
+            "728608ca422c62ea9667d173e806315dc2dc911c85ac5cc8651dc4e829e64898",
+            "the retained profile-0 implementation changed; preserve its exact historical output or add an explicit reviewed compatibility decision"
+        );
+        let legacy_hash = legacy.manifest_content_hash.clone();
+        verify_deployment_bundle(legacy.clone(), &legacy_hash)
+            .expect("historical exact compiler remains verifiable");
+
+        let first = propose_deployment_bundle_migration(legacy.clone(), &legacy_hash)
+            .expect("historical migration proposal");
+        let second = propose_deployment_bundle_migration(legacy, &legacy_hash)
+            .expect("migration proposal is deterministic");
+        assert_eq!(first, second);
+        assert_eq!(
+            first.source_compiler_identity.compiler_version,
+            LEGACY_GRAPH_COMPILER_VERSION_V0
+        );
+        assert_eq!(
+            first.target_compiler_identity.compiler_version,
+            GRAPH_COMPILER_VERSION
+        );
+        assert!(!first.accepted);
+        assert!(first.requires_review);
+        assert!(!first.changed_artifact_paths.is_empty());
+        assert!(first.semantic_differences.len() >= 4);
+        assert_eq!(first.proposal_content_hash.len(), 64);
+        verify_deployment_bundle_migration_proposal(&first)
+            .expect("exact migration proposal content address verifies");
+        let mut substituted = first;
+        substituted
+            .changed_artifact_paths
+            .push("forged.json".to_owned());
+        assert_eq!(
+            verify_deployment_bundle_migration_proposal(&substituted)
+                .expect_err("proposal substitution must fail closed")
+                .code,
+            "deployment_bundle_migration_proposal_hash_mismatch"
+        );
+        let mut identity_substitution = second;
+        identity_substitution
+            .source_compiler_identity
+            .compiler_identity
+            .profile_version = 99;
+        identity_substitution.proposal_content_hash =
+            deployment_bundle_migration_proposal_content_hash(&identity_substitution);
+        assert_eq!(
+            verify_deployment_bundle_migration_proposal(&identity_substitution)
+                .expect_err("re-addressed identity substitution must fail closed")
+                .code,
+            "unsupported_compiler_migration_identity"
+        );
+    }
+
+    #[test]
+    fn retained_profile_zero_bundle_corpus_is_byte_exact() {
+        let mut changed_topology = topology();
+        changed_topology.nodes[0].purpose = "retained alternate workload".to_owned();
+        let mut changed_request = request(&changed_topology);
+        changed_request.plan_id = "plan:retained-alternate".to_owned();
+        let alternate = compile_execution_topology_with_profile(
+            &changed_topology,
+            &changed_request,
+            CompilerProfile::V0,
+        )
+        .expect("compile alternate retained profile zero");
+        assert_eq!(
+            alternate.manifest_content_hash,
+            "7b05e073fe22ad33721213bfdf97b78e5263ba04227b950244b539c27522cb8f",
+            "alternate profile-0 bundle bytes drifted"
+        );
+
+        let reviewed_topology = topology();
+        let mut reviewed_request = request(&reviewed_topology);
+        let compiler = legacy_compiler_review_identity_v0();
+        reviewed_request.mode = CompilationMode::Reviewed(Box::new(ReviewedTopologyBinding {
+            claim_cell_id: "evidence:retained-reviewed".to_owned(),
+            review_id: "review:retained-reviewed".to_owned(),
+            topology_content_hash: execution_topology_content_hash(&reviewed_topology).unwrap(),
+            policy_manifest_content_hash: request_policy_manifest_hash(
+                &reviewed_topology,
+                &reviewed_request,
+            ),
+            case_space_id: reviewed_request.case_space_id.clone(),
+            base_revision_id: reviewed_request.base_revision_id.clone(),
+            expansion_proposal_id: None,
+            compiler_version: compiler.compiler_version,
+            compiler_semantic_profile: compiler.semantic_profile,
+            compiler_inputs_schema: compiler.compiler_inputs_schema,
+            compiler_contract_versions_content_hash: compiler.contract_versions_content_hash,
+        }));
+        let reviewed = compile_execution_topology_with_profile(
+            &reviewed_topology,
+            &reviewed_request,
+            CompilerProfile::V0,
+        )
+        .expect("compile reviewed retained profile zero");
+        assert_eq!(
+            reviewed.manifest_content_hash,
+            "ea4ed3e9c2b082242e24bad2e94160529934ce0db3c418866c8ca6a6937f178e",
+            "reviewed profile-0 bundle bytes drifted"
+        );
+    }
+
+    #[test]
+    fn compiler_identity_contract_and_future_version_substitution_fail_closed() {
+        let topology = topology();
+        let request = request(&topology);
+        let original = compile_execution_topology(&topology, &request).expect("compile current");
+
+        let mut contract_substitution = original.clone();
+        let mut inputs: Value = serde_json::from_slice(
+            &contract_substitution
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path == "compiler.inputs.json")
+                .expect("compiler inputs")
+                .bytes,
+        )
+        .unwrap();
+        inputs["contract_versions"]["execution_plan"] = json!("unsupported.plan.v999");
+        replace_artifact_and_readdress(&mut contract_substitution, "compiler.inputs.json", &inputs);
+        let substituted_hash = contract_substitution.manifest_content_hash.clone();
+        assert_eq!(
+            verify_deployment_bundle(contract_substitution, &substituted_hash)
+                .expect_err("contract substitution must fail closed")
+                .code,
+            "deployment_bundle_semantic_mismatch"
+        );
+
+        let mut future = original;
+        let mut future_inputs: Value = serde_json::from_slice(
+            &future
+                .artifacts
+                .iter()
+                .find(|artifact| artifact.path == "compiler.inputs.json")
+                .expect("compiler inputs")
+                .bytes,
+        )
+        .unwrap();
+        future_inputs["compiler_version"] = json!("casegraphen-graph-compiler/999");
+        future.manifest.compiler_version = "casegraphen-graph-compiler/999".to_owned();
+        replace_artifact_and_readdress(&mut future, "compiler.inputs.json", &future_inputs);
+        let future_hash = future.manifest_content_hash.clone();
+        assert_eq!(
+            verify_deployment_bundle(future, &future_hash)
+                .expect_err("future identity cannot be silently interpreted")
+                .code,
+            "unsupported_compiler_identity"
+        );
+    }
+
+    #[test]
+    fn current_profile_never_emits_a_noop_migration_authority() {
+        let topology = topology();
+        let request = request(&topology);
+        let current = compile_execution_topology(&topology, &request).expect("compile current");
+        let current_hash = current.manifest_content_hash.clone();
+        let finding = propose_deployment_bundle_migration(current, &current_hash)
+            .expect_err("current profile migration is not an authority shortcut");
+        assert_eq!(finding.code, "deployment_bundle_migration_not_required");
     }
 }

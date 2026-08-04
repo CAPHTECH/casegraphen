@@ -7,5 +7,9 @@
   "observed_base_revision_id": "revision:topology-proposed",
   "claim_cell_id": "evidence:execution-topology",
   "artifact_id": "artifact:sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "policy_manifest_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  "policy_manifest_content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "compiler_version": "casegraphen-graph-compiler/1",
+  "compiler_semantic_profile": "casegraphen.experimental.graph_compiler.semantic_profile.v1",
+  "compiler_inputs_schema": "casegraphen.experimental.graph_compiler.inputs.v1",
+  "compiler_contract_versions_content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 }

@@ -18,7 +18,10 @@ use casegraphen::{
     mcp_stdio::{serve_stdio, McpStdioServer},
     native_eval::evaluate_native_case,
     native_store::NativeCaseStore,
-    resource_allocator::{AtomicResourceAllocator, ResourceAllocatorConfiguration},
+    resource_allocator::{
+        validate_resource_allocator_retention_policy, AtomicResourceAllocator,
+        ResourceAllocatorConfiguration, ResourceAllocatorRetentionPolicy,
+    },
     resource_protocol::{
         reconcile_resource_allocations, ReservationDispositionAssertion, ResourceDeclaration,
         ResourceReservation, RuntimeResourceAllocation,
@@ -32,12 +35,19 @@ use casegraphen::{
         RuntimeStreamEvent, StreamingReconciliationInput,
     },
     topology_redesign::{propose_redesign, RedesignProposalInput},
+    verification_policy::{
+        derive_native_cli_review_verifier_proof, derive_native_cli_run_producer_proof,
+        observe_case_artifact, observe_case_execution_trace, reconcile_verification_policy,
+        AnchoredExecutionTraceBytes, NativeCliRunLineageDerivation, ToolObservedAnchorProof,
+        VerificationPolicy,
+    },
 };
 use higher_graphen_core::Id;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     env, fs, io,
     path::{Path, PathBuf},
 };
@@ -48,6 +58,8 @@ struct HostConfiguration {
     artifact_path: PathBuf,
     resource_journal_path: PathBuf,
     resource_configuration_path: Option<PathBuf>,
+    resource_retention_policy_path: Option<PathBuf>,
+    resource_checkpoint_interval: Option<u64>,
     authorization_token: String,
 }
 
@@ -55,6 +67,45 @@ struct OperationalDelegate {
     store_path: PathBuf,
     artifact_path: PathBuf,
     allocator: AtomicResourceAllocator,
+    resource_retention_policy: Option<ResourceAllocatorRetentionPolicy>,
+    resource_checkpoint_interval: Option<u64>,
+}
+
+impl OperationalDelegate {
+    fn maintain_resource_journal(
+        &self,
+        generation: u64,
+        replayed: bool,
+    ) -> Result<Value, ControlPlaneRefusal> {
+        let (Some(policy), Some(interval)) = (
+            self.resource_retention_policy.as_ref(),
+            self.resource_checkpoint_interval,
+        ) else {
+            return Ok(Value::Null);
+        };
+        if replayed || generation == 0 || generation % interval != 0 {
+            return Ok(Value::Null);
+        }
+        let checkpoint = self
+            .allocator
+            .create_checkpoint()
+            .map_err(allocator_refusal)?;
+        let proof = self
+            .allocator
+            .verify_latest_checkpoint()
+            .map_err(allocator_refusal)?;
+        let compaction = self
+            .allocator
+            .compact(policy, &proof)
+            .map_err(allocator_refusal)?;
+        Ok(json!({
+            "checkpoint_content_hash": checkpoint.checkpoint_content_hash,
+            "checkpoint_sequence": checkpoint.last_event_sequence,
+            "compaction_content_hash": compaction.record.compaction_content_hash,
+            "archived_event_count": compaction.archived_event_count,
+            "active_event_count": compaction.active_event_count
+        }))
+    }
 }
 
 #[derive(Deserialize)]
@@ -146,6 +197,40 @@ struct StreamingRunInput {
     resource_expectations: Vec<RuntimeResourceExpectation>,
     runtime_jsonl: String,
     run_closed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerificationLineageInput {
+    case_space_id: String,
+    claim_cell_id: String,
+    policy: VerificationPolicy,
+    producer_files: RetainedLineageFiles,
+    review_morphism_ids: Vec<String>,
+    #[serde(default)]
+    anchors: Vec<VerificationAnchorInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedLineageFiles {
+    worker_report_path: String,
+    execution_trace_path: String,
+    stdout_path: String,
+    stderr_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum VerificationAnchorInput {
+    ExecutionTrace {
+        anchor_id: String,
+    },
+    CaseArtifact {
+        anchor_id: String,
+        artifact_id: String,
+        artifact_path: String,
+    },
 }
 
 impl DecisionDelegate for OperationalDelegate {
@@ -311,6 +396,149 @@ impl DecisionDelegate for OperationalDelegate {
                 serde_json::to_value(report)
                     .map_err(|error| refusal("serialization_failure", &error.to_string()))
             }
+            ControlPlaneTool::ReconcileVerificationLineage => {
+                let input: VerificationLineageInput = payload_value(
+                    &request.payload,
+                    "verification_lineage",
+                )?;
+                let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
+                    refusal(
+                        "explicit_revision_required",
+                        "verification lineage reconciliation requires the client-observed revision",
+                    )
+                })?;
+                let case_space_id = safe_id(&input.case_space_id)?;
+                let replay = NativeCaseStore::new(self.store_path.clone())
+                    .replay_current_case_space(&case_space_id)
+                    .map_err(store_refusal)?;
+                if replay.current_revision_id.as_str() != expected_revision {
+                    return Err(ControlPlaneRefusal::stale(
+                        expected_revision,
+                        replay.current_revision_id.to_string(),
+                    ));
+                }
+
+                let report_bytes = read_confined_artifact(
+                    &self.artifact_path,
+                    &input.producer_files.worker_report_path,
+                )?;
+                let trace_bytes = read_confined_artifact(
+                    &self.artifact_path,
+                    &input.producer_files.execution_trace_path,
+                )?;
+                let stdout_bytes = read_confined_artifact(
+                    &self.artifact_path,
+                    &input.producer_files.stdout_path,
+                )?;
+                let stderr_bytes = read_confined_artifact(
+                    &self.artifact_path,
+                    &input.producer_files.stderr_path,
+                )?;
+                let producer = derive_native_cli_run_producer_proof(
+                    NativeCliRunLineageDerivation {
+                        case_space: &replay.case_space,
+                        claim_cell_id: &input.claim_cell_id,
+                        worker_report_bytes: &report_bytes,
+                        execution_trace_bytes: &trace_bytes,
+                        stdout_bytes: &stdout_bytes,
+                        stderr_bytes: &stderr_bytes,
+                    },
+                )
+                .map_err(|findings| {
+                    findings_refusal("verification_producer_derivation_refused", &findings)
+                })?;
+
+                let mut review_ids = BTreeSet::new();
+                let mut verifiers = Vec::with_capacity(input.review_morphism_ids.len());
+                for review_morphism_id in &input.review_morphism_ids {
+                    if review_morphism_id.is_empty()
+                        || !review_ids.insert(review_morphism_id.as_str())
+                    {
+                        return Err(refusal(
+                            "duplicate_or_empty_review_morphism_id",
+                            "review morphism ids must be unique and non-empty; one review cannot satisfy multiple quorum slots",
+                        ));
+                    }
+                    verifiers.push(
+                        derive_native_cli_review_verifier_proof(
+                            &replay.case_space,
+                            &producer,
+                            review_morphism_id,
+                        )
+                        .map_err(|findings| {
+                            findings_refusal(
+                                "verification_verifier_derivation_refused",
+                                &findings,
+                            )
+                        })?,
+                    );
+                }
+
+                let mut anchor_ids = BTreeSet::new();
+                let mut anchors: Vec<ToolObservedAnchorProof> =
+                    Vec::with_capacity(input.anchors.len());
+                for anchor in input.anchors {
+                    let anchor_id = match &anchor {
+                        VerificationAnchorInput::ExecutionTrace { anchor_id }
+                        | VerificationAnchorInput::CaseArtifact { anchor_id, .. } => anchor_id,
+                    };
+                    if anchor_id.is_empty() || !anchor_ids.insert(anchor_id.clone()) {
+                        return Err(refusal(
+                            "duplicate_or_empty_anchor_id",
+                            "tool-observed anchor ids must be unique and non-empty",
+                        ));
+                    }
+                    let proof = match anchor {
+                        VerificationAnchorInput::ExecutionTrace { anchor_id } => {
+                            observe_case_execution_trace(
+                                &replay.case_space,
+                                &anchor_id,
+                                AnchoredExecutionTraceBytes {
+                                    trace: &trace_bytes,
+                                    worker_report: &report_bytes,
+                                    stdout: &stdout_bytes,
+                                    stderr: &stderr_bytes,
+                                },
+                            )
+                        }
+                        VerificationAnchorInput::CaseArtifact {
+                            anchor_id,
+                            artifact_id,
+                            artifact_path,
+                        } => {
+                            let artifact_bytes =
+                                read_confined_artifact(&self.artifact_path, &artifact_path)?;
+                            observe_case_artifact(
+                                &replay.case_space,
+                                &anchor_id,
+                                &artifact_id,
+                                &artifact_bytes,
+                            )
+                        }
+                    }
+                    .map_err(|findings| {
+                        findings_refusal("verification_anchor_derivation_refused", &findings)
+                    })?;
+                    anchors.push(proof);
+                }
+
+                let result = reconcile_verification_policy(
+                    &replay.case_space,
+                    &input.policy,
+                    &producer,
+                    &verifiers,
+                    &anchors,
+                );
+                Ok(json!({
+                    "case_space_id": input.case_space_id,
+                    "observed_revision_id": replay.current_revision_id,
+                    "result": result,
+                    "proofs_serialized": false,
+                    "read_only": true,
+                    "mutation_performed": false,
+                    "accepted": false
+                }))
+            }
             ControlPlaneTool::ReserveResources => {
                 let input: ResourceReservationInput = payload_value(&request.payload, "resource_request")?;
                 let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
@@ -346,6 +574,9 @@ impl DecisionDelegate for OperationalDelegate {
                     input.reservation,
                     &request.idempotency_key,
                 ).map_err(allocator_refusal)?;
+                let allocator_maintenance = self.maintain_resource_journal(
+                    outcome.snapshot.generation, outcome.replayed,
+                )?;
                 Ok(json!({
                     "topology_content_hash": execution_topology_content_hash(bundle.topology()).expect("typed topology hashes"),
                     "base_revision_id": request.base_revision_id,
@@ -353,6 +584,7 @@ impl DecisionDelegate for OperationalDelegate {
                     "allocator_generation": outcome.snapshot.generation,
                     "active_reservations": outcome.snapshot.active_reservations,
                     "replayed": outcome.replayed,
+                    "allocator_maintenance": allocator_maintenance,
                     "accepted_runtime_output": false
                 }))
             }
@@ -387,12 +619,16 @@ impl DecisionDelegate for OperationalDelegate {
                     input.assertion,
                     &request.idempotency_key,
                 ).map_err(allocator_refusal)?;
+                let allocator_maintenance = self.maintain_resource_journal(
+                    outcome.snapshot.generation, outcome.replayed,
+                )?;
                 Ok(json!({
                     "base_revision_id": request.base_revision_id,
                     "allocator_event": outcome.event,
                     "allocator_generation": outcome.snapshot.generation,
                     "active_reservations": outcome.snapshot.active_reservations,
                     "replayed": outcome.replayed,
+                    "allocator_maintenance": allocator_maintenance,
                     "accepted_runtime_output": false
                 }))
             }
@@ -714,6 +950,33 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, ControlPlaneRefusal> {
     Ok(path.to_path_buf())
 }
 
+/// Reads only a regular, non-symlink file whose resolved path remains beneath
+/// the configured artifact root. The bytes, rather than caller-supplied
+/// digests or proof fields, are passed to the canonical lineage constructors.
+fn read_confined_artifact(
+    artifact_root: &Path,
+    value: &str,
+) -> Result<Vec<u8>, ControlPlaneRefusal> {
+    let relative = safe_relative_path(value)?;
+    let canonical_root = fs::canonicalize(artifact_root).map_err(io_refusal)?;
+    let candidate = canonical_root.join(relative);
+    let metadata = fs::symlink_metadata(&candidate).map_err(io_refusal)?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(refusal(
+            "invalid_lineage_artifact_file",
+            "lineage artifact must be a regular non-symlink file",
+        ));
+    }
+    let canonical_candidate = fs::canonicalize(&candidate).map_err(io_refusal)?;
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return Err(refusal(
+            "lineage_artifact_outside_root",
+            "lineage artifact must resolve beneath the configured artifact root",
+        ));
+    }
+    fs::read(canonical_candidate).map_err(io_refusal)
+}
+
 fn persist_bundle(
     artifact_root: &Path,
     bundle: DeploymentBundle,
@@ -850,6 +1113,8 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
     let mut artifact_path = None;
     let mut resource_journal_path = None;
     let mut resource_configuration_path = None;
+    let mut resource_retention_policy_path = None;
+    let mut resource_checkpoint_interval = None;
     let mut token_env = None;
     let mut args = env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -862,6 +1127,18 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
             "--artifacts" => artifact_path = Some(PathBuf::from(value)),
             "--resource-journal" => resource_journal_path = Some(PathBuf::from(value)),
             "--resource-capacities" => resource_configuration_path = Some(PathBuf::from(value)),
+            "--resource-retention-policy" => {
+                resource_retention_policy_path = Some(PathBuf::from(value))
+            }
+            "--resource-checkpoint-interval" => {
+                let interval = value.parse::<u64>().map_err(|_| {
+                    "--resource-checkpoint-interval must be a positive integer".to_owned()
+                })?;
+                if interval == 0 {
+                    return Err("--resource-checkpoint-interval must be positive".to_owned());
+                }
+                resource_checkpoint_interval = Some(interval);
+            }
             "--auth-token-env" => token_env = Some(value),
             _ => return Err(format!("unsupported argument {flag}")),
         }
@@ -870,12 +1147,17 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
     let authorization_token = env::var(&token_env)
         .map_err(|_| format!("authorization token environment variable {token_env} is missing"))?;
     let artifact_path = artifact_path.ok_or("--artifacts is required")?;
+    if resource_retention_policy_path.is_some() != resource_checkpoint_interval.is_some() {
+        return Err("--resource-retention-policy and --resource-checkpoint-interval must be supplied together".to_owned());
+    }
     Ok(Some(HostConfiguration {
         state_path: state_path.ok_or("--state is required")?,
         store_path: store_path.ok_or("--store is required")?,
         resource_journal_path: resource_journal_path
             .unwrap_or_else(|| artifact_path.join("resource-allocator-journal")),
         resource_configuration_path,
+        resource_retention_policy_path,
+        resource_checkpoint_interval,
         artifact_path,
         authorization_token,
     }))
@@ -901,10 +1183,23 @@ fn main() -> io::Result<()> {
     let allocator =
         AtomicResourceAllocator::new(configuration.resource_journal_path, resource_configuration)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let resource_retention_policy = match &configuration.resource_retention_policy_path {
+        Some(path) => {
+            let policy =
+                serde_json::from_slice::<ResourceAllocatorRetentionPolicy>(&fs::read(path)?)
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            validate_resource_allocator_retention_policy(&policy)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+            Some(policy)
+        }
+        None => None,
+    };
     let delegate = OperationalDelegate {
         store_path: configuration.store_path,
         artifact_path: configuration.artifact_path,
         allocator,
+        resource_retention_policy,
+        resource_checkpoint_interval: configuration.resource_checkpoint_interval,
     };
     let mut server = McpStdioServer::new_durable_authenticated(
         delegate,

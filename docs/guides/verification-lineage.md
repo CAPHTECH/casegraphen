@@ -48,3 +48,43 @@ Generic external runtimes continue to use `derive_ledger_producer_proof` and
 `derive_ledger_verifier_proof` with exact `RuntimeNodeReport` and execution
 trace bytes. Do not mix the generic runtime contract with the native
 `WorkerReport` contract.
+
+## Operational MCP path
+
+Call `reconcile_verification_lineage` to use the native workflow without
+custom Rust. The configured artifact root must contain the retained run files;
+all paths are normal relative paths, and symlinks or paths resolving outside
+that root are refused.
+
+```json
+{
+  "request_id": "request:verification-lineage-1",
+  "idempotency_key": "verification-lineage:claim-1:revision-9",
+  "base_revision_id": "revision:9",
+  "payload": {
+    "verification_lineage": {
+      "case_space_id": "case-space:example",
+      "claim_cell_id": "evidence:worker-output",
+      "policy": { "schema": "casegraphen.experimental.verification_policy.v0" },
+      "producer_files": {
+        "worker_report_path": "runs/run-1/worker.report.json",
+        "execution_trace_path": "runs/run-1/execution.trace.json",
+        "stdout_path": "runs/run-1/stdout",
+        "stderr_path": "runs/run-1/stderr"
+      },
+      "review_morphism_ids": ["morphism:review-1"],
+      "anchors": [
+        { "kind": "execution_trace", "anchor_id": "test-execution" }
+      ]
+    }
+  }
+}
+```
+
+The abbreviated policy above only illustrates placement; submit a complete
+`verification_policy.v0` document. Review IDs and anchor IDs must be unique.
+The host replays `base_revision_id`, reads the exact bytes, and invokes the
+canonical opaque constructors. Its response deliberately contains
+`proofs_serialized: false`, `read_only: true`, `mutation_performed: false`, and
+`accepted: false`. A policy may be satisfied, but only a separate canonical
+review/mutation path can change evidence acceptance.

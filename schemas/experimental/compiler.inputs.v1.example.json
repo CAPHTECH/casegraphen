@@ -1,0 +1,29 @@
+{
+  "schema": "casegraphen.experimental.graph_compiler.inputs.v1",
+  "compiler_version": "casegraphen-graph-compiler/1",
+  "compiler_identity": {
+    "implementation": "casegraphen-graph-compiler",
+    "profile_version": 1,
+    "semantic_profile": "casegraphen.experimental.graph_compiler.semantic_profile.v1"
+  },
+  "contract_versions": {
+    "execution_topology": "casegraphen.experimental.execution.topology.v0",
+    "deployment_bundle": "casegraphen.experimental.deployment_bundle.v0",
+    "compiler_inputs": "casegraphen.experimental.graph_compiler.inputs.v1",
+    "compiler_report": "casegraphen.experimental.graph_compiler.report.v0",
+    "deployment_policy_manifest": "casegraphen.experimental.deployment_policy_manifest.v0",
+    "execution_plan": "highergraphen.case.workflow.execution_plan.v1",
+    "verification_policy": "casegraphen.experimental.verification_policy.v0",
+    "expansion_policy": "casegraphen.experimental.expansion.policy.v0",
+    "inline_budget_policy": "casegraphen.experimental.graph_compiler.inline_budget_policy.v0"
+  },
+  "mode": {"kind": "proposal"},
+  "target": "generic_jsonl_v0",
+  "case_space_id": "space:example",
+  "base_revision_id": "revision:example",
+  "plan_id": "plan:example",
+  "node_plan_mappings": [{"node_id":"node:review","worker_binding_id":"binding:review","success_evidence_requirement_ids":[],"allowed_transition_classes":[]}],
+  "verification_policies": {},
+  "budget_policies": {},
+  "expansion_policies": {}
+}

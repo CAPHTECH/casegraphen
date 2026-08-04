@@ -50,6 +50,7 @@ def main() -> int:
         "resource_allocator_state_is_host_canonical",
         "operational_resource_reservations_require_reviewed_deployment_authority",
         "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle",
+        "verification_lineage_proofs_are_canonical_opaque_and_never_serialized",
     ):
         if invariants.get(required_invariant) is not True:
             failures.append(f"missing authority invariant: {required_invariant}")
@@ -78,7 +79,8 @@ def main() -> int:
 
     expected = {
         "compile", "reviewed_compile", "integrate_reconcile", "simulate", "resource_reserve",
-        "resource_release", "resource_reconcile", "expansion", "streaming", "redesign",
+        "resource_release", "resource_reconcile", "expansion", "streaming",
+        "verification_lineage", "redesign",
     }
     if seen != expected:
         failures.append(f"workflow inventory differs: {sorted(seen ^ expected)}")

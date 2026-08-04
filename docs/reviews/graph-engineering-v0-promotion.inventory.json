@@ -1,0 +1,142 @@
+{
+  "schema": "casegraphen.review.graph_engineering_promotion_inventory.v1",
+  "schema_version": 1,
+  "as_of_date": "2026-08-05",
+  "review_source_commit": "d353b160ebcca089c47d5df455c9357106389989",
+  "decision": {
+    "contract": "experimental-v0",
+    "promotion_recommended": false,
+    "accepted": false
+  },
+  "surface": {
+    "workflow_count": 11,
+    "runtime_family_count": 4,
+    "experimental_contract_version": 0,
+    "experimental_contract_count": 41
+  },
+  "evidence_facts": [
+    {
+      "id": "four-local-runtime-families",
+      "status": "satisfied_local",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "dcc6c45e306f36c4c5b2e8b1c1d92d56b6c136cb",
+      "reference": {
+        "path": "docs/pilots/issue-76/pilot-report.json",
+        "content_hash": "sha256:8c8fa0c7a724ede354201192c772459d156cbcdf97db6a8ae58aa99f44af5239"
+      }
+    },
+    {
+      "id": "full-local-provider-matrix",
+      "status": "satisfied_non_promotional",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "65116ecf19072069ffe2665d6eaedc52ae80b0b1",
+      "reference": {
+        "path": "docs/evals/fresh-agent/2026-08-04-cli-session-matrix.md",
+        "content_hash": "sha256:c9cd59f4313ce3b29d799cd1cd2344cd3c46391a39edcdd5a9e3aed9c5cb4c4d"
+      }
+    },
+    {
+      "id": "independent-mcp-client",
+      "status": "satisfied_local",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "dcc6c45e306f36c4c5b2e8b1c1d92d56b6c136cb",
+      "reference": {
+        "path": "docs/pilots/issue-76/independent-mcp-client-report.json",
+        "content_hash": "sha256:cf629e3b90e8ed2e1f13933f0aaa3334945b3dcc6ebed0bda4faba76a7755d8a"
+      }
+    },
+    {
+      "id": "edge-level-runtime-completeness",
+      "status": "satisfied_local",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "dcc6c45e306f36c4c5b2e8b1c1d92d56b6c136cb",
+      "reference": {
+        "path": "docs/pilots/issue-76/pilot-report.json",
+        "content_hash": "sha256:8c8fa0c7a724ede354201192c772459d156cbcdf97db6a8ae58aa99f44af5239"
+      }
+    },
+    {
+      "id": "reviewed-compilation-runtime-chain",
+      "status": "satisfied_local",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "64d66154f2000e479a221811bc1210acaf4827ad",
+      "reference": {
+        "path": "docs/pilots/issue-85/durability-report.json",
+        "content_hash": "sha256:c1f3d5861dd9c1d975400622872be84a4e0bf5d15423777021f4165ff9ad29c4"
+      }
+    },
+    {
+      "id": "bounded-runtime-durability-pilot",
+      "status": "satisfied_local",
+      "evidence_date": "2026-08-04",
+      "evidence_commit": "64d66154f2000e479a221811bc1210acaf4827ad",
+      "reference": {
+        "path": "docs/pilots/issue-85/release-evidence.json",
+        "content_hash": "sha256:cea779ac5cda6682f333b6433355ad922cae2a4cbcf9c5346cd7a5189d218b41"
+      }
+    },
+    {
+      "id": "provider-attested-release-matrix",
+      "status": "missing_external",
+      "owner_issue": 76
+    },
+    {
+      "id": "verification-lineage-supported-surface",
+      "status": "satisfied_repository",
+      "evidence_date": "2026-08-05",
+      "owner_issue": 87,
+      "reference": {
+        "path": "docs/product-surface.v0.json",
+        "content_hash": "sha256:4e3c0c40192cb9e54447ae8b0a7a7b1e8d3b20c92e6d95a1974cb5f64f880b93"
+      }
+    },
+    {
+      "id": "allocator-checkpoint-compaction",
+      "status": "missing_release_evidence",
+      "owner_issue": 88
+    },
+    {
+      "id": "runtime-durability-retained-release",
+      "status": "missing_external_publication",
+      "owner_issue": 89
+    },
+    {
+      "id": "production-remote-fleet-evidence",
+      "status": "missing_external",
+      "owner_issue": 89
+    },
+    {
+      "id": "exact-compiler-profile-compatibility",
+      "status": "missing_release_evidence",
+      "owner_issue": 91,
+      "repository_baseline": {
+        "current_profile": 1,
+        "retained_exact_historical_profile": 0,
+        "adr": "docs/adr/0027-exact-compiler-profile-compatibility.md",
+        "bounded_report": "docs/pilots/issue-91/compiler-verification-performance.json"
+      }
+    }
+  ],
+  "completed_local_triggers": [
+    {"id": "runtime-families", "fact_ids": ["four-local-runtime-families"]},
+    {"id": "local-provider-matrix", "fact_ids": ["full-local-provider-matrix"]},
+    {"id": "independent-client", "fact_ids": ["independent-mcp-client"]},
+    {"id": "edge-completeness", "fact_ids": ["edge-level-runtime-completeness"]},
+    {"id": "reviewed-compilation", "fact_ids": ["reviewed-compilation-runtime-chain"]},
+    {"id": "bounded-durability", "fact_ids": ["bounded-runtime-durability-pilot"]},
+    {"id": "verification-product-surface", "fact_ids": ["verification-lineage-supported-surface"], "owner_issue": 87}
+  ],
+  "required_stable_blockers": [
+    {"id": "provider-authority", "fact_ids": ["provider-attested-release-matrix"], "owner_issue": 76},
+    {"id": "allocator-fleet-replay", "fact_ids": ["allocator-checkpoint-compaction"], "owner_issue": 88},
+    {"id": "durable-runtime-evidence", "fact_ids": ["runtime-durability-retained-release"], "owner_issue": 89},
+    {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 89},
+    {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91}
+  ],
+  "optional_post_v0_enhancements": [
+    "tool-specific stable MCP payload schemas",
+    "active-active operational host persistence",
+    "external identity-provider integration",
+    "WORM or transparency-log evidence mirroring"
+  ]
+}

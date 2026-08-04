@@ -99,6 +99,18 @@ fn retained_remote_binary_scale_and_allocator_evidence_is_bounded_and_fail_close
             format!("sha256:{:x}", Sha256::digest(bytes))
         );
     }
+
+    let pointer: Value = serde_json::from_slice(
+        &fs::read(output.join("release-evidence.json")).expect("release pointer exists"),
+    )
+    .expect("release pointer is JSON");
+    assert_eq!(pointer["retention_state"], "last_checked_in_baseline");
+    assert_eq!(pointer["accepted"], false);
+    assert_eq!(pointer["promotion_recommended"], false);
+    assert_eq!(
+        pointer["future_evidence_contract"]["content_addressed_release_required"],
+        true
+    );
 }
 
 #[test]
@@ -153,4 +165,31 @@ fn checked_in_edge_proof_pilot_is_current_not_historical_node_only_evidence() {
     assert_eq!(promotion["workflow_count"], 10);
     assert_eq!(promotion["promotion_recommended"], false);
     assert!(promotion["blockers"][0].as_str().unwrap().contains("#76"));
+}
+
+#[test]
+fn allocator_checkpoint_pilot_retains_full_replay_equivalence_and_metrics() {
+    let report: Value = serde_json::from_slice(
+        &fs::read("docs/pilots/issue-88/resource-allocator-512.report.json")
+            .expect("issue 88 allocator report exists"),
+    )
+    .unwrap();
+    assert_eq!(report["passed"], true);
+    assert_eq!(report["accepted"], false);
+    assert_eq!(report["journal_event_count"], 512);
+    let checkpoint = &report["checkpoint_compaction"];
+    assert_eq!(checkpoint["implemented"], true);
+    assert_eq!(checkpoint["checkpoint_sequence"], 512);
+    assert_eq!(checkpoint["full_replay_equivalent"], true);
+    for metric in [
+        "checkpoint_size_bytes",
+        "checkpoint_create_ms",
+        "checkpoint_independent_verify_ms",
+        "compaction_ms",
+        "suffix_replay_ms",
+    ] {
+        assert!(checkpoint[metric].as_u64().is_some(), "missing {metric}");
+    }
+    assert!(report["append_pair_latency_ms"]["p95"].as_u64().is_some());
+    assert!(report["observed_peak_rss_bytes"].as_u64().unwrap() > 0);
 }

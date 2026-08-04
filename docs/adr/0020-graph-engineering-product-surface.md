@@ -16,6 +16,7 @@ The machine-readable source of truth is [`docs/product-surface.v0.json`](../prod
 | resource reconcile | `reconcile_resources` | `resource_protocol` | untrusted allocation reconciliation; incomplete on mismatch |
 | expansion | `evaluate_expansion_round` | `dynamic_expansion` | bounded, typed, unreviewed topology proposals only |
 | streaming (compatibility name) | `reconcile_streaming_run` | `streaming_reconciliation` | `terminal_artifact_stage_pipelining_v0`; exact revision, terminal producer/final bytes, canonical readiness and resource permits |
+| verification lineage | `reconcile_verification_lineage` | `verification_policy` + canonical store replay | read-only policy result derived from exact retained CLI run bytes and canonical reviews; opaque proofs are never serialized |
 | redesign | `propose_topology_redesign` | `topology_redesign` | content-bound unreviewed redesign proposal only |
 
 All MCP calls return `casegraphen.experimental.control_plane.response.v0`. A domain refusal is a response with `result: null` and a typed `refusal`; JSON-RPC framing/authentication errors use JSON-RPC errors. The host process exits non-zero for invalid startup configuration and remains fail-closed for unsupported tools.
@@ -30,6 +31,12 @@ Without custom Rust code, an MCP client can:
 4. for a resource-bearing run, reserve the exact reviewed deployment through the host and call `reconcile_run` with the journal-derived authority in `runtime.resource_expectation_bundle.v0`; otherwise call it with the same topology and revision;
 5. observe `accepted: false`, completeness findings, and content-addressed proposals;
 6. stop at the independent CaseGraphen `topology-review` / evidence review seam.
+
+After a normal shell-worker run and canonical evidence review, a client may
+also call `reconcile_verification_lineage`. The host replays the exact current
+revision and derives producer, verifier, and anchor proofs from retained bytes;
+the response contains only the read-only policy result, never proof material or
+an acceptance mutation.
 
 The walkthrough and request transcript are in [`../guides/graph-engineering-product-surface.md`](../guides/graph-engineering-product-surface.md).
 

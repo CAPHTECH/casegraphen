@@ -1,0 +1,23 @@
+{
+  "schema": "casegraphen.experimental.runtime_durability.retention_pointer.v1",
+  "schema_version": 1,
+  "retention_state": "last_checked_in_baseline",
+  "accepted": false,
+  "promotion_recommended": false,
+  "legacy_baseline": {
+    "evaluated_commit_sha": "64d66154f2000e479a221811bc1210acaf4827ad",
+    "manifest_content_hash": "sha256:527625923fda7bc102f8057d65388a9750b69cee9000ee81db60d9fc78921ef5",
+    "manifest_byte_length": 2151,
+    "evidence_file_count": 11,
+    "evidence_byte_length": 2083736,
+    "topology_content_hash": "sha256:2818e1605fbf6a463d0e0644ce8562f1e3d749e63d020498c05deaca40e3facc",
+    "reviewed_deployment_hash": "sha256:83d58dafdc1a47581634fa58d94c5b16e8af2bb0a55b406142b84ce55bb1eeb5",
+    "all_thresholds_passed": true
+  },
+  "future_evidence_contract": {
+    "workflow_path": ".github/workflows/runtime-durability-evidence.yml",
+    "retention_record_schema": "casegraphen.experimental.runtime_durability.retention_record.v1",
+    "content_addressed_release_required": true,
+    "additional_generated_evidence_must_not_be_committed": true
+  }
+}

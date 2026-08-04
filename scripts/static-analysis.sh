@@ -97,6 +97,15 @@ python3 scripts/skill-conformance.py --check
 say 'Graph Engineering product-surface conformance'
 python3 scripts/product-surface-conformance.py
 python3 scripts/fresh-agent-workflow-conformance.py
+python3 scripts/runtime-durability-evidence-conformance.py
+python3 scripts/promotion-review-conformance.py
+python3 scripts/compiler-verification-pilot.py \
+  --output target/compiler-verification-current.json
+python3 scripts/compiler-verification-pilot.py \
+  --verify-report target/compiler-verification-current.json
+python3 scripts/compiler-verification-pilot.py \
+  --verify-report docs/pilots/issue-91/compiler-verification-performance.json
+python3 tests/compiler-verification-pilot-test.py
 
 say 'ADR inventory conformance'
 python3 scripts/adr-conformance.py --index README.md

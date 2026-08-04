@@ -13,6 +13,7 @@
     {"workflow":"resource_reconcile","entry_point":"operational_mcp_host","tool":"reconcile_resources","owner":"src/resource_protocol.rs","skills":["casegraphen-integrate"]},
     {"workflow":"expansion","entry_point":"operational_mcp_host","tool":"evaluate_expansion_round","owner":"src/dynamic_expansion.rs","skills":["casegraphen-design","casegraphen-audit"]},
     {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","semantics":"terminal_artifact_stage_pipelining_v0","compatibility_name":"streaming","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
+    {"workflow":"verification_lineage","entry_point":"operational_mcp_host","tool":"reconcile_verification_lineage","semantics":"read_only_ledger_derived_proof_reconciliation_v0","owner":"src/verification_policy.rs","skills":["casegraphen-integrate","casegraphen-operate"]},
     {"workflow":"redesign","entry_point":"operational_mcp_host","tool":"propose_topology_redesign","owner":"src/topology_redesign.rs","skills":["casegraphen-audit"]}
   ],
   "invariants": {
@@ -26,6 +27,7 @@
     "resource_allocator_state_is_host_canonical": true,
     "operational_resource_reservations_require_reviewed_deployment_authority": true,
     "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle": true,
-    "streaming_v0_requires_terminal_producer_and_final_artifact": true
+    "streaming_v0_requires_terminal_producer_and_final_artifact": true,
+    "verification_lineage_proofs_are_canonical_opaque_and_never_serialized": true
   }
 }

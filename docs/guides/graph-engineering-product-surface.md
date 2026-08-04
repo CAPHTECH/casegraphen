@@ -21,7 +21,21 @@ propose_execution_topology
 → independent `casegraphen topology-review` / evidence review
 ```
 
+For a native shell-worker claim, the subsequent read-only authority assessment
+is `reconcile_verification_lineage`. It consumes the exact retained run files
+and canonical review morphism IDs at the current revision, derives opaque
+proofs inside the host, and returns only the verification-policy result with
+`accepted:false`; it does not mutate the acceptance ledger.
+
 `compile_deployment_bundle` remains the proposal-only inspection path. The reviewed tool accepts no caller-created mode or authority hash: it replays the exact case space and derives compilation authority from the canonical accepted topology review. Resource reservations additionally name the resulting bundle hash and persist that review/deployment binding in the allocator journal.
+
+Bundle verification dispatches by the exact retained compiler-input schema and
+compiler profile. Profile 1 binds its implementation identity plus topology,
+plan, policy, manifest, report, and input contract identities. Historical
+profile 0 is verified by its retained exact implementation; unknown and future
+profiles are refused. A profile migration is an unaccepted proposal requiring
+separate review, not an in-place reinterpretation. See
+[ADR 0027](../adr/0027-exact-compiler-profile-compatibility.md).
 
 The runtime JSONL must include the exact topology content hash and
 content-addressed artifact bytes. The host derives

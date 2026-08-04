@@ -63,8 +63,32 @@ pub struct ExecutionTopologyReviewTarget {
     pub claim_cell_id: Id,
     pub artifact_id: Id,
     pub policy_manifest_content_hash: String,
+    #[serde(default = "legacy_review_compiler_version")]
+    pub compiler_version: String,
+    #[serde(default = "legacy_review_semantic_profile")]
+    pub compiler_semantic_profile: String,
+    #[serde(default = "legacy_review_compiler_inputs_schema")]
+    pub compiler_inputs_schema: String,
+    #[serde(default = "legacy_review_contract_versions_hash")]
+    pub compiler_contract_versions_content_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expansion_proposal_id: Option<Id>,
+}
+
+fn legacy_review_compiler_version() -> String {
+    crate::graph_compiler::legacy_compiler_review_identity_v0().compiler_version
+}
+
+fn legacy_review_semantic_profile() -> String {
+    crate::graph_compiler::legacy_compiler_review_identity_v0().semantic_profile
+}
+
+fn legacy_review_compiler_inputs_schema() -> String {
+    crate::graph_compiler::legacy_compiler_review_identity_v0().compiler_inputs_schema
+}
+
+fn legacy_review_contract_versions_hash() -> String {
+    crate::graph_compiler::legacy_compiler_review_identity_v0().contract_versions_content_hash
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -870,6 +894,19 @@ fn require_execution_topology_review_target(
     {
         return Err(error(
             "execution topology content hash must be lowercase sha256",
+        ));
+    }
+    if target.compiler_version.trim().is_empty()
+        || target.compiler_semantic_profile.trim().is_empty()
+        || target.compiler_inputs_schema.trim().is_empty()
+        || target.compiler_contract_versions_content_hash.len() != 64
+        || !target
+            .compiler_contract_versions_content_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(error(
+            "execution topology review compiler identity is incomplete or invalid",
         ));
     }
     let topology: crate::execution_topology::ExecutionTopology =

@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.resource.allocator_checkpoint.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","allocator_instance_id","configuration_hash","covered_event_count","last_event_sequence","terminal_event_hash","covered_journal_prefix_hash","state","checkpoint_content_hash"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.resource.allocator_checkpoint.v0"},
+    "schema_version":{"const":0},
+    "allocator_instance_id":{"type":"string","minLength":1},
+    "configuration_hash":{"$ref":"#/$defs/hash"},
+    "covered_event_count":{"type":"integer","minimum":1},
+    "last_event_sequence":{"type":"integer","minimum":1},
+    "terminal_event_hash":{"$ref":"#/$defs/hash"},
+    "covered_journal_prefix_hash":{"$ref":"#/$defs/hash"},
+    "state":{"type":"object","additionalProperties":false,"required":["reservations","declarations","dispositions","events_by_idempotency"],"properties":{
+      "reservations":{"type":"array","items":{"$ref":"casegraphen.experimental.resource.reservation.v0"}},
+      "declarations":{"type":"object","additionalProperties":{"$ref":"casegraphen.experimental.resource.declaration.v0"}},
+      "dispositions":{"type":"array","items":{"$ref":"casegraphen.experimental.resource.reservation_disposition.v0"}},
+      "events_by_idempotency":{"type":"object","additionalProperties":{"$ref":"casegraphen.experimental.resource.allocator_event.v0"}}
+    }},
+    "checkpoint_content_hash":{"$ref":"#/$defs/hash"}
+  },
+  "$defs":{"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

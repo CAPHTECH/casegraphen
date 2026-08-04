@@ -34,7 +34,8 @@ This Skill does not schedule nodes, retry work, call models, or mutate a case.
 
 For standalone operation, use the inventory-governed MCP tools:
 `compile_deployment_bundle`, `compile_reviewed_deployment_bundle`, `reconcile_run`, `reserve_resources`, `release_resources`,
-`reconcile_resources`, and `reconcile_streaming_run`. They delegate to the same
+`reconcile_resources`, `reconcile_streaming_run`, and
+`reconcile_verification_lineage`. They delegate to the same
 canonical modules described above. Reservation and disposition require an
 explicit observed revision and caller-declared audit context. Existing active
 reservations, dispositions, and rate capacities are host-canonical allocator
@@ -80,6 +81,12 @@ not compiler provenance.
   content-bound review execution record; never fabricate a verifier
   `ExecutionTrace`. See
   [the verification-lineage guide](../../docs/guides/verification-lineage.md).
+- Without custom Rust, call `reconcile_verification_lineage` with the exact
+  current revision, claim cell, retained artifact-root-relative report/trace/
+  stdout/stderr paths, canonical review morphism IDs, and policy. The host
+  derives opaque proofs internally and returns only the read-only policy
+  result. Never repeat a review ID to satisfy quorum or expect proof objects in
+  the response.
 - Never turn an ingest report into accepted evidence or apply its morphism.
 - Never infer retry lineage from line order; only explicit
   `retry_of_attempt_id` is authoritative for reconciliation.

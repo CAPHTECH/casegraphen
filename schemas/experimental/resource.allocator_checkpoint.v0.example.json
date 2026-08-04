@@ -1,0 +1,8 @@
+{
+  "schema":"casegraphen.experimental.resource.allocator_checkpoint.v0","schema_version":0,
+  "allocator_instance_id":"allocator:example","configuration_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "covered_event_count":1,"last_event_sequence":1,"terminal_event_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "covered_journal_prefix_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "state":{"reservations":[],"declarations":{},"dispositions":[],"events_by_idempotency":{}},
+  "checkpoint_content_hash":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

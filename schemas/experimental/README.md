@@ -94,6 +94,12 @@ Rust owner, examples, references, and inventory atomically.
   `runtime.resource_expectation_bundle.v0` binds that journal authority and
   runtime allocations to one topology hash and case revision before canonical
   reconciliation.
+- `resource.allocator_checkpoint.v0` is a content-addressed accelerator bound
+  to one journal location, configuration, exact prefix, and derived state.
+  `resource.allocator_retention_policy.v0` is the explicit operator policy,
+  while `resource.allocator_compaction.v0` proves archive publication before
+  active-prefix removal. Archived events remain authoritative and full replay
+  remains available; these records do not weaken reservation authority.
 - `git.worktree_record.v0` is the reference isolation record. The Rust
   worktree adapter creates and removes only explicitly located isolated
   worktrees from an exact base commit; integration fixtures use disposable
@@ -108,3 +114,9 @@ transition a case.
 Case graph meaning, execution topology, and actual runtime history remain
 separate. Parsing, linting, hashing, compiling, or reconciling an experimental
 artifact never makes it accepted.
+
+Deployment-bundle migration proposals are likewise non-authoritative. Their
+source and target are strict compiler migration identities, each binding the
+version label, implementation/profile identity, compiler-input schema, and
+compiler contract-inventory hash. Version-only source/target fields are not a
+supported compatibility boundary.

@@ -61,6 +61,7 @@ pub(in crate::native_cli) fn topology_review_apply(
         .and_then(Value::as_str)
         .map(Id::new)
         .transpose()?;
+    let compiler_identity = crate::graph_compiler::current_compiler_review_identity();
     let target = ExecutionTopologyReviewTarget {
         topology_id: Id::new(topology.topology_id.clone())?,
         topology_content_hash,
@@ -69,6 +70,10 @@ pub(in crate::native_cli) fn topology_review_apply(
         claim_cell_id: options.claim_cell_id.clone(),
         artifact_id,
         policy_manifest_content_hash,
+        compiler_version: compiler_identity.compiler_version,
+        compiler_semantic_profile: compiler_identity.semantic_profile,
+        compiler_inputs_schema: compiler_identity.compiler_inputs_schema,
+        compiler_contract_versions_content_hash: compiler_identity.contract_versions_content_hash,
         expansion_proposal_id,
     };
     let gate = NativeOperationGate {

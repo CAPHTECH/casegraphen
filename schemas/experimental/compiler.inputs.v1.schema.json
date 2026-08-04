@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_compiler.inputs.v1",
+  "title": "Retained graph compiler inputs v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "compiler_version", "compiler_identity", "contract_versions", "mode", "target", "case_space_id", "base_revision_id", "plan_id", "node_plan_mappings", "verification_policies", "budget_policies", "expansion_policies"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_compiler.inputs.v1"},
+    "compiler_version": {"const": "casegraphen-graph-compiler/1"},
+    "compiler_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "profile_version", "semantic_profile"],
+      "properties": {
+        "implementation": {"const": "casegraphen-graph-compiler"},
+        "profile_version": {"const": 1},
+        "semantic_profile": {"const": "casegraphen.experimental.graph_compiler.semantic_profile.v1"}
+      }
+    },
+    "contract_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_topology", "deployment_bundle", "compiler_inputs", "compiler_report", "deployment_policy_manifest", "execution_plan", "verification_policy", "expansion_policy", "inline_budget_policy"],
+      "properties": {
+        "execution_topology": {"const": "casegraphen.experimental.execution.topology.v0"},
+        "deployment_bundle": {"const": "casegraphen.experimental.deployment_bundle.v0"},
+        "compiler_inputs": {"const": "casegraphen.experimental.graph_compiler.inputs.v1"},
+        "compiler_report": {"const": "casegraphen.experimental.graph_compiler.report.v0"},
+        "deployment_policy_manifest": {"const": "casegraphen.experimental.deployment_policy_manifest.v0"},
+        "execution_plan": {"const": "highergraphen.case.workflow.execution_plan.v1"},
+        "verification_policy": {"const": "casegraphen.experimental.verification_policy.v0"},
+        "expansion_policy": {"const": "casegraphen.experimental.expansion.policy.v0"},
+        "inline_budget_policy": {"const": "casegraphen.experimental.graph_compiler.inline_budget_policy.v0"}
+      }
+    },
+    "mode": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "proposal"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "claim_cell_id", "review_id", "topology_content_hash", "policy_manifest_content_hash", "case_space_id", "base_revision_id", "expansion_proposal_id", "compiler_version", "compiler_semantic_profile", "compiler_inputs_schema", "compiler_contract_versions_content_hash"],
+          "properties": {
+            "kind": {"const": "reviewed"},
+            "claim_cell_id": {"type": "string", "minLength": 1},
+            "review_id": {"type": "string", "minLength": 1},
+            "topology_content_hash": {"$ref": "#/$defs/sha256"},
+            "policy_manifest_content_hash": {"$ref": "#/$defs/sha256"},
+            "case_space_id": {"type": "string", "minLength": 1},
+            "base_revision_id": {"type": "string", "minLength": 1},
+            "expansion_proposal_id": {"type": ["string", "null"]},
+            "compiler_version": {"const": "casegraphen-graph-compiler/1"},
+            "compiler_semantic_profile": {"const": "casegraphen.experimental.graph_compiler.semantic_profile.v1"},
+            "compiler_inputs_schema": {"const": "casegraphen.experimental.graph_compiler.inputs.v1"},
+            "compiler_contract_versions_content_hash": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      ]
+    },
+    "target": {"const": "generic_jsonl_v0"},
+    "case_space_id": {"type": "string", "minLength": 1},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "node_plan_mappings": {"$ref": "compiler.inputs.v0.schema.json#/properties/node_plan_mappings"},
+    "verification_policies": {"type": "object"},
+    "budget_policies": {"type": "object"},
+    "expansion_policies": {"type": "object"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

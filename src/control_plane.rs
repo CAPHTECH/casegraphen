@@ -48,6 +48,7 @@ pub const TOOLS: &[ControlPlaneTool] = &[
     ControlPlaneTool::SimulateExecutionTopology,
     ControlPlaneTool::EvaluateExpansionRound,
     ControlPlaneTool::ReconcileStreamingRun,
+    ControlPlaneTool::ReconcileVerificationLineage,
     ControlPlaneTool::ProposeTopologyRedesign,
 ];
 
@@ -71,6 +72,7 @@ pub enum ControlPlaneTool {
     SimulateExecutionTopology,
     EvaluateExpansionRound,
     ReconcileStreamingRun,
+    ReconcileVerificationLineage,
     ProposeTopologyRedesign,
 }
 
@@ -88,6 +90,7 @@ impl ControlPlaneTool {
                     | Self::ReconcileResources
                     | Self::EvaluateExpansionRound
                     | Self::ReconcileStreamingRun
+                    | Self::ReconcileVerificationLineage
                     | Self::ProposeTopologyRedesign
             )
     }

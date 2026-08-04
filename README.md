@@ -89,8 +89,11 @@ claims. The supported standalone experimental workflow matrix is
 machine-readable in [`docs/product-surface.v0.json`](docs/product-surface.v0.json).
 The durable, authenticated `casegraphen-mcp-host` delegates compile, runtime
 reconciliation, simulation, resource reservation/reconciliation, bounded
-expansion, streaming reconciliation, and redesign proposals to their canonical
-library owners. Its persistence/authentication boundary is described in
+expansion, streaming reconciliation, read-only ledger-derived verification
+lineage reconciliation, and redesign proposals to their canonical library
+owners. Verification lineage uses exact retained report/trace/output bytes and
+canonical reviews; the opaque proofs are never caller-constructed or returned.
+Its persistence/authentication boundary is described in
 [ADR 0019](docs/adr/0019-external-mcp-control-plane.md), and the
 [operational walkthrough](docs/guides/graph-engineering-product-surface.md)
 shows the review-seamed end-to-end path.
@@ -102,6 +105,14 @@ and derives authority instead of accepting a caller-created mode or hash.
 Resource reservations are available only for that content-addressed reviewed
 deployment and retain its review, node, attempt, and declaration binding in
 the allocator journal.
+
+New bundles bind compiler profile 1 and every semantic input-contract version.
+The exact profile-0 verifier remains available for historical bundles; unknown
+or future identities fail closed. Upgrading a historical bundle produces only
+an unaccepted, content-addressed migration proposal and never silently changes
+reviewed deployment authority. Compatibility and bounded recompile evidence
+are documented in [ADR 0027](docs/adr/0027-exact-compiler-profile-compatibility.md)
+and the [compiler verification pilot](docs/pilots/issue-91/README.md).
 
 Operational resource reservations are atomic, durable, and derived from a
 host-canonical append-only allocator journal. Resource-bearing runtime runs use
@@ -290,9 +301,11 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0020: Graph Engineering product surface](docs/adr/0020-graph-engineering-product-surface.md)
 - [ADR 0024: deterministic streaming order](docs/adr/0024-streaming-events-have-logical-order.md)
 - [ADR 0025: runtime edge-handoff completeness](docs/adr/0025-runtime-completeness-requires-edge-handoffs.md)
+- [ADR 0026: content-addressed allocator checkpoints](docs/adr/0026-content-addressed-resource-allocator-checkpoints.md)
+- [ADR 0027: exact compiler profile compatibility](docs/adr/0027-exact-compiler-profile-compatibility.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0026**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0028**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

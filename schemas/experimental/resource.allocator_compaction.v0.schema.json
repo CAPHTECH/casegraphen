@@ -1,0 +1,16 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"casegraphen.experimental.resource.allocator_compaction.v0",
+  "type":"object","additionalProperties":false,
+  "required":["schema","schema_version","allocator_instance_id","configuration_hash","checkpoint_content_hash","checkpoint_sequence","retention_policy","retention_policy_hash","archived_event_sequences","archived_event_hashes","compaction_content_hash"],
+  "properties":{
+    "schema":{"const":"casegraphen.experimental.resource.allocator_compaction.v0"},"schema_version":{"const":0},
+    "allocator_instance_id":{"type":"string","minLength":1},"configuration_hash":{"$ref":"#/$defs/hash"},
+    "checkpoint_content_hash":{"$ref":"#/$defs/hash"},"checkpoint_sequence":{"type":"integer","minimum":1},
+    "retention_policy":{"$ref":"casegraphen.experimental.resource.allocator_retention_policy.v0"},
+    "retention_policy_hash":{"$ref":"#/$defs/hash"},
+    "archived_event_sequences":{"type":"array","items":{"type":"integer","minimum":1}},
+    "archived_event_hashes":{"type":"array","items":{"$ref":"#/$defs/hash"}},
+    "compaction_content_hash":{"$ref":"#/$defs/hash"}
+  },"$defs":{"hash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}
+}

@@ -7,7 +7,7 @@
     "schema": {"const": "casegraphen.experimental.control_plane.request.v0"},
     "request_id": {"type": "string", "minLength": 1},
     "idempotency_key": {"type": "string", "minLength": 1},
-    "tool": {"enum": ["propose_execution_topology", "lint_execution_topology", "compile_deployment_bundle", "compile_reviewed_deployment_bundle", "attach_runtime_report", "reconcile_run", "apply_evidence_packet", "review_accept", "review_reject", "resume", "supersede_dispatch", "reserve_resources", "reconcile_resources", "release_resources", "simulate_execution_topology", "evaluate_expansion_round", "reconcile_streaming_run", "propose_topology_redesign"]},
+    "tool": {"enum": ["propose_execution_topology", "lint_execution_topology", "compile_deployment_bundle", "compile_reviewed_deployment_bundle", "attach_runtime_report", "reconcile_run", "apply_evidence_packet", "review_accept", "review_reject", "resume", "supersede_dispatch", "reserve_resources", "reconcile_resources", "release_resources", "simulate_execution_topology", "evaluate_expansion_round", "reconcile_streaming_run", "reconcile_verification_lineage", "propose_topology_redesign"]},
     "base_revision_id": {"type": ["string", "null"], "minLength": 1},
     "caller_declared_audit_context": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/caller_declared_audit_context"}]},
     "payload": {}

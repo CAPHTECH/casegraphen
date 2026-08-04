@@ -11,7 +11,8 @@ use casegraphen::{
     graph_simulation::GraphSimulationRequest,
     native_review::ExecutionTopologyReviewArtifact,
     resource_allocator::{
-        ResourceAllocatorConfiguration, ResourceAllocatorEvent,
+        ResourceAllocatorCheckpoint, ResourceAllocatorCompactionRecord,
+        ResourceAllocatorConfiguration, ResourceAllocatorEvent, ResourceAllocatorRetentionPolicy,
         ReviewedDeploymentReservationBinding,
     },
     resource_protocol::{
@@ -70,6 +71,9 @@ fn representative_rust_roundtrips_validate_against_shipped_schemas() {
         json!({"schema_id":"casegraphen.experimental.resource.rate_limit_capacity.v0","instance":roundtrip::<RateLimitCapacity>("resource.rate_limit_capacity.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.allocator_configuration.v0","instance":roundtrip::<ResourceAllocatorConfiguration>("resource.allocator_configuration.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.allocator_event.v0","instance":roundtrip::<ResourceAllocatorEvent>("resource.allocator_event.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.resource.allocator_checkpoint.v0","instance":roundtrip::<ResourceAllocatorCheckpoint>("resource.allocator_checkpoint.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.resource.allocator_retention_policy.v0","instance":roundtrip::<ResourceAllocatorRetentionPolicy>("resource.allocator_retention_policy.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.resource.allocator_compaction.v0","instance":roundtrip::<ResourceAllocatorCompactionRecord>("resource.allocator_compaction.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.reviewed_deployment_binding.v0","instance":roundtrip::<ReviewedDeploymentReservationBinding>("resource.reviewed_deployment_binding.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.runtime.resource_allocation.v0","instance":roundtrip::<RuntimeResourceAllocation>("runtime.resource_allocation.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.resource.reconciliation.v0","instance":roundtrip::<ResourceReconciliation>("resource.reconciliation.v0.example.json")}),

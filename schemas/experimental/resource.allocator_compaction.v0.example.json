@@ -1,0 +1,9 @@
+{
+  "schema":"casegraphen.experimental.resource.allocator_compaction.v0","schema_version":0,
+  "allocator_instance_id":"allocator:example","configuration_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "checkpoint_content_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","checkpoint_sequence":1,
+  "retention_policy":{"schema":"casegraphen.experimental.resource.allocator_retention_policy.v0","schema_version":0,"retain_active_event_count":0},
+  "retention_policy_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "archived_event_sequences":[1],"archived_event_hashes":["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+  "compaction_content_hash":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+}

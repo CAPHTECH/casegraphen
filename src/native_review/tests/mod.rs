@@ -90,6 +90,34 @@ fn invalid_review_target_is_rejected() {
 }
 
 #[test]
+fn historical_topology_review_without_compiler_fields_replays_as_profile_zero() {
+    let space = fixture_space();
+    let (_, _, current) = topology_review_target(&space);
+    let mut historical = serde_json::to_value(current).expect("review target serializes");
+    let object = historical
+        .as_object_mut()
+        .expect("review target is an object");
+    object.remove("compiler_version");
+    object.remove("compiler_semantic_profile");
+    object.remove("compiler_inputs_schema");
+    object.remove("compiler_contract_versions_content_hash");
+
+    let replayed: ExecutionTopologyReviewTarget =
+        serde_json::from_value(historical).expect("historical review target replays");
+    let legacy = crate::graph_compiler::legacy_compiler_review_identity_v0();
+    assert_eq!(replayed.compiler_version, legacy.compiler_version);
+    assert_eq!(replayed.compiler_semantic_profile, legacy.semantic_profile);
+    assert_eq!(
+        replayed.compiler_inputs_schema,
+        legacy.compiler_inputs_schema
+    );
+    assert_eq!(
+        replayed.compiler_contract_versions_content_hash,
+        legacy.contract_versions_content_hash
+    );
+}
+
+#[test]
 fn execution_topology_review_is_content_bound_and_generic_path_is_refused() {
     let mut space = fixture_space();
     let (topology_bytes, policy_manifest_bytes, target) = topology_review_target(&space);
@@ -320,6 +348,7 @@ fn topology_review_target_from_value(
     let policy_manifest_content_hash =
         crate::deployment_policy::deployment_policy_manifest_content_hash(&policy_manifest)
             .unwrap();
+    let compiler = crate::graph_compiler::current_compiler_review_identity();
     (
         bytes,
         policy_manifest_bytes,
@@ -331,6 +360,10 @@ fn topology_review_target_from_value(
             claim_cell_id: id("evidence:execution-topology"),
             artifact_id: id(&format!("artifact:sha256-{artifact_hash}")),
             policy_manifest_content_hash,
+            compiler_version: compiler.compiler_version,
+            compiler_semantic_profile: compiler.semantic_profile,
+            compiler_inputs_schema: compiler.compiler_inputs_schema,
+            compiler_contract_versions_content_hash: compiler.contract_versions_content_hash,
             expansion_proposal_id: None,
         },
     )

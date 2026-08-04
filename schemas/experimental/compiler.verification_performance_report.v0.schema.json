@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.graph_compiler.verification_performance_report.v0",
+  "title": "Compiler semantic verification performance report v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "observed_compiler_binary_sha256", "benchmark_source_sha256", "compiler_source_sha256", "profile", "cases", "promotion_gate_passed", "authority", "report_content_hash"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.graph_compiler.verification_performance_report.v0"},
+    "observed_compiler_binary_sha256": {"$ref": "#/$defs/sha256", "description": "Observed binary digest; source bindings and a current benchmark run provide the deterministic gate."},
+    "benchmark_source_sha256": {"$ref": "#/$defs/sha256"},
+    "compiler_source_sha256": {"$ref": "#/$defs/sha256"},
+    "profile": {"const": "debug-bounded-pilot"},
+    "cases": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "node_count", "topology_edge_count", "policy_document_count", "artifact_count", "verified_input_bytes", "canonical_verification_elapsed_micros", "wall_elapsed_ms", "peak_rss_kb", "recompile_count", "latency_budget_ms", "memory_budget_kb", "passed"],
+        "properties": {
+          "name": {"enum": ["small", "medium", "large"]},
+          "node_count": {"type": "integer", "minimum": 1},
+          "topology_edge_count": {"type": "integer", "minimum": 0},
+          "policy_document_count": {"type": "integer", "minimum": 0},
+          "artifact_count": {"type": "integer", "minimum": 1},
+          "verified_input_bytes": {"type": "integer", "minimum": 1},
+          "canonical_verification_elapsed_micros": {"type": "integer", "minimum": 0},
+          "wall_elapsed_ms": {"type": "number", "minimum": 0},
+          "peak_rss_kb": {"type": "integer", "minimum": 1},
+          "recompile_count": {"const": 1},
+          "latency_budget_ms": {"type": "integer", "minimum": 1},
+          "memory_budget_kb": {"type": "integer", "minimum": 1},
+          "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "promotion_gate_passed": {"type": "boolean"},
+    "authority": {"type": "string", "minLength": 1},
+    "report_content_hash": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

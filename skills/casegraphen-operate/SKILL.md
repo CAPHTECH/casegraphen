@@ -31,6 +31,12 @@ through `topology-review` first. An operational host may then invoke
 cell; the host derives authority from the store. This does not accept the
 generated execution plan or any runtime result.
 
+After a native `run --step` and canonical evidence review, the operational
+host's read-only `reconcile_verification_lineage` tool can assess the exact
+retained report, trace, stdout, and stderr bytes against a verification policy.
+It replays the client-observed current revision, constructs no caller proof,
+returns no proof object, and performs no acceptance-ledger mutation.
+
 ## The two rules that break every first attempt
 
 **1. Carry the revision returned by each mutating command.** Each durable

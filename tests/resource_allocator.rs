@@ -3,7 +3,8 @@
 use casegraphen::{
     execution_topology::{execution_topology_content_hash, parse_execution_topology},
     resource_allocator::{
-        AtomicResourceAllocator, ResourceAllocatorConfiguration, UnreviewedResourceJournal,
+        AtomicResourceAllocator, ResourceAllocatorConfiguration, ResourceAllocatorRetentionPolicy,
+        UnreviewedResourceJournal, RESOURCE_ALLOCATOR_RETENTION_POLICY_SCHEMA,
     },
     resource_protocol::{
         declaration_grants, RateLimitCapacity, ReservationAssertionKind,
@@ -75,6 +76,48 @@ fn temp(label: &str) -> PathBuf {
         fs::remove_dir_all(&path).unwrap();
     }
     path
+}
+
+fn append_release_pair(path: &PathBuf, suffix: &str) {
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let mut reservation = reservation(&declaration, suffix);
+    reservation.reservation_id = format!("reservation:{suffix}");
+    reservation.attempt_id = format!("attempt:{suffix}");
+    allocator(path)
+        .reserve(
+            &topology,
+            &format!("revision:{suffix}:reserve"),
+            declaration,
+            reservation.clone(),
+            &format!("idem:{suffix}:reserve"),
+        )
+        .unwrap();
+    allocator(path)
+        .disposition(
+            &format!("revision:{suffix}:release"),
+            ReservationDispositionAssertion {
+                schema: RESERVATION_ASSERTION_SCHEMA.to_owned(),
+                schema_version: 0,
+                assertion_id: format!("assertion:{suffix}"),
+                reservation_id: reservation.reservation_id,
+                attempt_id: reservation.attempt_id,
+                kind: ReservationAssertionKind::Release,
+                asserted_by: "actor:test".to_owned(),
+                reason: "checkpoint test release".to_owned(),
+                superseding_reservation_id: None,
+            },
+            &format!("idem:{suffix}:release"),
+        )
+        .unwrap();
+}
+
+fn retention(retain_active_event_count: u64) -> ResourceAllocatorRetentionPolicy {
+    ResourceAllocatorRetentionPolicy {
+        schema: RESOURCE_ALLOCATOR_RETENTION_POLICY_SCHEMA.to_owned(),
+        schema_version: 0,
+        retain_active_event_count,
+    }
 }
 
 #[test]
@@ -311,5 +354,185 @@ fn pre_publish_temporary_event_is_ignored_but_published_corruption_refuses() {
 
     fs::write(path.join("00000000000000000001.json"), b"partial json").unwrap();
     assert!(allocator(&path).snapshot().is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn checkpoint_suffix_replay_and_full_replay_are_equivalent() {
+    let path = temp("checkpoint-equivalence");
+    append_release_pair(&path, "one");
+    append_release_pair(&path, "two");
+    let journal = allocator(&path);
+    let checkpoint = journal.create_checkpoint().unwrap();
+    assert_eq!(checkpoint.last_event_sequence, 4);
+    append_release_pair(&path, "three");
+    assert_eq!(
+        allocator(&path).snapshot().unwrap(),
+        allocator(&path).full_replay_snapshot().unwrap()
+    );
+    allocator(&path).verify_checkpoint().unwrap();
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn checkpoint_substitution_truncation_cross_configuration_and_cross_journal_fail_closed() {
+    let path = temp("checkpoint-tamper");
+    append_release_pair(&path, "one");
+    append_release_pair(&path, "two");
+    allocator(&path).create_checkpoint().unwrap();
+
+    let checkpoint_path = fs::read_dir(path.join("checkpoints"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let original = fs::read(&checkpoint_path).unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    value["terminal_event_hash"] = serde_json::json!("0".repeat(64));
+    fs::write(&checkpoint_path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::write(&checkpoint_path, original).unwrap();
+
+    let first_path = path.join("00000000000000000001.json");
+    let second_path = path.join("00000000000000000002.json");
+    let first = fs::read(&first_path).unwrap();
+    let second = fs::read(&second_path).unwrap();
+    fs::write(&first_path, &second).unwrap();
+    fs::write(&second_path, &first).unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::write(&first_path, first).unwrap();
+    fs::write(&second_path, second).unwrap();
+
+    fs::remove_file(first_path).unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::remove_dir_all(&path).unwrap();
+
+    let source = temp("checkpoint-source");
+    append_release_pair(&source, "source");
+    allocator(&source).create_checkpoint().unwrap();
+    let destination = temp("checkpoint-destination");
+    copy_tree(&source, &destination);
+    assert!(allocator(&destination).snapshot().is_err());
+
+    let capacity = RateLimitCapacity {
+        schema: RATE_LIMIT_CAPACITY_SCHEMA.to_owned(),
+        schema_version: 0,
+        group_id: "rate_limit_group:different".to_owned(),
+        capacity: 1,
+    };
+    assert!(
+        UnreviewedResourceJournal::new(&source, config(vec![capacity]))
+            .unwrap()
+            .snapshot()
+            .is_err()
+    );
+    fs::remove_dir_all(source).unwrap();
+    fs::remove_dir_all(destination).unwrap();
+}
+
+fn copy_tree(source: &PathBuf, destination: &PathBuf) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn verified_compaction_preserves_full_replay_and_refuses_archive_tampering() {
+    let path = temp("checkpoint-compaction");
+    for suffix in ["one", "two", "three"] {
+        append_release_pair(&path, suffix);
+    }
+    let journal = allocator(&path);
+    journal.create_checkpoint().unwrap();
+    let proof = journal.verify_checkpoint().unwrap();
+    let before = journal.full_replay_snapshot().unwrap();
+    let outcome = journal.compact(&retention(2), &proof).unwrap();
+    assert_eq!(outcome.archived_event_count, 4);
+    assert_eq!(outcome.active_event_count, 2);
+    assert_eq!(allocator(&path).snapshot().unwrap(), before);
+    assert_eq!(allocator(&path).full_replay_snapshot().unwrap(), before);
+
+    fs::write(path.join("archive/00000000000000000001.json"), b"{}").unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn checkpoint_and_compaction_crash_boundaries_fail_safe() {
+    let path = temp("checkpoint-crash");
+    append_release_pair(&path, "one");
+    let journal = allocator(&path);
+    journal.create_checkpoint().unwrap();
+    fs::write(path.join("checkpoints/.pending-crash.tmp"), b"partial").unwrap();
+    assert_eq!(allocator(&path).snapshot().unwrap().generation, 2);
+
+    // Archive publication before the compaction record leaves duplicate
+    // authoritative bytes. Replay accepts only byte-identical duplicates.
+    fs::create_dir_all(path.join("archive")).unwrap();
+    fs::hard_link(
+        path.join("00000000000000000001.json"),
+        path.join("archive/00000000000000000001.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        allocator(&path).full_replay_snapshot().unwrap().generation,
+        2
+    );
+
+    let proof = allocator(&path).verify_checkpoint().unwrap();
+    allocator(&path).compact(&retention(0), &proof).unwrap();
+    assert_eq!(allocator(&path).snapshot().unwrap().generation, 2);
+
+    // Crash after the compaction record but during active deletion leaves
+    // some byte-identical active/archive duplicates.
+    fs::hard_link(
+        path.join("archive/00000000000000000001.json"),
+        path.join("00000000000000000001.json"),
+    )
+    .unwrap();
+    assert_eq!(allocator(&path).snapshot().unwrap().generation, 2);
+
+    fs::write(path.join("compactions/00000000000000000003.json"), b"{").unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn published_partial_checkpoint_refuses_instead_of_falling_back() {
+    let path = temp("checkpoint-published-partial");
+    append_release_pair(&path, "one");
+    allocator(&path).create_checkpoint().unwrap();
+    fs::write(
+        path.join("checkpoints/00000000000000000003-partial.json"),
+        b"{",
+    )
+    .unwrap();
+    assert!(allocator(&path).snapshot().is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+#[ignore = "release-scale lane; run with --release --ignored"]
+fn checkpoint_compaction_preserves_semantics_at_ten_thousand_events() {
+    let path = temp("checkpoint-scale-10000");
+    for index in 0..5_000 {
+        append_release_pair(&path, &format!("scale-{index}"));
+    }
+    let journal = allocator(&path);
+    let before = journal.full_replay_snapshot().unwrap();
+    assert_eq!(before.generation, 10_000);
+    journal.create_checkpoint().unwrap();
+    let proof = journal.verify_checkpoint().unwrap();
+    journal.compact(&retention(512), &proof).unwrap();
+    assert_eq!(journal.snapshot().unwrap(), before);
+    assert_eq!(journal.full_replay_snapshot().unwrap(), before);
     fs::remove_dir_all(path).unwrap();
 }

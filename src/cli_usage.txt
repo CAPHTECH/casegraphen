@@ -2,7 +2,7 @@ usage:
   casegraphen version
   casegraphen --version
   casegraphen graph lint --input <execution.topology.json> --format json|text [--output <path>]
-  casegraphen-mcp-host --state <control-plane.state.json> --store <case-store-dir> --artifacts <artifact-dir> [--resource-journal <dir>] [--resource-capacities <resource.allocator_configuration.v0.json>] --auth-token-env <environment-variable>  (experimental Graph Engineering workflows; resource allocator state is host-canonical; runtime/redesign output is never auto-accepted)
+  casegraphen-mcp-host --state <control-plane.state.json> --store <case-store-dir> --artifacts <artifact-dir> [--resource-journal <dir>] [--resource-capacities <resource.allocator_configuration.v0.json>] [--resource-retention-policy <resource.allocator_retention_policy.v0.json> --resource-checkpoint-interval <positive-events>] --auth-token-env <environment-variable>  (experimental Graph Engineering workflows; resource allocator state is host-canonical; checkpoint maintenance preserves archived full replay; runtime/redesign output is never auto-accepted; verification lineage is read-only and returns no proof objects)
   casegraphen lift native --store <dir> --input <native.case.space.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift workflow --store <dir> --input <workflow.graph.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift case-graph --store <dir> --input <case.graph.json> --revision-id <id> --format json [--output <path>]
