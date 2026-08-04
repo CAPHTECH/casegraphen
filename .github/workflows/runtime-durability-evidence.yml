@@ -27,8 +27,9 @@ jobs:
               operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review \
               -- --exact
           reviewed_hash="$(python3 -c 'import json; print(json.load(open("/tmp/reviewed-resource.json"))["reviewed_deployment_hash"])')"
+          cargo build --locked --example runtime_reconciliation_durability_pilot
           /usr/bin/time -f '%M' -o /tmp/canonical-runtime-peak-kib \
-            cargo run --locked --example runtime_reconciliation_durability_pilot -- \
+            target/debug/examples/runtime_reconciliation_durability_pilot \
               /tmp/canonical-runtime "$reviewed_hash"
           cargo run --locked --release --example resource_allocator_durability_pilot -- \
             /tmp/allocator-durability-report.json
@@ -47,6 +48,19 @@ jobs:
             --workflow-run-id "${{ github.run_id }}" \
             --workflow-run-attempt "${{ github.run_attempt }}" \
             --output-dir runtime-durability-publication
+      - name: Retain failed pilot diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-durability-failed-diagnostics-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            /tmp/runtime-durability-evidence
+            /tmp/canonical-runtime
+            /tmp/allocator-durability-report.json
+            /tmp/reviewed-resource.json
+            /tmp/canonical-runtime-peak-kib
+          if-no-files-found: warn
+          retention-days: 7
       - name: Publish immutable package input
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
