@@ -2,7 +2,7 @@
   "schema": "casegraphen.review.graph_engineering_promotion_inventory.v1",
   "schema_version": 1,
   "as_of_date": "2026-08-05",
-  "review_source_commit": "52dbe16d80d9d8e31ab0cbec3f5ba6edb66e0837",
+  "review_source_commit": "a8d11a9764842eafb7bc5f0a97623a5b1217a004",
   "decision": {
     "contract": "experimental-v0",
     "promotion_recommended": false,
@@ -72,7 +72,7 @@
       "evidence_commit": "64d66154f2000e479a221811bc1210acaf4827ad",
       "reference": {
         "path": "docs/pilots/issue-85/release-evidence.json",
-        "content_hash": "sha256:cea779ac5cda6682f333b6433355ad922cae2a4cbcf9c5346cd7a5189d218b41"
+        "content_hash": "sha256:9f5dbfb612efd07ba57ebd60ac1e195e3a5b33012252cbd2114f64c8225feb64"
       }
     },
     {
@@ -97,8 +97,14 @@
     },
     {
       "id": "runtime-durability-retained-release",
-      "status": "missing_external_publication",
-      "owner_issue": 89
+      "status": "satisfied_non_promotional",
+      "evidence_date": "2026-08-05",
+      "evidence_commit": "a8d11a9764842eafb7bc5f0a97623a5b1217a004",
+      "owner_issue": 89,
+      "reference": {
+        "path": "docs/pilots/issue-89/retained-release-record.json",
+        "content_hash": "sha256:b41b2187cf20f27fa2fec562884a05009e4e516be5e3eea2ab4644c6d0b526b7"
+      }
     },
     {
       "id": "production-remote-fleet-evidence",
@@ -130,13 +136,13 @@
     {"id": "edge-completeness", "fact_ids": ["edge-level-runtime-completeness"]},
     {"id": "reviewed-compilation", "fact_ids": ["reviewed-compilation-runtime-chain"]},
     {"id": "bounded-durability", "fact_ids": ["bounded-runtime-durability-pilot"]},
+    {"id": "durable-runtime-evidence", "fact_ids": ["runtime-durability-retained-release"], "owner_issue": 89},
     {"id": "verification-product-surface", "fact_ids": ["verification-lineage-supported-surface"], "owner_issue": 87},
     {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91}
   ],
   "required_stable_blockers": [
     {"id": "provider-authority", "fact_ids": ["provider-attested-release-matrix"], "owner_issue": 76},
     {"id": "allocator-fleet-replay", "fact_ids": ["allocator-checkpoint-compaction"], "owner_issue": 88},
-    {"id": "durable-runtime-evidence", "fact_ids": ["runtime-durability-retained-release"], "owner_issue": 89},
     {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 89}
   ],
   "optional_post_v0_enhancements": [

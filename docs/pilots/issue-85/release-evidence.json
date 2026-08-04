@@ -19,5 +19,16 @@
     "retention_record_schema": "casegraphen.experimental.runtime_durability.retention_record.v1",
     "content_addressed_release_required": true,
     "additional_generated_evidence_must_not_be_committed": true
+  },
+  "latest_retained_release": {
+    "record_path": "../issue-89/retained-release-record.json",
+    "record_content_hash": "sha256:b41b2187cf20f27fa2fec562884a05009e4e516be5e3eea2ab4644c6d0b526b7",
+    "record_byte_length": 1170,
+    "evaluated_commit_sha": "a8d11a9764842eafb7bc5f0a97623a5b1217a004",
+    "workflow_run_id": 30958980480,
+    "workflow_run_attempt": 1,
+    "release_tag": "runtime-durability-evidence-703c783b6c4fde40ae73e0639a91e18bd09ebf4887c1aa5fc8962a906e22f18e",
+    "package_sha256": "sha256:703c783b6c4fde40ae73e0639a91e18bd09ebf4887c1aa5fc8962a906e22f18e",
+    "offline_verified": true
   }
 }

@@ -6,11 +6,13 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PILOT = ROOT / "docs/pilots/issue-85"
+RETAINED_RECORD = ROOT / "docs/pilots/issue-89/retained-release-record.json"
 MAX_LEGACY_EVIDENCE_BYTES = 2_200_000
 MAX_LEGACY_FILE_BYTES = 1_000_000
 EXPECTED_DIRECTORY = {
@@ -78,6 +80,49 @@ def main() -> int:
         "additional_generated_evidence_must_not_be_committed"
     ) is not True:
         failures.append("future runtime evidence must be Release-only")
+    latest = pointer.get("latest_retained_release", {})
+    retained_bytes = RETAINED_RECORD.read_bytes() if RETAINED_RECORD.is_file() else b""
+    if latest.get("record_path") != "../issue-89/retained-release-record.json":
+        failures.append("latest retained runtime evidence path is not canonical")
+    if latest.get("record_content_hash") != digest(retained_bytes):
+        failures.append("latest retained runtime evidence record hash mismatch")
+    if latest.get("record_byte_length") != len(retained_bytes):
+        failures.append("latest retained runtime evidence record length mismatch")
+    try:
+        retained = json.loads(retained_bytes)
+    except (ValueError, json.JSONDecodeError):
+        retained = {}
+        failures.append("latest retained runtime evidence record is invalid JSON")
+    release = retained.get("release", {})
+    provenance = retained.get("provenance", {})
+    evidence = retained.get("evidence", {})
+    package_hash = release.get("package_sha256")
+    bare_hash = str(package_hash).removeprefix("sha256:")
+    if (
+        retained.get("schema")
+        != "casegraphen.experimental.runtime_durability.retention_record.v1"
+        or retained.get("schema_version") != 1
+        or retained.get("retention_state") != "retained_release"
+        or retained.get("accepted") is not False
+        or retained.get("promotion_recommended") is not False
+        or evidence.get("all_thresholds_passed") is not True
+    ):
+        failures.append("latest retained runtime evidence authority boundary is invalid")
+    if (
+        re.fullmatch(r"sha256:[0-9a-f]{64}", str(package_hash)) is None
+        or release.get("tag") != f"runtime-durability-evidence-{bare_hash}"
+        or release.get("asset_name") != f"sha256-{bare_hash}.tar.gz"
+    ):
+        failures.append("latest retained runtime evidence is not content-addressed")
+    for field in ("evaluated_commit_sha", "workflow_run_id", "workflow_run_attempt"):
+        if latest.get(field) != provenance.get(field):
+            failures.append(f"latest retained runtime evidence provenance mismatch: {field}")
+    if latest.get("release_tag") != release.get("tag") or latest.get(
+        "package_sha256"
+    ) != package_hash:
+        failures.append("latest retained runtime evidence Release identity mismatch")
+    if latest.get("offline_verified") is not True:
+        failures.append("latest retained runtime evidence lacks offline verification")
     workflow = (ROOT / ".github/workflows/runtime-durability-evidence.yml").read_text()
     required_workflow = [
         "fresh-agent-run-provenance.py inspect-release",

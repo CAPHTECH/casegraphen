@@ -23,7 +23,7 @@ facts have retained evidence. As of 2026-08-05 the supported product surface is
 inventory records exact evidence dates, evaluated commits, and content hashes;
 this prose does not redefine those decision rules.
 
-## Completed local evidence
+## Completed retained evidence
 
 <!-- promotion-trigger:runtime-families -->
 
@@ -59,6 +59,15 @@ this prose does not redefine those decision rules.
   a 512-node/511-edge/128-retry run, and 512 allocator journal events. This is
   a bounded local threshold, not a sustained-fleet claim.
 
+<!-- promotion-trigger:durable-runtime-evidence -->
+
+- Issue #89 published a deterministic content-addressed package through a
+  required-reviewer environment at exact commit `a8d11a9...`, re-downloaded
+  the Release asset, verified its SHA-256 and internal inventory in the
+  workflow, and repeated strict offline verification independently. The small
+  exact retained record is checked in under `docs/pilots/issue-89`. This is
+  durable non-promotional evidence, not WORM storage or CaseGraphen acceptance.
+
 <!-- promotion-trigger:verification-product-surface -->
 
 - Issue #87 exposes verification-lineage proof derivation as a supported
@@ -92,18 +101,9 @@ independent acceptance-ledger review records a separate decision.
    Retain the required 10k/100k journal replay, compaction, crash/resume, and
    verification reports as governed release evidence.
 
-<!-- promotion-trigger:durable-runtime-evidence -->
-
-3. **Content-addressed runtime-durability publication — Issue #89.** Publish
-   the deterministic package with create-new/no-clobber semantics, re-download
-   it, verify its SHA-256 and internal inventory offline, then retain the small
-   release record in the repository. The existing Issue #85 directory is the
-   last checked-in legacy baseline, not proof that this external publication
-   occurred.
-
 <!-- promotion-trigger:production-fleet -->
 
-4. **Production or remote fleet evidence — Issue #89.** Retain evidence from a
+3. **Production or remote fleet evidence — Issue #89.** Retain evidence from a
    real long-lived scheduler/fleet boundary, including remote failures and
    recovery. Local adapter diversity and bounded synthetic scale do not prove
    this behavior.

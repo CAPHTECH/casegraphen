@@ -88,6 +88,12 @@ asset, and verifies its SHA before producing a `retained_release` record.
 GitHub Release administrators can still delete an asset, so this is durable,
 content-addressed evidence rather than WORM storage.
 
+The first successfully retained package is bound by
+[`../issue-89/retained-release-record.json`](../issue-89/retained-release-record.json).
+Workflow run `30958980480` and an independent second download both completed
+strict offline verification. `release-evidence.json` binds that exact small
+record while continuing to identify this directory as the final bulk baseline.
+
 After downloading the asset and its checked-in retention record, verify the
 chain without trusting the record's claims alone:
 
