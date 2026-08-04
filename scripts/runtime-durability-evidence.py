@@ -219,7 +219,12 @@ def build(args: argparse.Namespace) -> int:
         evidence.mkdir(parents=True)
         for item in files:
             shutil.copyfile(evidence_dir / item["path"], evidence / item["path"])
-        source_bytes = canonical(source) + b"\n"
+        # The source producer may emit its strict inventory in any order.  The
+        # package contract is canonical, so bind the same path-sorted inventory
+        # in both manifests before constructing deterministic archive bytes.
+        canonical_source = dict(source)
+        canonical_source["files"] = files
+        source_bytes = canonical(canonical_source) + b"\n"
         (staging / "source-evidence.manifest.json").write_bytes(source_bytes)
         package_manifest = {
             "schema": PACKAGE_SCHEMA,

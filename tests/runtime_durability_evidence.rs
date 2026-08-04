@@ -93,6 +93,26 @@ fn bounded_fixture_builds_deterministically_and_verifies_offline() {
 }
 
 #[test]
+fn unsorted_source_inventory_is_canonicalized_before_offline_verification() {
+    let evidence = temp("runtime-evidence-unsorted-fixture");
+    let output = temp("runtime-evidence-unsorted");
+    fixture(&evidence);
+    let manifest_path = evidence.join("retained-evidence.manifest.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["files"].as_array_mut().unwrap().reverse();
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    build(&evidence, &output);
+    let result = verify(&output);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
 fn substituted_package_fails_offline_verification() {
     let evidence = temp("runtime-evidence-substitution-fixture");
     let output = temp("runtime-evidence-substitution");
