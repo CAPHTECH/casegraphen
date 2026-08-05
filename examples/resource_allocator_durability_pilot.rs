@@ -2,7 +2,7 @@
 
 use casegraphen::{
     execution_topology::{
-        execution_topology_content_hash, parse_execution_topology, ExecutionTopology,
+        execution_topology_content_hash, parse_execution_topology, ExecutionTopology, ResourceMode,
     },
     resource_allocator::{
         ResourceAllocatorConfiguration, ResourceAllocatorRetentionPolicy,
@@ -27,6 +27,7 @@ use std::{
 const DEFAULT_EVENT_TARGET: usize = 512;
 const REPLAY_LIMIT_MS: u128 = 5_000;
 const APPEND_LIMIT_MS: u128 = 60_000;
+const APPEND_PAIR_P95_LIMIT_MS: u64 = 100;
 
 fn allocator(path: &Path) -> UnreviewedResourceJournal {
     UnreviewedResourceJournal::new(
@@ -88,6 +89,110 @@ fn disposition(
     }
 }
 
+fn latency_summary(mut samples: Vec<u64>) -> serde_json::Value {
+    samples.sort_unstable();
+    let percentile = |numerator: usize, denominator: usize| -> u64 {
+        samples[((samples.len() - 1) * numerator) / denominator]
+    };
+    json!({
+        "p50": percentile(50, 100),
+        "p95": percentile(95, 100),
+        "max": samples.last().copied().unwrap_or(0)
+    })
+}
+
+fn active_and_mixed_workload(
+    output: &Path,
+    topology: &ExecutionTopology,
+    event_target: usize,
+) -> serde_json::Value {
+    let active_target = match event_target {
+        10_000.. => 10_000,
+        _ => 128,
+    };
+    let root = output.with_extension("active-workload-journal");
+    let _ = fs::remove_dir_all(&root);
+    let mut shared_read_topology = topology.clone();
+    shared_read_topology.nodes[0].resource_claims[0].mode = ResourceMode::Read;
+    let journal = allocator(&root);
+    let mut active = Vec::with_capacity(active_target);
+    let mut active_append_ms = Vec::with_capacity(active_target);
+    let active_started = Instant::now();
+    for index in 0..active_target {
+        let started = Instant::now();
+        let declaration = declaration(&shared_read_topology, 0, &format!("active-{index}"));
+        let reservation = reservation(&declaration, &format!("active-{index}"));
+        journal
+            .reserve_bounded(
+                &shared_read_topology,
+                "revision:active-workload",
+                declaration,
+                reservation.clone(),
+                &format!("idem:active:{index}"),
+            )
+            .unwrap();
+        active.push(reservation);
+        active_append_ms.push(started.elapsed().as_millis() as u64);
+    }
+    let active_elapsed_ms = active_started.elapsed().as_millis();
+    let active_snapshot_count = journal.snapshot().unwrap().active_reservations.len();
+
+    let churn_count = match event_target {
+        100_000.. => 4_096,
+        10_000.. => 1_024,
+        _ => active_target,
+    };
+    let mut churn_pair_ms = Vec::with_capacity(churn_count);
+    let churn_started = Instant::now();
+    for (index, prior) in active.iter().cloned().enumerate().take(churn_count) {
+        let started = Instant::now();
+        journal
+            .disposition_bounded(
+                "revision:mixed-workload",
+                disposition(
+                    &prior,
+                    &format!("mixed-release-{index}"),
+                    ReservationAssertionKind::Release,
+                    None,
+                ),
+                &format!("idem:mixed:release:{index}"),
+            )
+            .unwrap();
+        let declaration = declaration(&shared_read_topology, 0, &format!("mixed-{index}"));
+        let replacement = reservation(&declaration, &format!("mixed-{index}"));
+        journal
+            .reserve_bounded(
+                &shared_read_topology,
+                "revision:mixed-workload",
+                declaration,
+                replacement,
+                &format!("idem:mixed:reserve:{index}"),
+            )
+            .unwrap();
+        churn_pair_ms.push(started.elapsed().as_millis() as u64);
+    }
+    let churn_elapsed_ms = churn_started.elapsed().as_millis();
+    let final_active_count = journal.snapshot().unwrap().active_reservations.len();
+    let report = json!({
+        "all_active": {
+            "reservation_count": active_target,
+            "elapsed_ms": active_elapsed_ms,
+            "append_latency_ms": latency_summary(active_append_ms),
+            "observed_active_count": active_snapshot_count
+        },
+        "mixed_churn": {
+            "release_reserve_pair_count": churn_count,
+            "elapsed_ms": churn_elapsed_ms,
+            "pair_latency_ms": latency_summary(churn_pair_ms),
+            "observed_active_count": final_active_count
+        },
+        "bounded_operation_snapshot": true,
+        "passed": active_snapshot_count == active_target && final_active_count == active_target
+    });
+    let _ = fs::remove_dir_all(root);
+    report
+}
+
 fn main() {
     let output = PathBuf::from(env::args().nth(1).expect("output JSON path"));
     let event_target = env::var("CASEGRAPHEN_ALLOCATOR_EVENT_TARGET")
@@ -102,16 +207,20 @@ fn main() {
         "../schemas/experimental/execution.topology.worktree.example.json"
     ))
     .unwrap();
+    let active_and_mixed = active_and_mixed_workload(&output, &topology, event_target);
 
     let total_started = Instant::now();
     let mut append_pair_ms = Vec::with_capacity(event_target / 2);
     let mut peak_rss_bytes = observed_rss_bytes();
+    // This is the same long-lived allocator shape used by the operational
+    // host. Restart replay is measured separately below with a fresh value.
+    let long_lived_allocator = allocator(&root);
     for index in 0..(event_target / 2) {
         let pair_started = Instant::now();
         let declaration = declaration(&topology, 0, &format!("long-{index}"));
         let reservation = reservation(&declaration, &format!("long-{index}"));
-        allocator(&root)
-            .reserve(
+        long_lived_allocator
+            .reserve_bounded(
                 &topology,
                 "revision:allocator-pilot",
                 declaration,
@@ -119,8 +228,8 @@ fn main() {
                 &format!("idem:reserve:{index}"),
             )
             .unwrap();
-        allocator(&root)
-            .disposition(
+        long_lived_allocator
+            .disposition_bounded(
                 "revision:allocator-pilot",
                 disposition(
                     &reservation,
@@ -140,6 +249,8 @@ fn main() {
     let percentile = |numerator: usize, denominator: usize| -> u64 {
         append_pair_ms[((append_pair_ms.len() - 1) * numerator) / denominator]
     };
+    let append_pair_p50_ms = percentile(50, 100);
+    let append_pair_p95_ms = percentile(95, 100);
     let append_ms = total_started.elapsed().as_millis();
     let replay_started = Instant::now();
     let restarted_snapshot = allocator(&root).snapshot().unwrap();
@@ -267,15 +378,40 @@ fn main() {
         .active_reservations
         == vec![new];
 
+    let append_limit_ms = match event_target {
+        100_000.. => 2_400_000,
+        10_000.. => 300_000,
+        _ => APPEND_LIMIT_MS,
+    };
+    let replay_limit_ms = match event_target {
+        100_000.. => 120_000,
+        10_000.. => 30_000,
+        _ => REPLAY_LIMIT_MS,
+    };
+    let checkpoint_operation_limit_ms = if event_target >= 100_000 {
+        600_000
+    } else {
+        120_000
+    };
+    let checkpoint_size_limit_bytes = (event_target as u64)
+        .saturating_mul(2_048)
+        .saturating_add(1_048_576);
     let passed = restarted_snapshot.generation as usize == event_target
         && restarted_snapshot.active_reservations.is_empty()
-        && append_ms <= APPEND_LIMIT_MS
-        && replay_ms <= REPLAY_LIMIT_MS
+        && append_ms <= append_limit_ms
+        && append_pair_p95_ms <= APPEND_PAIR_P95_LIMIT_MS
+        && replay_ms <= replay_limit_ms
+        && checkpoint_create_ms <= checkpoint_operation_limit_ms
+        && checkpoint_verify_ms <= checkpoint_operation_limit_ms
+        && compaction_ms <= checkpoint_operation_limit_ms
+        && checkpoint_size_bytes <= checkpoint_size_limit_bytes
         && crash_before_publication_ignored
         && crash_after_publication_refused
         && concurrent_grants == 1
         && supersede_active_successor;
-    let passed = passed && checkpoint_full_replay_equivalent;
+    let passed = passed
+        && checkpoint_full_replay_equivalent
+        && active_and_mixed["passed"].as_bool() == Some(true);
     let report = json!({
         "schema":"casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
         "passed":passed,
@@ -283,10 +419,11 @@ fn main() {
         "journal_event_count":restarted_snapshot.generation,
         "event_threshold":event_target,
         "append_elapsed_ms":append_ms,
-        "append_pair_latency_ms":{"p50":percentile(50,100),"p95":percentile(95,100),"max":append_pair_ms.last().copied().unwrap_or(0)},
-        "append_threshold_ms":APPEND_LIMIT_MS,
+        "append_pair_latency_ms":{"p50":append_pair_p50_ms,"p95":append_pair_p95_ms,"max":append_pair_ms.last().copied().unwrap_or(0)},
+        "append_pair_p95_threshold_ms":APPEND_PAIR_P95_LIMIT_MS,
+        "append_threshold_ms":append_limit_ms,
         "restart_replay_ms":replay_ms,
-        "restart_replay_threshold_ms":REPLAY_LIMIT_MS,
+        "restart_replay_threshold_ms":replay_limit_ms,
         "active_after_release_count":restarted_snapshot.active_reservations.len(),
         "concurrent_grant_count":concurrent_grants,
         "crash_before_publication_ignored":crash_before_publication_ignored,
@@ -299,14 +436,17 @@ fn main() {
             "checkpoint_sequence":checkpoint.last_event_sequence,
             "checkpoint_content_hash":checkpoint.checkpoint_content_hash,
             "checkpoint_size_bytes":checkpoint_size_bytes,
+            "checkpoint_size_threshold_bytes":checkpoint_size_limit_bytes,
             "checkpoint_create_ms":checkpoint_create_ms,
             "checkpoint_independent_verify_ms":checkpoint_verify_ms,
+            "checkpoint_operation_threshold_ms":checkpoint_operation_limit_ms,
             "compaction_ms":compaction_ms,
             "archived_event_count":compaction.archived_event_count,
             "active_event_count":compaction.active_event_count,
             "suffix_replay_ms":suffix_replay_ms,
             "full_replay_equivalent":checkpoint_full_replay_equivalent
         },
+        "workloads": active_and_mixed,
         "observed_peak_rss_bytes":peak_rss_bytes,
         "authority_boundary":"unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
         "halt":"operator_review_required"

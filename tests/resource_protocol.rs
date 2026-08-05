@@ -6,13 +6,14 @@ use casegraphen::{
         WorkspaceStrategy,
     },
     resource_protocol::{
-        declaration_grants, grant_reservation, grant_topology_reservation,
-        reconcile_resource_allocations, reservation_is_active, validate_worktree_record,
-        GitWorktreeRecord, RateLimitCapacity, ReservationAssertionKind,
-        ReservationDispositionAssertion, ResourceDeclaration, ResourceReconciliation,
-        ResourceReservation, RuntimeResourceAllocation, WorktreeState, RATE_LIMIT_CAPACITY_SCHEMA,
-        RESERVATION_ASSERTION_SCHEMA, RESOURCE_ALLOCATION_SCHEMA, RESOURCE_DECLARATION_SCHEMA,
-        RESOURCE_RESERVATION_SCHEMA, RUNTIME_ALLOCATION_TRUST_BOUNDARY,
+        declaration_grants, grant_indexed_reservation, grant_reservation,
+        grant_topology_reservation, reconcile_resource_allocations, reservation_is_active,
+        validate_worktree_record, GitWorktreeRecord, RateLimitCapacity, ReservationAssertionKind,
+        ReservationDispositionAssertion, ResourceDeclaration, ResourceOccupancyIndex,
+        ResourceReconciliation, ResourceReservation, RuntimeResourceAllocation, WorktreeState,
+        RATE_LIMIT_CAPACITY_SCHEMA, RESERVATION_ASSERTION_SCHEMA, RESOURCE_ALLOCATION_SCHEMA,
+        RESOURCE_DECLARATION_SCHEMA, RESOURCE_RESERVATION_SCHEMA,
+        RUNTIME_ALLOCATION_TRUST_BOUNDARY,
     },
 };
 use serde::Deserialize;
@@ -77,6 +78,64 @@ fn compatible_readers_receive_overlapping_reservations() {
     let right = reservation("reservation:right", "attempt:right", &right_declaration);
     assert!(grant_reservation(&left_declaration, &left, &[], &[], &[]).is_ok());
     assert!(grant_reservation(&right_declaration, &right, &[left], &[], &[]).is_ok());
+}
+
+#[test]
+fn indexed_and_slice_compatibility_evaluators_are_semantically_identical() {
+    let held_declaration = declaration("declaration:held", "file:src/lib.rs", ResourceMode::Write);
+    let held = reservation("reservation:held", "attempt:held", &held_declaration);
+    for mode in [
+        ResourceMode::Read,
+        ResourceMode::Write,
+        ResourceMode::Exclusive,
+    ] {
+        let candidate_declaration = declaration("declaration:candidate", "file:src/lib.rs", mode);
+        let candidate = reservation(
+            "reservation:candidate",
+            "attempt:candidate",
+            &candidate_declaration,
+        );
+        let slice = grant_reservation(
+            &candidate_declaration,
+            &candidate,
+            std::slice::from_ref(&held),
+            &[],
+            &[],
+        );
+        let index = ResourceOccupancyIndex::from_active_reservations(std::slice::from_ref(&held));
+        let indexed = grant_indexed_reservation(&candidate_declaration, &candidate, &index, &[]);
+        assert_eq!(slice, indexed);
+    }
+}
+
+#[test]
+fn ten_thousand_shared_readers_do_not_become_candidate_conflict_scans() {
+    let held_declaration = declaration(
+        "declaration:shared-read",
+        "file:large-shared-input",
+        ResourceMode::Read,
+    );
+    let active = (0..10_000)
+        .map(|index| {
+            reservation(
+                &format!("reservation:reader-{index}"),
+                &format!("attempt:reader-{index}"),
+                &held_declaration,
+            )
+        })
+        .collect::<Vec<_>>();
+    let index = ResourceOccupancyIndex::from_active_reservations(&active);
+    let candidate_declaration = declaration(
+        "declaration:candidate-reader",
+        "file:large-shared-input",
+        ResourceMode::Read,
+    );
+    let candidate = reservation(
+        "reservation:candidate-reader",
+        "attempt:candidate-reader",
+        &candidate_declaration,
+    );
+    assert!(grant_indexed_reservation(&candidate_declaration, &candidate, &index, &[]).is_ok());
 }
 
 #[test]

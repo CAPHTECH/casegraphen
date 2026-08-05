@@ -9,19 +9,24 @@ use crate::{
     graph_compiler::ReviewedDeploymentAuthority,
     native_hash::sha256_hex,
     resource_protocol::{
-        grant_topology_reservation, reservation_is_active, RateLimitCapacity,
-        ReservationAssertionKind, ReservationDispositionAssertion, ResourceDeclaration,
-        ResourceReservation,
+        grant_indexed_reservation, grant_indexed_topology_reservation, reservation_is_active,
+        RateLimitCapacity, ReservationAssertionKind, ReservationDispositionAssertion,
+        ResourceDeclaration, ResourceOccupancyIndex, ResourceReservation,
     },
 };
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, MutexGuard,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 static TEMPORARY_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -44,6 +49,10 @@ const IDENTITY_FILE: &str = ".allocator-identity";
 const CHECKPOINT_DIRECTORY: &str = "checkpoints";
 const ARCHIVE_DIRECTORY: &str = "archive";
 const COMPACTION_DIRECTORY: &str = "compactions";
+const WRITER_LOCK_FILE: &str = ".allocator-writer-lock";
+const HEAD_HINT_FILE: &str = ".allocator-head-hint";
+const WRITER_LOCK_TIMEOUT: Duration = Duration::from_millis(500);
+const WRITER_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 pub fn resource_declaration_content_hash(declaration: &ResourceDeclaration) -> String {
     digest(declaration)
@@ -151,6 +160,15 @@ struct ResourceAllocatorIdentity {
     identity_content_hash: String,
 }
 
+/// Non-authoritative invalidation token for the process-local replay cache.
+/// Missing, stale, or malformed bytes always force canonical journal replay.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceAllocatorHeadHint {
+    generation: u64,
+    last_event_hash: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ResourceAllocatorEventPayload {
@@ -192,11 +210,49 @@ pub struct ResourceAllocatorSnapshot {
     pub capacities: Vec<RateLimitCapacity>,
 }
 
+/// Bounded projection returned on the hot append path. Complete historical
+/// dispositions remain available through [`AtomicResourceAllocator::snapshot`]
+/// and full replay, but are not cloned for every committed event.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResourceAllocatorOperationSnapshot {
+    pub generation: u64,
+    pub last_event_hash: Option<String>,
+    pub active_reservation_count: u64,
+    pub disposition_count: u64,
+    pub allocator_configuration_hash: String,
+    pub rate_limit_capacity_count: u64,
+    /// Whether the non-authoritative persisted head hint was successfully
+    /// synchronized with this outcome. `false` never rolls back a committed
+    /// journal event; it tells operators that the next call will replay.
+    pub head_hint_healthy: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ResourceAllocatorOutcome {
     pub replayed: bool,
     pub event: ResourceAllocatorEvent,
     pub snapshot: ResourceAllocatorSnapshot,
+}
+
+/// Bounded outcome for long-lived hosts and fleet append loops. The legacy
+/// [`ResourceAllocatorOutcome`] remains available for 0.8 callers that require
+/// the complete post-operation snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResourceAllocatorOperationOutcome {
+    pub replayed: bool,
+    pub event: ResourceAllocatorEvent,
+    pub snapshot: ResourceAllocatorOperationSnapshot,
+}
+
+#[derive(Clone, Copy)]
+enum OutcomeProjection {
+    Legacy,
+    Bounded,
+}
+
+enum ProjectedOutcome {
+    Legacy(ResourceAllocatorOutcome),
+    Bounded(ResourceAllocatorOperationOutcome),
 }
 
 #[derive(Debug)]
@@ -205,6 +261,7 @@ pub enum ResourceAllocatorError {
     InvalidConfiguration(String),
     Integrity(String),
     IdempotencyCollision,
+    WriterBusy { timeout_ms: u64 },
     Refused(serde_json::Value),
 }
 
@@ -218,6 +275,10 @@ impl std::fmt::Display for ResourceAllocatorError {
             Self::IdempotencyCollision => {
                 formatter.write_str("idempotency key names different allocator content")
             }
+            Self::WriterBusy { timeout_ms } => write!(
+                formatter,
+                "resource allocator writer remained busy for {timeout_ms} ms"
+            ),
             Self::Refused(findings) => write!(formatter, "resource allocation refused: {findings}"),
         }
     }
@@ -236,9 +297,28 @@ struct ReplayState {
     reservations: Vec<ResourceReservation>,
     declarations: BTreeMap<String, ResourceDeclaration>,
     dispositions: Vec<ReservationDispositionAssertion>,
+    dispositions_by_id: BTreeMap<String, ReservationDispositionAssertion>,
     events_by_idempotency: BTreeMap<String, ResourceAllocatorEvent>,
+    reservations_by_identity: BTreeMap<(String, String), ResourceReservation>,
+    active_reservations_by_identity: BTreeMap<(String, String), ResourceReservation>,
+    active_reservation_ids: BTreeSet<String>,
+    occupancy: ResourceOccupancyIndex,
+    reviewed_bindings_by_identity: BTreeMap<(String, String), ReviewedDeploymentReservationBinding>,
+    reviewed_bindings_by_reservation_id: BTreeMap<String, ReviewedDeploymentReservationBinding>,
     generation: u64,
     last_event_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CacheAuthorityMetadata {
+    identity_hash: String,
+    checkpoint_inventory_hash: String,
+    compaction_inventory_hash: String,
+}
+
+struct ValidatedReplayCache {
+    state: ReplayState,
+    authority_metadata: CacheAuthorityMetadata,
 }
 
 /// Opaque evidence that one checkpoint was compared with a complete replay of
@@ -253,6 +333,7 @@ pub struct VerifiedResourceAllocatorCheckpoint {
 pub struct AtomicResourceAllocator {
     journal_directory: PathBuf,
     capacities: Vec<RateLimitCapacity>,
+    replay_cache: Mutex<Option<ValidatedReplayCache>>,
 }
 
 /// Journal-backed evaluator for allocator mechanics that deliberately carries
@@ -281,13 +362,38 @@ impl UnreviewedResourceJournal {
         reservation: ResourceReservation,
         idempotency_key: &str,
     ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
-        self.allocator.reserve_unreviewed(
+        match self.allocator.reserve_unreviewed_projected(
             topology,
             base_revision_id,
             declaration,
             reservation,
             idempotency_key,
-        )
+            OutcomeProjection::Legacy,
+        )? {
+            ProjectedOutcome::Legacy(outcome) => Ok(outcome),
+            ProjectedOutcome::Bounded(_) => unreachable!(),
+        }
+    }
+
+    pub fn reserve_bounded(
+        &self,
+        topology: &ExecutionTopology,
+        base_revision_id: &str,
+        declaration: ResourceDeclaration,
+        reservation: ResourceReservation,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOperationOutcome, ResourceAllocatorError> {
+        match self.allocator.reserve_unreviewed_projected(
+            topology,
+            base_revision_id,
+            declaration,
+            reservation,
+            idempotency_key,
+            OutcomeProjection::Bounded,
+        )? {
+            ProjectedOutcome::Bounded(outcome) => Ok(outcome),
+            ProjectedOutcome::Legacy(_) => unreachable!(),
+        }
     }
 
     pub fn disposition(
@@ -296,8 +402,32 @@ impl UnreviewedResourceJournal {
         assertion: ReservationDispositionAssertion,
         idempotency_key: &str,
     ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
-        self.allocator
-            .disposition_unreviewed(base_revision_id, assertion, idempotency_key)
+        match self.allocator.disposition_unreviewed_projected(
+            base_revision_id,
+            assertion,
+            idempotency_key,
+            OutcomeProjection::Legacy,
+        )? {
+            ProjectedOutcome::Legacy(outcome) => Ok(outcome),
+            ProjectedOutcome::Bounded(_) => unreachable!(),
+        }
+    }
+
+    pub fn disposition_bounded(
+        &self,
+        base_revision_id: &str,
+        assertion: ReservationDispositionAssertion,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOperationOutcome, ResourceAllocatorError> {
+        match self.allocator.disposition_unreviewed_projected(
+            base_revision_id,
+            assertion,
+            idempotency_key,
+            OutcomeProjection::Bounded,
+        )? {
+            ProjectedOutcome::Bounded(outcome) => Ok(outcome),
+            ProjectedOutcome::Legacy(_) => unreachable!(),
+        }
     }
 
     pub fn snapshot(&self) -> Result<ResourceAllocatorSnapshot, ResourceAllocatorError> {
@@ -338,17 +468,19 @@ impl AtomicResourceAllocator {
         Ok(Self {
             journal_directory: journal_directory.into(),
             capacities: configuration.capacities,
+            replay_cache: Mutex::new(None),
         })
     }
 
-    fn reserve_unreviewed(
+    fn reserve_unreviewed_projected(
         &self,
         topology: &ExecutionTopology,
         base_revision_id: &str,
         declaration: ResourceDeclaration,
         reservation: ResourceReservation,
         idempotency_key: &str,
-    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        projection: OutcomeProjection,
+    ) -> Result<ProjectedOutcome, ResourceAllocatorError> {
         let topology_hash =
             execution_topology_content_hash(topology).expect("typed execution topology serializes");
         let payload = ResourceAllocatorEventPayload::Reserve {
@@ -358,7 +490,7 @@ impl AtomicResourceAllocator {
             declaration,
             reservation,
         };
-        self.append(idempotency_key, payload, |state, payload| {
+        self.append(idempotency_key, payload, projection, |state, payload| {
             let ResourceAllocatorEventPayload::Reserve {
                 declaration,
                 reservation,
@@ -367,12 +499,12 @@ impl AtomicResourceAllocator {
             else {
                 unreachable!()
             };
-            grant_topology_reservation(
+            validate_new_reservation_identity(state, reservation)?;
+            grant_indexed_topology_reservation(
                 topology,
                 declaration,
                 reservation,
-                &state.reservations,
-                &state.dispositions,
+                &state.occupancy,
                 &self.capacities,
             )
             .map(|_| ())
@@ -393,6 +525,54 @@ impl AtomicResourceAllocator {
         reservation: ResourceReservation,
         idempotency_key: &str,
     ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        match self.reserve_reviewed_projected(
+            topology,
+            authority,
+            base_revision_id,
+            declaration,
+            reservation,
+            idempotency_key,
+            OutcomeProjection::Legacy,
+        )? {
+            ProjectedOutcome::Legacy(outcome) => Ok(outcome),
+            ProjectedOutcome::Bounded(_) => unreachable!(),
+        }
+    }
+
+    pub fn reserve_reviewed_bounded(
+        &self,
+        topology: &ExecutionTopology,
+        authority: &ReviewedDeploymentAuthority,
+        base_revision_id: &str,
+        declaration: ResourceDeclaration,
+        reservation: ResourceReservation,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOperationOutcome, ResourceAllocatorError> {
+        match self.reserve_reviewed_projected(
+            topology,
+            authority,
+            base_revision_id,
+            declaration,
+            reservation,
+            idempotency_key,
+            OutcomeProjection::Bounded,
+        )? {
+            ProjectedOutcome::Bounded(outcome) => Ok(outcome),
+            ProjectedOutcome::Legacy(_) => unreachable!(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reserve_reviewed_projected(
+        &self,
+        topology: &ExecutionTopology,
+        authority: &ReviewedDeploymentAuthority,
+        base_revision_id: &str,
+        declaration: ResourceDeclaration,
+        reservation: ResourceReservation,
+        idempotency_key: &str,
+        projection: OutcomeProjection,
+    ) -> Result<ProjectedOutcome, ResourceAllocatorError> {
         let topology_hash =
             execution_topology_content_hash(topology).expect("typed execution topology serializes");
         if topology_hash != authority.topology_content_hash()
@@ -424,7 +604,7 @@ impl AtomicResourceAllocator {
             declaration,
             reservation,
         };
-        self.append(idempotency_key, payload, |state, payload| {
+        self.append(idempotency_key, payload, projection, |state, payload| {
             let ResourceAllocatorEventPayload::Reserve {
                 declaration,
                 reservation,
@@ -448,12 +628,12 @@ impl AtomicResourceAllocator {
                     "reviewed reservation binding does not match declaration or attempt".to_owned(),
                 ));
             }
-            grant_topology_reservation(
+            validate_new_reservation_identity(state, reservation)?;
+            grant_indexed_topology_reservation(
                 topology,
                 declaration,
                 reservation,
-                &state.reservations,
-                &state.dispositions,
+                &state.occupancy,
                 &self.capacities,
             )
             .map(|_| ())
@@ -465,18 +645,19 @@ impl AtomicResourceAllocator {
         })
     }
 
-    fn disposition_unreviewed(
+    fn disposition_unreviewed_projected(
         &self,
         base_revision_id: &str,
         assertion: ReservationDispositionAssertion,
         idempotency_key: &str,
-    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+        projection: OutcomeProjection,
+    ) -> Result<ProjectedOutcome, ResourceAllocatorError> {
         let payload = ResourceAllocatorEventPayload::Disposition {
             base_revision_id: base_revision_id.to_owned(),
             reviewed_deployment: None,
             assertion,
         };
-        self.append(idempotency_key, payload, |state, payload| {
+        self.append(idempotency_key, payload, projection, |state, payload| {
             let ResourceAllocatorEventPayload::Disposition { assertion, .. } = payload else {
                 unreachable!()
             };
@@ -490,24 +671,46 @@ impl AtomicResourceAllocator {
         assertion: ReservationDispositionAssertion,
         idempotency_key: &str,
     ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
-        let state = self.replay()?;
-        let reviewed_deployment = state
-            .events_by_idempotency
-            .values()
-            .find_map(|event| {
-                let ResourceAllocatorEventPayload::Reserve {
-                    reviewed_deployment,
-                    reservation,
-                    ..
-                } = &event.payload
-                else {
-                    return None;
-                };
-                (reservation.reservation_id == assertion.reservation_id
-                    && reservation.attempt_id == assertion.attempt_id)
-                    .then_some(reviewed_deployment.clone())
-                    .flatten()
-            })
+        match self.disposition_reviewed_projected(
+            base_revision_id,
+            assertion,
+            idempotency_key,
+            OutcomeProjection::Legacy,
+        )? {
+            ProjectedOutcome::Legacy(outcome) => Ok(outcome),
+            ProjectedOutcome::Bounded(_) => unreachable!(),
+        }
+    }
+
+    pub fn disposition_reviewed_bounded(
+        &self,
+        base_revision_id: &str,
+        assertion: ReservationDispositionAssertion,
+        idempotency_key: &str,
+    ) -> Result<ResourceAllocatorOperationOutcome, ResourceAllocatorError> {
+        match self.disposition_reviewed_projected(
+            base_revision_id,
+            assertion,
+            idempotency_key,
+            OutcomeProjection::Bounded,
+        )? {
+            ProjectedOutcome::Bounded(outcome) => Ok(outcome),
+            ProjectedOutcome::Legacy(_) => unreachable!(),
+        }
+    }
+
+    fn disposition_reviewed_projected(
+        &self,
+        base_revision_id: &str,
+        assertion: ReservationDispositionAssertion,
+        idempotency_key: &str,
+        projection: OutcomeProjection,
+    ) -> Result<ProjectedOutcome, ResourceAllocatorError> {
+        let reviewed_deployment = self
+            .reviewed_reservation_binding_by_identity(
+                &assertion.reservation_id,
+                &assertion.attempt_id,
+            )?
             .ok_or_else(|| {
                 ResourceAllocatorError::Integrity(
                     "resource disposition target has no reviewed deployment authority".to_owned(),
@@ -518,7 +721,7 @@ impl AtomicResourceAllocator {
             reviewed_deployment: Some(reviewed_deployment),
             assertion,
         };
-        self.append(idempotency_key, payload, |state, payload| {
+        self.append(idempotency_key, payload, projection, |state, payload| {
             let ResourceAllocatorEventPayload::Disposition {
                 assertion,
                 reviewed_deployment,
@@ -527,20 +730,10 @@ impl AtomicResourceAllocator {
             else {
                 unreachable!()
             };
-            let expected = state.events_by_idempotency.values().find_map(|event| {
-                let ResourceAllocatorEventPayload::Reserve {
-                    reviewed_deployment,
-                    reservation,
-                    ..
-                } = &event.payload
-                else {
-                    return None;
-                };
-                (reservation.reservation_id == assertion.reservation_id
-                    && reservation.attempt_id == assertion.attempt_id)
-                    .then_some(reviewed_deployment.as_ref())
-                    .flatten()
-            });
+            let expected = state.reviewed_bindings_by_identity.get(&(
+                assertion.reservation_id.clone(),
+                assertion.attempt_id.clone(),
+            ));
             if expected != reviewed_deployment.as_ref() {
                 return Err(ResourceAllocatorError::Integrity(
                     "resource disposition authority differs from the canonical reservation"
@@ -552,34 +745,16 @@ impl AtomicResourceAllocator {
                     .superseding_reservation_id
                     .as_deref()
                     .expect("validated by resource protocol");
-                let superseding_is_reviewed = state.events_by_idempotency.values().any(|event| {
-                    matches!(
-                        &event.payload,
-                        ResourceAllocatorEventPayload::Reserve {
-                            reviewed_deployment: Some(_),
-                            reservation,
-                            ..
-                        } if reservation.reservation_id == superseding
-                    )
-                });
-                if !superseding_is_reviewed {
+                if !state
+                    .reviewed_bindings_by_reservation_id
+                    .contains_key(superseding)
+                {
                     return Err(ResourceAllocatorError::Integrity(
                         "superseding reservation has no reviewed deployment authority".to_owned(),
                     ));
                 }
-                let superseding_binding = state.events_by_idempotency.values().find_map(|event| {
-                    let ResourceAllocatorEventPayload::Reserve {
-                        reviewed_deployment,
-                        reservation,
-                        ..
-                    } = &event.payload
-                    else {
-                        return None;
-                    };
-                    (reservation.reservation_id == superseding)
-                        .then_some(reviewed_deployment.as_ref())
-                        .flatten()
-                });
+                let superseding_binding =
+                    state.reviewed_bindings_by_reservation_id.get(superseding);
                 if !superseding_binding.is_some_and(|candidate| {
                     candidate.case_space_id
                         == reviewed_deployment
@@ -612,8 +787,12 @@ impl AtomicResourceAllocator {
     }
 
     pub fn snapshot(&self) -> Result<ResourceAllocatorSnapshot, ResourceAllocatorError> {
-        let state = self.replay()?;
-        Ok(snapshot(&state, &self.capacities))
+        let _writer = self.acquire_writer_lock()?;
+        let cache = self.replay_cache_locked()?;
+        Ok(snapshot(
+            &cache.as_ref().expect("replay cache is initialized").state,
+            &self.capacities,
+        ))
     }
 
     pub fn contains_exact_reservation(
@@ -621,15 +800,20 @@ impl AtomicResourceAllocator {
         declaration: &ResourceDeclaration,
         reservation: &ResourceReservation,
     ) -> Result<bool, ResourceAllocatorError> {
-        let state = self.replay()?;
+        let _writer = self.acquire_writer_lock()?;
+        let cache = self.replay_cache_locked()?;
+        let state = &cache.as_ref().expect("replay cache is initialized").state;
         Ok(state
             .declarations
             .get(&declaration.declaration_id)
             .is_some_and(|candidate| candidate == declaration)
             && state
-                .reservations
-                .iter()
-                .any(|candidate| candidate == reservation))
+                .reservations_by_identity
+                .get(&(
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ))
+                .is_some_and(|candidate| candidate == reservation))
     }
 
     pub fn reviewed_reservation_binding(
@@ -637,21 +821,22 @@ impl AtomicResourceAllocator {
         declaration: &ResourceDeclaration,
         reservation: &ResourceReservation,
     ) -> Result<Option<ReviewedDeploymentReservationBinding>, ResourceAllocatorError> {
-        let state = self.replay()?;
-        Ok(state.events_by_idempotency.values().find_map(|event| {
-            let ResourceAllocatorEventPayload::Reserve {
-                reviewed_deployment,
-                declaration: candidate_declaration,
-                reservation: candidate_reservation,
-                ..
-            } = &event.payload
-            else {
-                return None;
-            };
-            (candidate_declaration == declaration && candidate_reservation == reservation)
-                .then_some(reviewed_deployment.clone())
-                .flatten()
-        }))
+        let _writer = self.acquire_writer_lock()?;
+        let cache = self.replay_cache_locked()?;
+        let state = &cache.as_ref().expect("replay cache is initialized").state;
+        Ok(state
+            .declarations
+            .get(&declaration.declaration_id)
+            .filter(|candidate| *candidate == declaration)
+            .and_then(|_| {
+                state
+                    .reviewed_bindings_by_identity
+                    .get(&(
+                        reservation.reservation_id.clone(),
+                        reservation.attempt_id.clone(),
+                    ))
+                    .cloned()
+            }))
     }
 
     pub fn reviewed_reservation_binding_by_identity(
@@ -659,62 +844,64 @@ impl AtomicResourceAllocator {
         reservation_id: &str,
         attempt_id: &str,
     ) -> Result<Option<ReviewedDeploymentReservationBinding>, ResourceAllocatorError> {
-        let state = self.replay()?;
-        Ok(state.events_by_idempotency.values().find_map(|event| {
-            let ResourceAllocatorEventPayload::Reserve {
-                reviewed_deployment,
-                reservation,
-                ..
-            } = &event.payload
-            else {
-                return None;
-            };
-            (reservation.reservation_id == reservation_id && reservation.attempt_id == attempt_id)
-                .then_some(reviewed_deployment.clone())
-                .flatten()
-        }))
+        let _writer = self.acquire_writer_lock()?;
+        let cache = self.replay_cache_locked()?;
+        let state = &cache.as_ref().expect("replay cache is initialized").state;
+        Ok(state
+            .reviewed_bindings_by_identity
+            .get(&(reservation_id.to_owned(), attempt_id.to_owned()))
+            .cloned())
     }
 
     pub fn contains_disposition(
         &self,
         assertion: &ReservationDispositionAssertion,
     ) -> Result<bool, ResourceAllocatorError> {
-        Ok(self
-            .replay()?
-            .dispositions
-            .iter()
-            .any(|candidate| candidate == assertion))
+        let _writer = self.acquire_writer_lock()?;
+        let cache = self.replay_cache_locked()?;
+        Ok(cache
+            .as_ref()
+            .expect("replay cache is initialized")
+            .state
+            .dispositions_by_id
+            .get(&assertion.assertion_id)
+            .is_some_and(|candidate| candidate == assertion))
     }
 
     fn append(
         &self,
         idempotency_key: &str,
         payload: ResourceAllocatorEventPayload,
+        projection: OutcomeProjection,
         validate: impl Fn(
             &ReplayState,
             &ResourceAllocatorEventPayload,
         ) -> Result<(), ResourceAllocatorError>,
-    ) -> Result<ResourceAllocatorOutcome, ResourceAllocatorError> {
+    ) -> Result<ProjectedOutcome, ResourceAllocatorError> {
         if idempotency_key.is_empty() {
             return Err(ResourceAllocatorError::Integrity(
                 "empty allocator idempotency key".to_owned(),
             ));
         }
         fs::create_dir_all(&self.journal_directory)?;
+        let _writer = self.acquire_writer_lock()?;
         let operation_digest = digest(&(idempotency_key, &payload));
+        let mut cache = self.replay_cache_locked()?;
+        let state = &mut cache.as_mut().expect("replay cache is initialized").state;
         loop {
-            let state = self.replay()?;
             if let Some(existing) = state.events_by_idempotency.get(idempotency_key) {
                 if existing.operation_digest != operation_digest {
                     return Err(ResourceAllocatorError::IdempotencyCollision);
                 }
-                return Ok(ResourceAllocatorOutcome {
-                    replayed: true,
-                    event: existing.clone(),
-                    snapshot: snapshot(&state, &self.capacities),
-                });
+                return Ok(self.project_outcome(
+                    projection,
+                    state,
+                    existing.clone(),
+                    true,
+                    self.head_hint_matches(state),
+                ));
             }
-            validate(&state, &payload)?;
+            validate(state, &payload)?;
             let sequence = state.generation + 1;
             let mut event = ResourceAllocatorEvent {
                 schema: RESOURCE_ALLOCATOR_EVENT_SCHEMA.to_owned(),
@@ -753,15 +940,23 @@ impl AtomicResourceAllocator {
                     if let Ok(directory) = fs::File::open(&self.journal_directory) {
                         directory.sync_all()?;
                     }
-                    let committed = self.replay()?;
-                    return Ok(ResourceAllocatorOutcome {
-                        replayed: false,
+                    apply_checked_event(state, &self.capacities, event.clone(), &path)?;
+                    // The journal event is already durable authority. A
+                    // disposable acceleration hint must not turn that commit
+                    // into an apparent failure or invite an unsafe retry.
+                    let head_hint_healthy = self.publish_head_hint(state).is_ok();
+                    return Ok(self.project_outcome(
+                        projection,
+                        state,
                         event,
-                        snapshot: snapshot(&committed, &self.capacities),
-                    });
+                        false,
+                        head_hint_healthy,
+                    ));
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     let _ = fs::remove_file(&temporary);
+                    *state = self.replay()?;
+                    let _ = self.publish_head_hint(state);
                     continue;
                 }
                 Err(error) => {
@@ -772,8 +967,159 @@ impl AtomicResourceAllocator {
         }
     }
 
+    fn project_outcome(
+        &self,
+        projection: OutcomeProjection,
+        state: &ReplayState,
+        event: ResourceAllocatorEvent,
+        replayed: bool,
+        head_hint_healthy: bool,
+    ) -> ProjectedOutcome {
+        match projection {
+            OutcomeProjection::Legacy => ProjectedOutcome::Legacy(ResourceAllocatorOutcome {
+                replayed,
+                event,
+                snapshot: snapshot(state, &self.capacities),
+            }),
+            OutcomeProjection::Bounded => {
+                ProjectedOutcome::Bounded(ResourceAllocatorOperationOutcome {
+                    replayed,
+                    event,
+                    snapshot: operation_snapshot(
+                        state,
+                        &self.configuration_hash(),
+                        self.capacities.len(),
+                        head_hint_healthy,
+                    ),
+                })
+            }
+        }
+    }
+
+    fn acquire_writer_lock(&self) -> Result<fs::File, ResourceAllocatorError> {
+        fs::create_dir_all(&self.journal_directory)?;
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(self.journal_directory.join(WRITER_LOCK_FILE))?;
+        let started = Instant::now();
+        loop {
+            match FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => return Ok(lock),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if started.elapsed() >= WRITER_LOCK_TIMEOUT {
+                        return Err(ResourceAllocatorError::WriterBusy {
+                            timeout_ms: WRITER_LOCK_TIMEOUT.as_millis() as u64,
+                        });
+                    }
+                    thread::sleep(WRITER_LOCK_RETRY_INTERVAL);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
+    fn replay_cache_locked(
+        &self,
+    ) -> Result<MutexGuard<'_, Option<ValidatedReplayCache>>, ResourceAllocatorError> {
+        let hint = self.read_head_hint();
+        let mut cache = self.replay_cache.lock().map_err(|_| {
+            ResourceAllocatorError::Integrity("allocator replay cache lock was poisoned".to_owned())
+        })?;
+        let current_metadata = self.cache_authority_metadata().ok();
+        let valid = if let (Some(cached), Some(hint), Some(current_metadata)) =
+            (cache.as_ref(), hint, current_metadata.as_ref())
+        {
+            &cached.authority_metadata == current_metadata
+                && cached.state.generation == hint.generation
+                && cached.state.last_event_hash == hint.last_event_hash
+                && !self.event_sequence_exists(cached.state.generation + 1)
+        } else {
+            false
+        };
+        if !valid {
+            let replayed = self.replay()?;
+            let _ = self.publish_head_hint(&replayed);
+            *cache = Some(ValidatedReplayCache {
+                state: replayed,
+                authority_metadata: self.cache_authority_metadata()?,
+            });
+        }
+        Ok(cache)
+    }
+
+    fn cache_authority_metadata(&self) -> Result<CacheAuthorityMetadata, ResourceAllocatorError> {
+        let identity = fs::read(self.journal_directory.join(IDENTITY_FILE))?;
+        Ok(CacheAuthorityMetadata {
+            identity_hash: sha256_hex(&identity),
+            checkpoint_inventory_hash: directory_inventory_hash(
+                &self.journal_directory.join(CHECKPOINT_DIRECTORY),
+            )?,
+            compaction_inventory_hash: directory_inventory_hash(
+                &self.journal_directory.join(COMPACTION_DIRECTORY),
+            )?,
+        })
+    }
+
+    fn event_sequence_exists(&self, sequence: u64) -> bool {
+        let name = event_file_name(sequence);
+        self.journal_directory.join(&name).is_file()
+            || self
+                .journal_directory
+                .join(ARCHIVE_DIRECTORY)
+                .join(name)
+                .is_file()
+    }
+
+    fn read_head_hint(&self) -> Option<ResourceAllocatorHeadHint> {
+        let bytes = fs::read(self.journal_directory.join(HEAD_HINT_FILE)).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    fn head_hint_matches(&self, state: &ReplayState) -> bool {
+        self.read_head_hint().is_some_and(|hint| {
+            hint.generation == state.generation && hint.last_event_hash == state.last_event_hash
+        })
+    }
+
+    fn publish_head_hint(&self, state: &ReplayState) -> Result<(), ResourceAllocatorError> {
+        let hint = ResourceAllocatorHeadHint {
+            generation: state.generation,
+            last_event_hash: state.last_event_hash.clone(),
+        };
+        let temporary = self.journal_directory.join(format!(
+            ".pending-head-{}-{}.tmp",
+            std::process::id(),
+            TEMPORARY_NONCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(
+            &temporary,
+            serde_json::to_vec(&hint)
+                .map_err(|error| ResourceAllocatorError::Integrity(error.to_string()))?,
+        )?;
+        let destination = self.journal_directory.join(HEAD_HINT_FILE);
+        match fs::remove_file(&destination) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(error.into());
+            }
+        }
+        // Missing bytes after a crash are safe: the hint is not authority and
+        // the next operation reconstructs it through canonical replay.
+        if let Err(error) = fs::rename(&temporary, destination) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
     /// Publish a checkpoint only after deriving it by complete journal replay.
     pub fn create_checkpoint(&self) -> Result<ResourceAllocatorCheckpoint, ResourceAllocatorError> {
+        let _writer = self.acquire_writer_lock()?;
         let identity = self.ensure_identity()?;
         let state = self.full_replay()?;
         if state.generation == 0 {
@@ -801,6 +1147,13 @@ impl AtomicResourceAllocator {
             ));
         }
         self.validate_checkpoint(&published, &identity)?;
+        let _ = self.publish_head_hint(&state);
+        *self.replay_cache.lock().map_err(|_| {
+            ResourceAllocatorError::Integrity("allocator replay cache lock was poisoned".to_owned())
+        })? = Some(ValidatedReplayCache {
+            state,
+            authority_metadata: self.cache_authority_metadata()?,
+        });
         Ok(published)
     }
 
@@ -808,6 +1161,7 @@ impl AtomicResourceAllocator {
     pub fn verify_latest_checkpoint(
         &self,
     ) -> Result<VerifiedResourceAllocatorCheckpoint, ResourceAllocatorError> {
+        let _writer = self.acquire_writer_lock()?;
         let identity = self.ensure_identity()?;
         let checkpoint = self.load_latest_checkpoint(&identity)?.ok_or_else(|| {
             ResourceAllocatorError::Integrity("allocator checkpoint is absent".to_owned())
@@ -836,6 +1190,7 @@ impl AtomicResourceAllocator {
         policy: &ResourceAllocatorRetentionPolicy,
         verified: &VerifiedResourceAllocatorCheckpoint,
     ) -> Result<ResourceAllocatorCompactionOutcome, ResourceAllocatorError> {
+        let _writer = self.acquire_writer_lock()?;
         validate_retention_policy(policy)?;
         let identity = self.ensure_identity()?;
         let current = self.load_latest_checkpoint(&identity)?.ok_or_else(|| {
@@ -930,6 +1285,7 @@ impl AtomicResourceAllocator {
     pub fn full_replay_snapshot(
         &self,
     ) -> Result<ResourceAllocatorSnapshot, ResourceAllocatorError> {
+        let _writer = self.acquire_writer_lock()?;
         let state = self.full_replay()?;
         Ok(snapshot(&state, &self.capacities))
     }
@@ -1099,7 +1455,7 @@ impl AtomicResourceAllocator {
                 "allocator checkpoint identity, configuration, or content hash mismatch".to_owned(),
             ));
         }
-        let state = validate_checkpoint_index(checkpoint)?;
+        let state = validate_checkpoint_index(checkpoint, &self.capacities)?;
         if state.generation != checkpoint.last_event_sequence
             || state.last_event_hash.as_deref() != Some(&checkpoint.terminal_event_hash)
             || journal_prefix_hash(&state) != checkpoint.covered_journal_prefix_hash
@@ -1414,11 +1770,97 @@ fn checkpoint_state(state: &ReplayState) -> ResourceAllocatorCheckpointState {
 }
 
 fn replay_state_from_checkpoint(checkpoint: &ResourceAllocatorCheckpoint) -> ReplayState {
+    let reservations_by_identity = checkpoint
+        .state
+        .reservations
+        .iter()
+        .cloned()
+        .map(|reservation| {
+            (
+                (
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ),
+                reservation,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut active_identities = reservations_by_identity
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for assertion in &checkpoint.state.dispositions {
+        active_identities.remove(&(
+            assertion.reservation_id.clone(),
+            assertion.attempt_id.clone(),
+        ));
+    }
+    let active_reservations_by_identity = checkpoint
+        .state
+        .reservations
+        .iter()
+        .filter(|reservation| {
+            active_identities.contains(&(
+                reservation.reservation_id.clone(),
+                reservation.attempt_id.clone(),
+            ))
+        })
+        .cloned()
+        .map(|reservation| {
+            (
+                (
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ),
+                reservation,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let active_reservations = active_reservations_by_identity
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut reviewed_bindings_by_identity = BTreeMap::new();
+    let mut reviewed_bindings_by_reservation_id = BTreeMap::new();
+    for event in checkpoint.state.events_by_idempotency.values() {
+        if let ResourceAllocatorEventPayload::Reserve {
+            reviewed_deployment: Some(binding),
+            reservation,
+            ..
+        } = &event.payload
+        {
+            reviewed_bindings_by_identity.insert(
+                (
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ),
+                binding.clone(),
+            );
+            reviewed_bindings_by_reservation_id
+                .insert(reservation.reservation_id.clone(), binding.clone());
+        }
+    }
     ReplayState {
         reservations: checkpoint.state.reservations.clone(),
         declarations: checkpoint.state.declarations.clone(),
         dispositions: checkpoint.state.dispositions.clone(),
+        dispositions_by_id: checkpoint
+            .state
+            .dispositions
+            .iter()
+            .cloned()
+            .map(|assertion| (assertion.assertion_id.clone(), assertion))
+            .collect(),
         events_by_idempotency: checkpoint.state.events_by_idempotency.clone(),
+        reservations_by_identity,
+        active_reservation_ids: active_reservations
+            .iter()
+            .map(|reservation| reservation.reservation_id.clone())
+            .collect(),
+        occupancy: ResourceOccupancyIndex::from_active_reservations(&active_reservations),
+        active_reservations_by_identity,
+        reviewed_bindings_by_identity,
+        reviewed_bindings_by_reservation_id,
         generation: checkpoint.last_event_sequence,
         last_event_hash: Some(checkpoint.terminal_event_hash.clone()),
     }
@@ -1426,6 +1868,7 @@ fn replay_state_from_checkpoint(checkpoint: &ResourceAllocatorCheckpoint) -> Rep
 
 fn validate_checkpoint_index(
     checkpoint: &ResourceAllocatorCheckpoint,
+    capacities: &[RateLimitCapacity],
 ) -> Result<ReplayState, ResourceAllocatorError> {
     let mut events = checkpoint
         .state
@@ -1441,39 +1884,12 @@ fn validate_checkpoint_index(
     }
     let mut derived = ReplayState::default();
     for event in events {
-        if event.schema != RESOURCE_ALLOCATOR_EVENT_SCHEMA
-            || event.schema_version != 0
-            || event.sequence != derived.generation + 1
-            || event.prior_event_hash != derived.last_event_hash
-            || event.event_hash != event_hash(&event)
-            || derived
-                .events_by_idempotency
-                .contains_key(&event.idempotency_key)
-        {
-            return Err(ResourceAllocatorError::Integrity(
-                "allocator checkpoint event index is not an exact hash chain".to_owned(),
-            ));
-        }
-        match &event.payload {
-            ResourceAllocatorEventPayload::Reserve {
-                declaration,
-                reservation,
-                ..
-            } => {
-                derived
-                    .declarations
-                    .insert(declaration.declaration_id.clone(), declaration.clone());
-                derived.reservations.push(reservation.clone());
-            }
-            ResourceAllocatorEventPayload::Disposition { assertion, .. } => {
-                derived.dispositions.push(assertion.clone());
-            }
-        }
-        derived.generation = event.sequence;
-        derived.last_event_hash = Some(event.event_hash.clone());
-        derived
-            .events_by_idempotency
-            .insert(event.idempotency_key.clone(), event);
+        apply_checked_event(
+            &mut derived,
+            capacities,
+            event,
+            Path::new("allocator checkpoint event index"),
+        )?;
     }
     if checkpoint_state(&derived) != checkpoint.state {
         return Err(ResourceAllocatorError::Integrity(
@@ -1596,33 +2012,93 @@ fn apply_replayed_event(
         ResourceAllocatorEventPayload::Reserve {
             declaration,
             reservation,
+            reviewed_deployment,
             ..
         } => {
+            validate_new_reservation_identity(state, reservation)?;
             // Replay cannot reconstruct the topology, but the event records a
             // grant that was topology-validated before its atomic append. The
             // protocol-level conflict/capacity decision is re-run here.
-            crate::resource_protocol::grant_reservation(
-                declaration,
-                reservation,
-                &state.reservations,
-                &state.dispositions,
-                capacities,
-            )
-            .map_err(|findings| {
-                ResourceAllocatorError::Integrity(format!(
-                    "committed reservation no longer replays: {}",
-                    serde_json::to_string(&findings).expect("findings serialize")
-                ))
-            })?;
+            grant_indexed_reservation(declaration, reservation, &state.occupancy, capacities)
+                .map_err(|findings| {
+                    ResourceAllocatorError::Integrity(format!(
+                        "committed reservation no longer replays: {}",
+                        serde_json::to_string(&findings).expect("findings serialize")
+                    ))
+                })?;
             state
                 .declarations
                 .insert(declaration.declaration_id.clone(), declaration.clone());
             state.reservations.push(reservation.clone());
+            state.reservations_by_identity.insert(
+                (
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ),
+                reservation.clone(),
+            );
+            state
+                .active_reservation_ids
+                .insert(reservation.reservation_id.clone());
+            state.occupancy.insert(reservation);
+            state.active_reservations_by_identity.insert(
+                (
+                    reservation.reservation_id.clone(),
+                    reservation.attempt_id.clone(),
+                ),
+                reservation.clone(),
+            );
+            if let Some(binding) = reviewed_deployment {
+                state.reviewed_bindings_by_identity.insert(
+                    (
+                        reservation.reservation_id.clone(),
+                        reservation.attempt_id.clone(),
+                    ),
+                    binding.clone(),
+                );
+                state
+                    .reviewed_bindings_by_reservation_id
+                    .insert(reservation.reservation_id.clone(), binding.clone());
+            }
         }
         ResourceAllocatorEventPayload::Disposition { assertion, .. } => {
             validate_disposition(state, assertion)?;
             state.dispositions.push(assertion.clone());
+            state
+                .dispositions_by_id
+                .insert(assertion.assertion_id.clone(), assertion.clone());
+            let identity = (
+                assertion.reservation_id.clone(),
+                assertion.attempt_id.clone(),
+            );
+            let reservation = state
+                .active_reservations_by_identity
+                .remove(&identity)
+                .expect("validated disposition target is active");
+            state
+                .active_reservation_ids
+                .remove(&reservation.reservation_id);
+            state.occupancy.remove(&reservation).map_err(|error| {
+                ResourceAllocatorError::Integrity(format!(
+                    "allocator occupancy removal failed closed: {error:?}"
+                ))
+            })?;
         }
+    }
+    Ok(())
+}
+
+fn validate_new_reservation_identity(
+    state: &ReplayState,
+    reservation: &ResourceReservation,
+) -> Result<(), ResourceAllocatorError> {
+    if state.reservations_by_identity.contains_key(&(
+        reservation.reservation_id.clone(),
+        reservation.attempt_id.clone(),
+    )) {
+        return Err(ResourceAllocatorError::Integrity(
+            "reservation and attempt identity was already used in allocator history".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -1631,26 +2107,35 @@ fn validate_disposition(
     state: &ReplayState,
     assertion: &ReservationDispositionAssertion,
 ) -> Result<(), ResourceAllocatorError> {
+    if state
+        .dispositions_by_id
+        .contains_key(&assertion.assertion_id)
+    {
+        return Err(ResourceAllocatorError::Integrity(
+            "disposition assertion identity was already used".to_owned(),
+        ));
+    }
+    let identity = (
+        assertion.reservation_id.clone(),
+        assertion.attempt_id.clone(),
+    );
     let reservation = state
-        .reservations
-        .iter()
-        .find(|reservation| {
-            reservation.reservation_id == assertion.reservation_id
-                && reservation.attempt_id == assertion.attempt_id
-        })
+        .reservations_by_identity
+        .get(&identity)
         .ok_or_else(|| {
             ResourceAllocatorError::Integrity(
                 "disposition target is not a canonical reservation".to_owned(),
             )
         })?;
-    if !reservation_is_active(reservation, &state.dispositions) {
+    if !state
+        .active_reservations_by_identity
+        .contains_key(&identity)
+    {
         return Err(ResourceAllocatorError::Integrity(
             "reservation is already inactive".to_owned(),
         ));
     }
-    let mut assertions = state.dispositions.clone();
-    assertions.push(assertion.clone());
-    if reservation_is_active(reservation, &assertions) {
+    if reservation_is_active(reservation, std::slice::from_ref(assertion)) {
         return Err(ResourceAllocatorError::Integrity(
             "invalid disposition assertion".to_owned(),
         ));
@@ -1660,10 +2145,7 @@ fn validate_disposition(
             .superseding_reservation_id
             .as_deref()
             .expect("validated by protocol");
-        if !state.reservations.iter().any(|candidate| {
-            candidate.reservation_id == superseding
-                && reservation_is_active(candidate, &state.dispositions)
-        }) {
+        if !state.active_reservation_ids.contains(superseding) {
             return Err(ResourceAllocatorError::Integrity(
                 "superseding reservation is not active in canonical state".to_owned(),
             ));
@@ -1673,19 +2155,58 @@ fn validate_disposition(
 }
 
 fn snapshot(state: &ReplayState, capacities: &[RateLimitCapacity]) -> ResourceAllocatorSnapshot {
-    let active_reservations = state
-        .reservations
-        .iter()
-        .filter(|reservation| reservation_is_active(reservation, &state.dispositions))
-        .cloned()
-        .collect();
     ResourceAllocatorSnapshot {
         generation: state.generation,
         last_event_hash: state.last_event_hash.clone(),
-        active_reservations,
+        active_reservations: state
+            .active_reservations_by_identity
+            .values()
+            .cloned()
+            .collect(),
         dispositions: state.dispositions.clone(),
         capacities: capacities.to_vec(),
     }
+}
+
+fn operation_snapshot(
+    state: &ReplayState,
+    allocator_configuration_hash: &str,
+    rate_limit_capacity_count: usize,
+    head_hint_healthy: bool,
+) -> ResourceAllocatorOperationSnapshot {
+    ResourceAllocatorOperationSnapshot {
+        generation: state.generation,
+        last_event_hash: state.last_event_hash.clone(),
+        active_reservation_count: state.active_reservations_by_identity.len() as u64,
+        disposition_count: state.dispositions.len() as u64,
+        allocator_configuration_hash: allocator_configuration_hash.to_owned(),
+        rate_limit_capacity_count: rate_limit_capacity_count as u64,
+        head_hint_healthy,
+    }
+}
+
+fn directory_inventory_hash(directory: &Path) -> Result<String, ResourceAllocatorError> {
+    if !directory.exists() {
+        return Ok(sha256_hex(b"absent"));
+    }
+    let mut inventory = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(".pending-") {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| value.as_nanos())
+            .unwrap_or_default();
+        inventory.push((name, metadata.len(), modified));
+    }
+    inventory.sort();
+    Ok(digest(&inventory))
 }
 
 fn validate_configuration(

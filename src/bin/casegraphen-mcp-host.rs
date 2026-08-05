@@ -566,7 +566,7 @@ impl DecisionDelegate for OperationalDelegate {
                     "reviewed_deployment_authority_refused",
                     &finding,
                 ))?;
-                let outcome = self.allocator.reserve_reviewed(
+                let outcome = self.allocator.reserve_reviewed_bounded(
                     bundle.topology(),
                     &authority,
                     base_revision_id,
@@ -582,7 +582,7 @@ impl DecisionDelegate for OperationalDelegate {
                     "base_revision_id": request.base_revision_id,
                     "allocator_event": outcome.event,
                     "allocator_generation": outcome.snapshot.generation,
-                    "active_reservations": outcome.snapshot.active_reservations,
+                    "active_reservation_count": outcome.snapshot.active_reservation_count,
                     "replayed": outcome.replayed,
                     "allocator_maintenance": allocator_maintenance,
                     "accepted_runtime_output": false
@@ -614,7 +614,7 @@ impl DecisionDelegate for OperationalDelegate {
                         replay.current_revision_id.to_string(),
                     ));
                 }
-                let outcome = self.allocator.disposition_reviewed(
+                let outcome = self.allocator.disposition_reviewed_bounded(
                     base_revision_id,
                     input.assertion,
                     &request.idempotency_key,
@@ -626,7 +626,7 @@ impl DecisionDelegate for OperationalDelegate {
                     "base_revision_id": request.base_revision_id,
                     "allocator_event": outcome.event,
                     "allocator_generation": outcome.snapshot.generation,
-                    "active_reservations": outcome.snapshot.active_reservations,
+                    "active_reservation_count": outcome.snapshot.active_reservation_count,
                     "replayed": outcome.replayed,
                     "allocator_maintenance": allocator_maintenance,
                     "accepted_runtime_output": false

@@ -13,11 +13,15 @@ use casegraphen::{
         RESOURCE_RESERVATION_SCHEMA,
     },
 };
+use fs2::FileExt;
 use std::{
     fs,
-    path::PathBuf,
+    fs::OpenOptions,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{Arc, Barrier},
     thread,
+    time::{Duration, Instant},
 };
 
 fn topology() -> casegraphen::execution_topology::ExecutionTopology {
@@ -112,6 +116,145 @@ fn append_release_pair(path: &PathBuf, suffix: &str) {
         .unwrap();
 }
 
+fn wait_for_file(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn subprocess_allocator_helper() {
+    let Ok(mode) = std::env::var("CASEGRAPHEN_ALLOCATOR_HELPER_MODE") else {
+        return;
+    };
+    let path = PathBuf::from(std::env::var("CASEGRAPHEN_ALLOCATOR_HELPER_PATH").unwrap());
+    fs::create_dir_all(&path).unwrap();
+    let suffix = std::env::var("CASEGRAPHEN_ALLOCATOR_HELPER_SUFFIX")
+        .unwrap_or_else(|_| "helper".to_owned());
+    let ready = path.join(format!("helper-{suffix}.ready"));
+    match mode.as_str() {
+        "hold" | "crash" => {
+            let lock = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(path.join(".allocator-writer-lock"))
+                .unwrap();
+            FileExt::lock_exclusive(&lock).unwrap();
+            fs::write(&ready, b"ready").unwrap();
+            if mode == "crash" {
+                std::process::abort();
+            }
+            thread::sleep(Duration::from_secs(5));
+        }
+        "reserve" => {
+            fs::write(&ready, b"ready").unwrap();
+            let start = path.join("helpers.start");
+            wait_for_file(&start);
+            let topology = topology();
+            let index = std::env::var("CASEGRAPHEN_ALLOCATOR_HELPER_INDEX")
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let declaration = declaration(&topology, index);
+            let result = allocator(&path).reserve(
+                &topology,
+                "revision:subprocess-race",
+                declaration.clone(),
+                reservation(&declaration, &suffix),
+                &format!("idem:{suffix}"),
+            );
+            fs::write(
+                path.join(format!("helper-{suffix}.result")),
+                if result.is_ok() {
+                    b"granted"
+                } else {
+                    b"refused"
+                },
+            )
+            .unwrap();
+        }
+        other => panic!("unknown helper mode {other}"),
+    }
+}
+
+fn spawn_helper(
+    path: &PathBuf,
+    mode: &str,
+    suffix: &str,
+    index: Option<usize>,
+) -> std::process::Child {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .arg("--exact")
+        .arg("subprocess_allocator_helper")
+        .arg("--nocapture")
+        .env("CASEGRAPHEN_ALLOCATOR_HELPER_MODE", mode)
+        .env("CASEGRAPHEN_ALLOCATOR_HELPER_PATH", path)
+        .env("CASEGRAPHEN_ALLOCATOR_HELPER_SUFFIX", suffix)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(index) = index {
+        command.env("CASEGRAPHEN_ALLOCATOR_HELPER_INDEX", index.to_string());
+    }
+    command.spawn().unwrap()
+}
+
+#[test]
+fn writer_lock_times_out_and_process_crash_releases_it() {
+    let path = temp("subprocess-writer-lock");
+    let mut holder = spawn_helper(&path, "hold", "hold", None);
+    wait_for_file(&path.join("helper-hold.ready"));
+    let error = allocator(&path).snapshot().unwrap_err();
+    assert!(matches!(
+        error,
+        casegraphen::resource_allocator::ResourceAllocatorError::WriterBusy { .. }
+    ));
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    assert_eq!(allocator(&path).snapshot().unwrap().generation, 0);
+
+    let mut crashing = spawn_helper(&path, "crash", "crash", None);
+    wait_for_file(&path.join("helper-crash.ready"));
+    let _ = crashing.wait();
+    assert_eq!(allocator(&path).snapshot().unwrap().generation, 0);
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn competing_processes_cannot_both_commit_exclusive_reservations() {
+    let path = temp("subprocess-contention");
+    let mut left = spawn_helper(&path, "reserve", "left", Some(0));
+    let mut right = spawn_helper(&path, "reserve", "right", Some(1));
+    wait_for_file(&path.join("helper-left.ready"));
+    wait_for_file(&path.join("helper-right.ready"));
+    fs::write(path.join("helpers.start"), b"start").unwrap();
+    assert!(left.wait().unwrap().success());
+    assert!(right.wait().unwrap().success());
+    let results = ["left", "right"]
+        .map(|suffix| fs::read_to_string(path.join(format!("helper-{suffix}.result"))).unwrap());
+    assert_eq!(
+        results.iter().filter(|result| *result == "granted").count(),
+        1
+    );
+    assert_eq!(
+        allocator(&path)
+            .snapshot()
+            .unwrap()
+            .active_reservations
+            .len(),
+        1
+    );
+    fs::remove_dir_all(path).unwrap();
+}
+
 fn retention(retain_active_event_count: u64) -> ResourceAllocatorRetentionPolicy {
     ResourceAllocatorRetentionPolicy {
         schema: RESOURCE_ALLOCATOR_RETENTION_POLICY_SCHEMA.to_owned(),
@@ -162,6 +305,240 @@ fn concurrent_exclusive_requests_cannot_both_commit() {
         1
     );
     fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn long_lived_cache_observes_other_instances_and_refuses_stale_head_shortcuts() {
+    let path = temp("long-lived-cache-invalidation");
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let reservation = reservation(&declaration, "cached");
+    let first = allocator(&path);
+    let second = allocator(&path);
+
+    first
+        .reserve(
+            &topology,
+            "revision:1",
+            declaration,
+            reservation.clone(),
+            "idem:cached:reserve",
+        )
+        .unwrap();
+    assert_eq!(second.snapshot().unwrap().generation, 1);
+    let generation_one_hint = fs::read(path.join(".allocator-head-hint")).unwrap();
+
+    first
+        .disposition(
+            "revision:2",
+            ReservationDispositionAssertion {
+                schema: RESERVATION_ASSERTION_SCHEMA.to_owned(),
+                schema_version: 0,
+                assertion_id: "assertion:cached".to_owned(),
+                reservation_id: reservation.reservation_id,
+                attempt_id: reservation.attempt_id,
+                kind: ReservationAssertionKind::Release,
+                asserted_by: "actor:test".to_owned(),
+                reason: "cache invalidation test".to_owned(),
+                superseding_reservation_id: None,
+            },
+            "idem:cached:release",
+        )
+        .unwrap();
+
+    // A rolled-back hint cannot hide the next authoritative event from a
+    // process whose in-memory cache still represents generation one.
+    fs::write(path.join(".allocator-head-hint"), generation_one_hint).unwrap();
+    let refreshed = second.snapshot().unwrap();
+    assert_eq!(refreshed.generation, 2);
+    assert!(refreshed.active_reservations.is_empty());
+
+    // The hint is never authority: malformed or absent bytes force full
+    // canonical replay and are repaired from that replay.
+    fs::write(path.join(".allocator-head-hint"), b"{").unwrap();
+    assert_eq!(second.snapshot().unwrap(), refreshed);
+    fs::remove_file(path.join(".allocator-head-hint")).unwrap();
+    assert_eq!(second.snapshot().unwrap(), refreshed);
+    assert!(serde_json::from_slice::<serde_json::Value>(
+        &fs::read(path.join(".allocator-head-hint")).unwrap()
+    )
+    .is_ok());
+
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn durable_event_survives_head_hint_publication_failure() {
+    let path = temp("head-hint-failure");
+    fs::create_dir_all(path.join(".allocator-head-hint")).unwrap();
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let outcome = allocator(&path)
+        .reserve_bounded(
+            &topology,
+            "revision:hint-failure",
+            declaration.clone(),
+            reservation(&declaration, "hint-failure"),
+            "idem:hint-failure",
+        )
+        .unwrap();
+    assert!(!outcome.snapshot.head_hint_healthy);
+    assert!(path.join("00000000000000000001.json").is_file());
+
+    fs::remove_dir(path.join(".allocator-head-hint")).unwrap();
+    let restarted = allocator(&path).snapshot().unwrap();
+    assert_eq!(restarted.generation, 1);
+    assert_eq!(restarted.active_reservations.len(), 1);
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn legacy_projection_cannot_fail_after_durable_commit_on_hint_loss() {
+    let path = temp("legacy-head-hint-failure");
+    fs::create_dir_all(path.join(".allocator-head-hint")).unwrap();
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let outcome = allocator(&path)
+        .reserve(
+            &topology,
+            "revision:legacy-hint-failure",
+            declaration.clone(),
+            reservation(&declaration, "legacy-hint-failure"),
+            "idem:legacy-hint-failure",
+        )
+        .unwrap();
+    assert_eq!(outcome.snapshot.generation, 1);
+    assert_eq!(outcome.snapshot.active_reservations.len(), 1);
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn hot_cache_preserves_decision_safety_but_restart_audit_refuses_middle_event_tampering() {
+    let path = temp("hot-cache-tamper-boundary");
+    let journal = allocator(&path);
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let reservation = reservation(&declaration, "tamper");
+    journal
+        .reserve(
+            &topology,
+            "revision:tamper",
+            declaration.clone(),
+            reservation.clone(),
+            "idem:tamper",
+        )
+        .unwrap();
+    journal
+        .disposition(
+            "revision:tamper-release",
+            ReservationDispositionAssertion {
+                schema: RESERVATION_ASSERTION_SCHEMA.to_owned(),
+                schema_version: 0,
+                assertion_id: "assertion:tamper".to_owned(),
+                reservation_id: reservation.reservation_id,
+                attempt_id: reservation.attempt_id,
+                kind: ReservationAssertionKind::Release,
+                asserted_by: "actor:test".to_owned(),
+                reason: "establish a cached terminal state".to_owned(),
+                superseding_reservation_id: None,
+            },
+            "idem:tamper-release",
+        )
+        .unwrap();
+    assert_eq!(journal.snapshot().unwrap().generation, 2);
+
+    let first_event = path.join("00000000000000000001.json");
+    let mut bytes = fs::read(&first_event).unwrap();
+    let position = bytes.iter().position(|byte| *byte == b'r').unwrap();
+    bytes[position] = b'R';
+    fs::write(&first_event, bytes).unwrap();
+
+    // The hot cache is ephemeral process authority: it does not reinterpret
+    // out-of-band journal mutations, so its already-derived safe state holds.
+    assert_eq!(journal.snapshot().unwrap().generation, 2);
+    // Restart/full audit re-reads every authoritative byte and refuses.
+    assert!(allocator(&path).full_replay_snapshot().is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn released_reservation_identity_cannot_be_reused() {
+    let path = temp("historical-reservation-identity");
+    let topology = topology();
+    let declaration = declaration(&topology, 0);
+    let original = reservation(&declaration, "identity");
+    let journal = allocator(&path);
+    journal
+        .reserve(
+            &topology,
+            "revision:1",
+            declaration.clone(),
+            original.clone(),
+            "idem:identity:first",
+        )
+        .unwrap();
+    journal
+        .disposition(
+            "revision:2",
+            ReservationDispositionAssertion {
+                schema: RESERVATION_ASSERTION_SCHEMA.to_owned(),
+                schema_version: 0,
+                assertion_id: "assertion:identity".to_owned(),
+                reservation_id: original.reservation_id.clone(),
+                attempt_id: original.attempt_id.clone(),
+                kind: ReservationAssertionKind::Release,
+                asserted_by: "actor:test".to_owned(),
+                reason: "release before replay attack".to_owned(),
+                superseding_reservation_id: None,
+            },
+            "idem:identity:release",
+        )
+        .unwrap();
+    assert!(journal
+        .reserve(
+            &topology,
+            "revision:3",
+            declaration,
+            original,
+            "idem:identity:reuse",
+        )
+        .is_err());
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn legacy_full_outcome_and_bounded_outcome_are_explicit_compatible_surfaces() {
+    let legacy_path = temp("legacy-outcome");
+    let bounded_path = temp("bounded-outcome");
+    let topology = topology();
+    let legacy_declaration = declaration(&topology, 0);
+    let legacy_reservation = reservation(&legacy_declaration, "surface");
+    let legacy = allocator(&legacy_path)
+        .reserve(
+            &topology,
+            "revision:surface",
+            legacy_declaration,
+            legacy_reservation,
+            "idem:surface",
+        )
+        .unwrap();
+    assert_eq!(legacy.snapshot.active_reservations.len(), 1);
+
+    let bounded_declaration = declaration(&topology, 0);
+    let bounded_reservation = reservation(&bounded_declaration, "surface");
+    let bounded = allocator(&bounded_path)
+        .reserve_bounded(
+            &topology,
+            "revision:surface",
+            bounded_declaration,
+            bounded_reservation,
+            "idem:surface",
+        )
+        .unwrap();
+    assert_eq!(bounded.snapshot.active_reservation_count, 1);
+    assert_eq!(legacy.snapshot.generation, bounded.snapshot.generation);
+    fs::remove_dir_all(legacy_path).unwrap();
+    fs::remove_dir_all(bounded_path).unwrap();
 }
 
 #[test]
