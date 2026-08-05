@@ -83,7 +83,10 @@ def run(
                 if observed is not None:
                     peak_rss = max(peak_rss, observed)
                     sample_count += 1
-                time.sleep(0.05)
+        # Process-spawning RSS probes are materially expensive on macOS. A
+        # half-second cadence still observes the long-running release lanes
+        # without turning the measurement harness into the dominant workload.
+        time.sleep(0.5)
         except BaseException:
             process.terminate()
             process.wait(timeout=10)
