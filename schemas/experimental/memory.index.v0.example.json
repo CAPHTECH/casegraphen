@@ -1,0 +1,16 @@
+{
+  "schema": "casegraphen.experimental.memory.index.v0",
+  "base_revision_id": "revision:accepted-casegraphen",
+  "policy_id": "memory-policy:casegraphen-coding-agent",
+  "query_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "items": [{
+    "claim_id": "memory:runtime-boundary",
+    "memory_kind": "constraint",
+    "subject_refs": ["repo:CAPHTECH/casegraphen"],
+    "lexical_terms": ["agent", "casegraphen", "depend", "must", "not", "runtime"],
+    "source_refs": ["artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+  }],
+  "index_content_hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "derived": true,
+  "authoritative": false
+}

@@ -1,7 +1,7 @@
 {
   "schema": "casegraphen.review.graph_engineering_promotion_inventory.v1",
   "schema_version": 1,
-  "as_of_date": "2026-08-05",
+  "as_of_date": "2026-08-06",
   "review_source_commit": "a8d11a9764842eafb7bc5f0a97623a5b1217a004",
   "decision": {
     "contract": "experimental-v0",
@@ -9,10 +9,10 @@
     "accepted": false
   },
   "surface": {
-    "workflow_count": 11,
+    "workflow_count": 20,
     "runtime_family_count": 4,
     "experimental_contract_version": 0,
-    "experimental_contract_count": 41
+    "experimental_contract_count": 48
   },
   "evidence_facts": [
     {
@@ -83,11 +83,11 @@
     {
       "id": "verification-lineage-supported-surface",
       "status": "satisfied_repository",
-      "evidence_date": "2026-08-05",
+      "evidence_date": "2026-08-06",
       "owner_issue": 87,
       "reference": {
         "path": "docs/product-surface.v0.json",
-        "content_hash": "sha256:4e3c0c40192cb9e54447ae8b0a7a7b1e8d3b20c92e6d95a1974cb5f64f880b93"
+        "content_hash": "sha256:3d0f3d56dba89c0c87479c9396d4cea0f9760196e6f4ee2e268eaf7030fea5fc"
       }
     },
     {

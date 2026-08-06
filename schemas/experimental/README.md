@@ -20,6 +20,14 @@ another. It does **not** grant stable compatibility: only contracts promoted to
 still change incompatibly before promotion, but any such change must update its
 Rust owner, examples, references, and inventory atomically.
 
+- The `memory.*.v0` contracts define the optional Memory Plane. Source records
+  and claims remain separate; claims cannot carry caller-declared acceptance;
+  queries bind an exact replayed revision and actor grant; projections are
+  read-only, loss-explicit, and content-addressed; use reports remain untrusted
+  runtime self-reports; indexes are replaceable derivatives and explicitly
+  non-authoritative. These contracts do not add a durable store or a mutation
+  path around the existing review and operation gates.
+
 - `runtime.stream_event.v0.schema.json` defines stable attempt/sequence and
   logical-order observations for idempotent external reconciliation. Its v0
   release semantic is `terminal_artifact_stage_pipelining_v0`: chunks are

@@ -1,5 +1,8 @@
 use super::{
-    ops::{NativeCloseGateOptions, NativeRunGateOptions},
+    ops::{
+        MemoryIndexMode, MemoryReadMode, MemorySourceMode, NativeCloseGateOptions,
+        NativeRunGateOptions,
+    },
     options::{require_id, required_segment, NativeOptions, OperationGateRequirement},
     NativeCliCommand, NativeCliError, NativeOutputFormat, NativeReasonSection,
 };
@@ -74,6 +77,7 @@ impl NativeCliCommand {
             "space" => Self::parse_space(required_segment(&mut args, "space operation")?, args),
             "lift" => Self::parse_lift(required_segment(&mut args, "lift adapter")?, args),
             "graph" => Self::parse_graph(required_segment(&mut args, "graph operation")?, args),
+            "memory" => Self::parse_memory(required_segment(&mut args, "memory operation")?, args),
             "obstruction" => {
                 Self::parse_obstruction(required_segment(&mut args, "obstruction operation")?, args)
             }
@@ -109,6 +113,99 @@ impl NativeCliCommand {
             "cell" => Self::parse_cell(required_segment(&mut args, "cell operation")?, args),
             "packet" => Self::parse_packet(required_segment(&mut args, "packet operation")?, args),
             _ => Err(NativeCliError::usage("unsupported native namespace")),
+        }
+    }
+
+    fn parse_memory(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let operation = operation
+            .to_str()
+            .ok_or_else(|| NativeCliError::usage("memory operation must be UTF-8"))?;
+        let mut args = args.into_iter();
+        let nested = if matches!(operation, "source" | "index") {
+            Some(required_segment(&mut args, "memory sub-operation")?)
+        } else {
+            None
+        };
+        let nested = nested.as_ref().and_then(|value| value.to_str());
+        let options = NativeOptions::parse("memory", args)?;
+        let read = |mode, target_required: bool| -> Result<Self, NativeCliError> {
+            let target_id = if target_required {
+                Some(options.require_id("--target-id")?)
+            } else {
+                options.target_id.clone()
+            };
+            Ok(Self::MemoryRead {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
+                input: options.require_path("--input")?,
+                policy: options.require_path("--policy")?,
+                mode,
+                target_id,
+                output: options.output.clone(),
+            })
+        };
+        match operation {
+            "query" => read(MemoryReadMode::Query, false),
+            "explain" => read(MemoryReadMode::Explain, true),
+            "history" => read(MemoryReadMode::History, true),
+            "conflicts" => read(MemoryReadMode::Conflicts, false),
+            "candidates" => read(MemoryReadMode::Candidates, false),
+            "sources" => read(MemoryReadMode::Sources, true),
+            "source" => match nested {
+                Some("attach") => Ok(Self::MemorySource {
+                    source_record: options.require_path("--source-record")?,
+                    source_artifact: options.require_path("--source-artifact")?,
+                    mode: MemorySourceMode::Attach,
+                    output: options.output,
+                }),
+                Some("inspect") => Ok(Self::MemorySource {
+                    source_record: options.require_path("--source-record")?,
+                    source_artifact: options.require_path("--source-artifact")?,
+                    mode: MemorySourceMode::Inspect,
+                    output: options.output,
+                }),
+                _ => Err(NativeCliError::usage("unsupported memory source command")),
+            },
+            "check" => Ok(Self::MemoryCheck {
+                input: options.require_path("--input")?,
+                source_record: options.require_path("--source-record")?,
+                source_artifact: options.require_path("--source-artifact")?,
+                policy: options.require_path("--policy")?,
+                output: options.output,
+            }),
+            "propose" => Ok(Self::MemoryPropose {
+                input: options.require_path("--input")?,
+                source_record: options.require_path("--source-record")?,
+                source_artifact: options.require_path("--source-artifact")?,
+                policy: options.require_path("--policy")?,
+                space_id: options.require_id("--space-id")?,
+                output: options.output,
+            }),
+            "index" => match nested {
+                Some("rebuild") => Ok(Self::MemoryIndex {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    input: options.require_path("--input")?,
+                    policy: options.require_path("--policy")?,
+                    mode: MemoryIndexMode::Rebuild,
+                    index: None,
+                    output: options.output,
+                }),
+                Some("validate") => Ok(Self::MemoryIndex {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    input: options.require_path("--input")?,
+                    policy: options.require_path("--policy")?,
+                    mode: MemoryIndexMode::Validate,
+                    index: Some(options.require_path("--index")?),
+                    output: options.output,
+                }),
+                _ => Err(NativeCliError::usage("unsupported memory index command")),
+            },
+            _ => Err(NativeCliError::usage("unsupported memory command")),
         }
     }
 

@@ -129,6 +129,21 @@ fn every_skill_refuses_a_removed_responsibility_boundary() {
             "Every durable mutation needs a valid operation gate.",
             "Durable mutations normally use a gate.",
         ),
+        (
+            "casegraphen-memory-query",
+            "It is not a conversation store, and relevance is not authority.",
+            "It is a conversation store.",
+        ),
+        (
+            "casegraphen-memory-curate",
+            "Produce proposals only.",
+            "Produce memory.",
+        ),
+        (
+            "casegraphen-memory-audit",
+            "Never repair an audit finding by accepting a claim",
+            "Repair an audit finding by accepting a claim",
+        ),
     ];
 
     for (skill, from, to) in mutations {

@@ -112,6 +112,21 @@ the artifact root, derives opaque producer/verifier/anchor proofs through the
 canonical library, rejects duplicate review IDs, and returns only the policy
 result. It is read-only: `accepted` remains false and no proof is serialized.
 
+The optional Memory Plane exposes five read-only tools: `memory_query`,
+`memory_explain`, `memory_history`, `memory_conflicts`, and `memory_sources`.
+Each request carries a typed Memory Query/Policy, names one case space, and
+binds the same exact current revision in both the control-plane request and the
+query. Scope, actor grant, authority, source, valid time, and conflict filters
+run in the canonical memory library before relevance ranking.
+
+`memory_propose_claim`, `memory_propose_supersession`,
+`memory_propose_retraction`, and `memory_propose_procedure` read exact bytes
+from a regular, non-symlink artifact-root-relative path and emit strict
+unreviewed proposals. They set `accepted: false` and
+`mutation_performed: false`; caller fields such as `accepted`, `trusted`, or a
+broader authority are rejected or validated rather than adopted. No Memory
+Plane tool writes the CaseGraph or bypasses the CLI's review/morphism gates.
+
 Configured resources are projections:
 
 - space status/frontier/reviews/revisions come from replay and canonical
@@ -126,7 +141,8 @@ The operational host binds the workflows in
 proposal/lint and compilation, content-addressed runtime JSONL attachment and
 reconciliation, simulation, resource reservation/reconciliation, bounded
 expansion, streaming reconciliation, verification lineage reconciliation, and
-redesign proposals. Acceptance-ledger
+redesign proposals, plus revision-bound Memory Plane reads and proposals.
+Acceptance-ledger
 mutations refuse `unsupported_operational_host_tool` and remain owned by the
 main CLI. Host requests still require the client-observed base revision and
 caller audit context where applicable. An actual acceptance-ledger mutation is

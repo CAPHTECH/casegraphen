@@ -1,0 +1,23 @@
+{
+  "schema": "casegraphen.experimental.memory.claim.v0",
+  "claim_id": "memory:casegraphen-runtime-boundary",
+  "memory_kind": "constraint",
+  "subject_refs": ["repo:CAPHTECH/casegraphen"],
+  "statement": {
+    "predicate": "must_not_own",
+    "object": ["llm_execution", "agent_scheduler", "runtime_acceptance"]
+  },
+  "scope": {
+    "case_space_id": "case_space:casegraphen-project-memory",
+    "project_id": "casegraphen",
+    "actor_ids": []
+  },
+  "valid_time": {"valid_from": "2026-07-30T00:00:00Z"},
+  "source_refs": ["artifact:sha256-eb735c09beed717942365cbf3d274b5f3488b3670d2df256b2331bb498c0cc8a"],
+  "derivation_actor_id": "actor:issue-92-memory-curator",
+  "derivation_method": "reviewed_document_extraction",
+  "model_assertions_are_untrusted": true,
+  "provenance_role": "reviewed_architecture_decision",
+  "authority_ceiling": "project_constraint",
+  "sensitivity": "internal"
+}

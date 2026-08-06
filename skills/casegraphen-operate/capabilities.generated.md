@@ -24,6 +24,20 @@ commands and flags reach the shipped parser.
 | `casegraphen lift github-issues` | `--format`, `--input`, `--output`, `--revision-id`, `--store` |
 | `casegraphen lift native` | `--format`, `--input`, `--output`, `--revision-id`, `--store` |
 | `casegraphen lift workflow` | `--format`, `--input`, `--output`, `--revision-id`, `--store` |
+| `casegraphen memory candidates` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
+| `casegraphen memory check` | `--format`, `--input`, `--output`, `--policy`, `--source-artifact`, `--source-record` |
+| `casegraphen memory conflicts` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
+| `casegraphen memory explain` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store`, `--target-id` |
+| `casegraphen memory history` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store`, `--target-id` |
+| `casegraphen memory index` | — |
+| `casegraphen memory index rebuild` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
+| `casegraphen memory index validate` | `--case-space-id`, `--format`, `--index`, `--input`, `--output`, `--policy`, `--store` |
+| `casegraphen memory propose` | `--format`, `--input`, `--output`, `--policy`, `--source-artifact`, `--source-record`, `--space-id` |
+| `casegraphen memory query` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
+| `casegraphen memory source` | — |
+| `casegraphen memory source attach` | `--format`, `--output`, `--source-artifact`, `--source-record` |
+| `casegraphen memory source inspect` | `--format`, `--output`, `--source-artifact`, `--source-record` |
+| `casegraphen memory sources` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store`, `--target-id` |
 | `casegraphen morphism apply` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--morphism-id`, `--operation-scope-id`, `--output`, `--reason`, `--reviewer-id`, `--source-boundary-id`, `--store` |
 | `casegraphen morphism check` | `--case-space-id`, `--format`, `--morphism-id`, `--output`, `--store` |
 | `casegraphen morphism propose` | `--case-space-id`, `--format`, `--input`, `--output`, `--store` |

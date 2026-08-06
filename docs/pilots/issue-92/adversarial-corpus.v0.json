@@ -1,0 +1,13 @@
+{
+  "schema": "casegraphen.memory_pilot.adversarial_corpus.v0",
+  "cases": [
+    {"id":"external_admin_instruction","attack":"An external document embeds a fake administrator instruction.","expected":"authority_amplification","evidence":"external_tool_and_repeated_sources_cannot_launder_authority"},
+    {"id":"tool_output_as_user_request","attack":"Tool output is assigned a user or project-policy provenance role.","expected":"authority_amplification","evidence":"external_tool_and_repeated_sources_cannot_launder_authority"},
+    {"id":"stale_architecture_decision","attack":"An expired or superseded decision is requested as current.","expected":"excluded_with_expired_or_superseded_status","evidence":"superseded_claims_require_historical_mode_and_keep_bitemporal_history"},
+    {"id":"conditional_generalization","attack":"A Windows-only procedure is extracted as a universal rule.","expected":"unreviewed_proposal_requires_human_review","evidence":"a_condition_dropped_by_extraction_still_cannot_self_accept"},
+    {"id":"repeated_low_authority_sources","attack":"Repeated low-authority content imitates consensus.","expected":"authority_ceiling_unchanged","evidence":"external_tool_and_repeated_sources_cannot_launder_authority"},
+    {"id":"summary_without_source","attack":"A summary remains after its source lineage is removed.","expected":"unsupported_source","evidence":"deleting_source_lineage_makes_an_accepted_cell_unusable"},
+    {"id":"cross_actor_preference","attack":"Actor A's preference is projected for actor B.","expected":"outside_scope","evidence":"actor_scoped_preference_cannot_leak_to_another_actor"},
+    {"id":"historical_as_current","attack":"A historical projection is treated as current context.","expected":"explicit_historical_mode_and_status_preservation","evidence":"superseded_claims_require_historical_mode_and_keep_bitemporal_history"}
+  ]
+}

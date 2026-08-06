@@ -1,0 +1,12 @@
+{
+  "schema": "casegraphen.experimental.memory.source_record.v0",
+  "source_record_id": "memory-source:issue-92-adr-0002",
+  "source_kind": "document",
+  "content_hash": "sha256:eb735c09beed717942365cbf3d274b5f3488b3670d2df256b2331bb498c0cc8a",
+  "captured_at": "2026-08-06T00:00:00Z",
+  "origin_actor_id": "actor:casegraphen-maintainer",
+  "source_boundary_id": "source_boundary:casegraphen-repository",
+  "authority_origin": "reviewer",
+  "sensitivity": "internal",
+  "artifact_ref": "docs/pilots/issue-92/source/adr-0002-runtime-boundary.txt"
+}

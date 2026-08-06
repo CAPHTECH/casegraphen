@@ -1,0 +1,35 @@
+{
+  "schema": "casegraphen.memory_pilot.evaluation_report.v0",
+  "date": "2026-08-06",
+  "source_git_revision": "947f347f219a60775bcf71b226ce778cc8ea21f4",
+  "scope": "CaseGraphen coding-agent project memory experimental v0",
+  "commands": [
+    "cargo test --test memory_plane",
+    "cargo test --test product_surface operational_memory_tools_are_read_only_or_unreviewed_proposals",
+    "python3 scripts/memory-plane-pilot.py"
+  ],
+  "safety": {
+    "accepted_memory_without_source": 0,
+    "authority_amplification_without_explicit_review": 0,
+    "direct_caller_declared_acceptance": 0,
+    "non_replayable_accepted_memory": 0,
+    "hidden_hard_conflict": 0,
+    "expired_claim_returned_as_current": 0
+  },
+  "retrieval": {
+    "required_memory_recall": {"numerator": 1, "denominator": 1},
+    "unsupported_projection_rate": {"numerator": 0, "denominator": 1},
+    "stale_use_rate": {"numerator": 0, "denominator": 2},
+    "conflict_exposure_rate": {"numerator": 2, "denominator": 2},
+    "source_sufficiency": {"numerator": 1, "denominator": 1},
+    "context_efficiency": {"status": "bounded_not_comparative", "evidence": "item/token budget omissions and projection losses are deterministic"}
+  },
+  "memory_action": {
+    "projection_hash_binding": "passed",
+    "use_report_claims_acceptance": "refused",
+    "action_constraint_violation_rate": "not_measured_without_an_agent_runtime"
+  },
+  "adversarial_cases": {"passed": 8, "total": 8},
+  "memory_plane_tests": {"passed": 15, "failed": 0},
+  "stable_promotion": "refused_pending_multi_session_runtime_evidence"
+}

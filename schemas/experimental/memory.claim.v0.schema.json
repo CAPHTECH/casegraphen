@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.claim.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "claim_id", "memory_kind", "subject_refs", "statement", "scope", "valid_time", "source_refs", "derivation_actor_id", "derivation_method", "model_assertions_are_untrusted", "provenance_role", "authority_ceiling", "sensitivity"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.claim.v0"},
+    "claim_id": {"type": "string", "minLength": 1},
+    "memory_kind": {"$ref": "#/$defs/memory_kind"},
+    "subject_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "statement": {"$ref": "#/$defs/statement"},
+    "scope": {"$ref": "#/$defs/scope"},
+    "valid_time": {"$ref": "#/$defs/valid_time"},
+    "source_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^artifact:sha256-[0-9a-f]{64}$"}},
+    "derivation_actor_id": {"type": "string", "minLength": 1},
+    "derivation_method": {"type": "string", "minLength": 1},
+    "model_assertions_are_untrusted": {"const": true},
+    "provenance_role": {"enum": ["user_requirement", "operator_instruction", "external_material", "tool_observation", "agent_inference", "reviewed_architecture_decision", "unverified_third_party_statement", "canonical_human_statement"]},
+    "authority_ceiling": {"$ref": "#/$defs/authority"},
+    "sensitivity": {"$ref": "#/$defs/sensitivity"}
+  },
+  "$defs": {
+    "memory_kind": {"enum": ["observation", "episode", "fact", "constraint", "decision", "procedure", "failure_pattern", "goal", "preference", "commitment", "authority_statement", "reference"]},
+    "authority": {"enum": ["untrusted", "observation", "project_fact", "project_constraint", "project_authority"]},
+    "sensitivity": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicate", "object"],
+      "properties": {"predicate": {"type": "string", "minLength": 1}, "object": {}}
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_ids"],
+      "properties": {
+        "case_space_id": {"type": "string", "minLength": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "actor_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "valid_time": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "valid_from": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "valid_until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"}
+      }
+    }
+  }
+}

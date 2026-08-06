@@ -51,6 +51,8 @@ def main() -> int:
         "operational_resource_reservations_require_reviewed_deployment_authority",
         "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle",
         "verification_lineage_proofs_are_canonical_opaque_and_never_serialized",
+        "memory_tools_never_mutate_accepted_state",
+        "memory_indexes_are_derived_and_non_authoritative",
     ):
         if invariants.get(required_invariant) is not True:
             failures.append(f"missing authority invariant: {required_invariant}")
@@ -80,7 +82,10 @@ def main() -> int:
     expected = {
         "compile", "reviewed_compile", "integrate_reconcile", "simulate", "resource_reserve",
         "resource_release", "resource_reconcile", "expansion", "streaming",
-        "verification_lineage", "redesign",
+        "verification_lineage", "redesign", "memory_query", "memory_explain",
+        "memory_history", "memory_conflicts", "memory_sources",
+        "memory_propose_claim", "memory_propose_supersession",
+        "memory_propose_retraction", "memory_propose_procedure",
     }
     if seen != expected:
         failures.append(f"workflow inventory differs: {sorted(seen ^ expected)}")

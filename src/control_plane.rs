@@ -50,6 +50,15 @@ pub const TOOLS: &[ControlPlaneTool] = &[
     ControlPlaneTool::ReconcileStreamingRun,
     ControlPlaneTool::ReconcileVerificationLineage,
     ControlPlaneTool::ProposeTopologyRedesign,
+    ControlPlaneTool::MemoryQuery,
+    ControlPlaneTool::MemoryExplain,
+    ControlPlaneTool::MemoryHistory,
+    ControlPlaneTool::MemoryConflicts,
+    ControlPlaneTool::MemorySources,
+    ControlPlaneTool::MemoryProposeClaim,
+    ControlPlaneTool::MemoryProposeSupersession,
+    ControlPlaneTool::MemoryProposeRetraction,
+    ControlPlaneTool::MemoryProposeProcedure,
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -74,6 +83,15 @@ pub enum ControlPlaneTool {
     ReconcileStreamingRun,
     ReconcileVerificationLineage,
     ProposeTopologyRedesign,
+    MemoryQuery,
+    MemoryExplain,
+    MemoryHistory,
+    MemoryConflicts,
+    MemorySources,
+    MemoryProposeClaim,
+    MemoryProposeSupersession,
+    MemoryProposeRetraction,
+    MemoryProposeProcedure,
 }
 
 impl ControlPlaneTool {
@@ -92,6 +110,15 @@ impl ControlPlaneTool {
                     | Self::ReconcileStreamingRun
                     | Self::ReconcileVerificationLineage
                     | Self::ProposeTopologyRedesign
+                    | Self::MemoryQuery
+                    | Self::MemoryExplain
+                    | Self::MemoryHistory
+                    | Self::MemoryConflicts
+                    | Self::MemorySources
+                    | Self::MemoryProposeClaim
+                    | Self::MemoryProposeSupersession
+                    | Self::MemoryProposeRetraction
+                    | Self::MemoryProposeProcedure
             )
     }
 

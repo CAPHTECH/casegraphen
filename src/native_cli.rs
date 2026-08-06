@@ -27,13 +27,15 @@ pub use ops::EVIDENCE_PACKET_SCHEMA;
 use ops::{
     binding_register, case_close_check, case_history_text, case_import, case_new, case_reason,
     case_reason_text, case_topology, case_topology_diff, cell_transition, evidence_attach,
-    lift_structured_source, morphism_apply, morphism_check, morphism_propose, morphism_reject,
-    operate, operate_text, packet_apply, packet_apply_text, packet_resume, packet_resume_text,
-    plan_check, plan_propose, plan_review, projection_apply, review_apply, run_frontier,
-    run_frontier_text, run_step, run_step_text, topology_review_apply, topology_review_inspect,
-    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
-    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
-    NativeRunGateOptions, NativeRunStepOptions, NativeTopologyReviewOptions,
+    lift_structured_source, memory_check, memory_index, memory_propose, memory_read, memory_source,
+    morphism_apply, morphism_check, morphism_propose, morphism_reject, operate, operate_text,
+    packet_apply, packet_apply_text, packet_resume, packet_resume_text, plan_check, plan_propose,
+    plan_review, projection_apply, review_apply, run_frontier, run_frontier_text, run_step,
+    run_step_text, topology_review_apply, topology_review_inspect, MemoryIndexMode, MemoryReadMode,
+    MemorySourceMode, NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions,
+    NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
+    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
+    NativeTopologyReviewOptions,
 };
 use reporting::report;
 
@@ -195,6 +197,45 @@ pub(crate) enum NativeCliCommand {
         right_store: PathBuf,
         right_case_space_id: Id,
         topology_options: TopologyReportOptions,
+        output: Option<PathBuf>,
+    },
+    MemoryRead {
+        store: PathBuf,
+        case_space_id: Id,
+        input: PathBuf,
+        policy: PathBuf,
+        mode: MemoryReadMode,
+        target_id: Option<Id>,
+        output: Option<PathBuf>,
+    },
+    MemorySource {
+        source_record: PathBuf,
+        source_artifact: PathBuf,
+        mode: MemorySourceMode,
+        output: Option<PathBuf>,
+    },
+    MemoryCheck {
+        input: PathBuf,
+        source_record: PathBuf,
+        source_artifact: PathBuf,
+        policy: PathBuf,
+        output: Option<PathBuf>,
+    },
+    MemoryPropose {
+        input: PathBuf,
+        source_record: PathBuf,
+        source_artifact: PathBuf,
+        policy: PathBuf,
+        space_id: Id,
+        output: Option<PathBuf>,
+    },
+    MemoryIndex {
+        store: PathBuf,
+        case_space_id: Id,
+        input: PathBuf,
+        policy: PathBuf,
+        mode: MemoryIndexMode,
+        index: Option<PathBuf>,
         output: Option<PathBuf>,
     },
     MorphismPropose {
@@ -401,6 +442,11 @@ impl NativeCliCommand {
             | Self::CaseTopology { output, .. }
             | Self::CaseTopologyDiff { output, .. }
             | Self::EquivalenceCheck { output, .. }
+            | Self::MemoryRead { output, .. }
+            | Self::MemorySource { output, .. }
+            | Self::MemoryCheck { output, .. }
+            | Self::MemoryPropose { output, .. }
+            | Self::MemoryIndex { output, .. }
             | Self::MorphismPropose { output, .. }
             | Self::MorphismCheck { output, .. }
             | Self::MorphismApply { output, .. }
@@ -605,6 +651,11 @@ impl NativeCliCommand {
                     domain_finding,
                 ))
             }
+            Self::MemoryRead { .. }
+            | Self::MemorySource { .. }
+            | Self::MemoryCheck { .. }
+            | Self::MemoryPropose { .. }
+            | Self::MemoryIndex { .. } => self.run_memory_value(),
             Self::CaseNew { .. }
             | Self::CaseImport { .. }
             | Self::LiftStructuredSource { .. }
@@ -639,6 +690,58 @@ impl NativeCliCommand {
             | Self::CellTransition { .. }
             | Self::PacketApply { .. }
             | Self::PacketResume { .. } => self.run_morphism_value(),
+        }
+    }
+
+    fn run_memory_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
+        match self {
+            Self::MemoryRead {
+                store,
+                case_space_id,
+                input,
+                policy,
+                mode,
+                target_id,
+                ..
+            } => memory_read(
+                store,
+                case_space_id,
+                input,
+                policy,
+                *mode,
+                target_id.as_ref(),
+            ),
+            Self::MemorySource {
+                source_record,
+                source_artifact,
+                mode,
+                ..
+            } => memory_source(source_record, source_artifact, *mode),
+            Self::MemoryCheck {
+                input,
+                source_record,
+                source_artifact,
+                policy,
+                ..
+            } => memory_check(input, source_record, source_artifact, policy),
+            Self::MemoryPropose {
+                input,
+                source_record,
+                source_artifact,
+                policy,
+                space_id,
+                ..
+            } => memory_propose(input, source_record, source_artifact, policy, space_id),
+            Self::MemoryIndex {
+                store,
+                case_space_id,
+                input,
+                policy,
+                mode,
+                index,
+                ..
+            } => memory_index(store, case_space_id, input, policy, *mode, index.as_deref()),
+            _ => unreachable!("run_memory_value called for non-memory command"),
         }
     }
 
@@ -1320,6 +1423,7 @@ pub enum NativeCliError {
         source: std::io::Error,
     },
     Json(serde_json::Error),
+    Memory(Vec<crate::memory::MemoryValidationFinding>),
 }
 
 impl NativeCliError {
@@ -1354,7 +1458,7 @@ impl NativeCliError {
     pub(crate) fn error_code(&self) -> &'static str {
         match self {
             Self::Usage(_) | Self::UnsupportedArgumentValue { .. } => "usage",
-            Self::Invalid(_) | Self::Json(_) => "invalid",
+            Self::Invalid(_) | Self::Json(_) | Self::Memory(_) => "invalid",
             Self::StaleRevision { .. } => "stale_revision",
             Self::StalePlanRevision { .. } => "stale_plan_revision",
             Self::GateViolation { .. } => "gate_violation",
@@ -1413,6 +1517,7 @@ impl NativeCliError {
             Self::Review(error) if !error.findings.is_empty() => Some(json!({
                 "findings": error.findings,
             })),
+            Self::Memory(findings) => Some(json!({ "findings": findings })),
             Self::Eval(error) => Some(json!({ "violations": error.violations })),
             Self::Store(NativeStoreError::MissingCase { case_space_id, .. }) => Some(json!({
                 "case_space_id": case_space_id,
@@ -1546,6 +1651,11 @@ impl fmt::Display for NativeCliError {
             Self::Worker(error) => write!(formatter, "{error}"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Json(error) => write!(formatter, "{error}"),
+            Self::Memory(findings) => write!(
+                formatter,
+                "memory contract validation failed: {}",
+                serde_json::to_string(findings).unwrap_or_else(|_| "[]".to_owned())
+            ),
         }
     }
 }

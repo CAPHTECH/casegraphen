@@ -1,0 +1,16 @@
+{
+  "schema": "casegraphen.experimental.memory.policy.v0",
+  "policy_id": "memory-policy:casegraphen-coding-agent",
+  "project_id": "casegraphen",
+  "actor_grants": [{
+    "actor_id": "actor:coding-agent",
+    "allowed_audiences": ["ai_agent"],
+    "allowed_purposes": ["code_change"],
+    "project_ids": ["casegraphen"],
+    "max_sensitivity": "internal",
+    "max_authority": "project_constraint"
+  }],
+  "valid_time_required_kinds": ["preference", "goal", "commitment"],
+  "hard_conflict_relation_types": ["contradicts"],
+  "exact_source_escalation": true
+}

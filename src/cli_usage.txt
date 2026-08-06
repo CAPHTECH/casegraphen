@@ -2,7 +2,17 @@ usage:
   casegraphen version
   casegraphen --version
   casegraphen graph lint --input <execution.topology.json> --format json|text [--output <path>]
-  casegraphen-mcp-host --state <control-plane.state.json> --store <case-store-dir> --artifacts <artifact-dir> [--resource-journal <dir>] [--resource-capacities <resource.allocator_configuration.v0.json>] [--resource-retention-policy <resource.allocator_retention_policy.v0.json> --resource-checkpoint-interval <positive-events>] --auth-token-env <environment-variable>  (experimental Graph Engineering workflows; resource allocator state is host-canonical; checkpoint maintenance preserves archived full replay; runtime/redesign output is never auto-accepted; verification lineage is read-only and returns no proof objects)
+  casegraphen memory query|conflicts|candidates --store <dir> --case-space-id <id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --format json [--output <path>]
+  casegraphen memory explain|history|sources --store <dir> --case-space-id <id> --target-id <claim-id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --format json [--output <path>]
+  casegraphen memory source <attach|inspect>
+  casegraphen memory source attach --source-record <memory.source_record.v0.json> --source-artifact <path> --format json [--output <path>]  (proposal-only; does not persist bytes or mutate accepted state)
+  casegraphen memory source inspect --source-record <memory.source_record.v0.json> --source-artifact <path> --format json [--output <path>]
+  casegraphen memory check --input <memory.claim.v0.json> --source-record <memory.source_record.v0.json> --source-artifact <path> --policy <memory.policy.v0.json> --format json [--output <path>]
+  casegraphen memory propose --input <memory.claim.v0.json> --source-record <memory.source_record.v0.json> --source-artifact <path> --policy <memory.policy.v0.json> --space-id <id> --format json [--output <path>]  (emits an unreviewed evidence-cell proposal; never reviews or applies it)
+  casegraphen memory index <rebuild|validate>
+  casegraphen memory index rebuild --store <dir> --case-space-id <id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --format json [--output <path>]
+  casegraphen memory index validate --store <dir> --case-space-id <id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --index <memory.index.v0.json> --format json [--output <path>]
+  casegraphen-mcp-host --state <control-plane.state.json> --store <case-store-dir> --artifacts <artifact-dir> [--resource-journal <dir>] [--resource-capacities <resource.allocator_configuration.v0.json>] [--resource-retention-policy <resource.allocator_retention_policy.v0.json> --resource-checkpoint-interval <positive-events>] --auth-token-env <environment-variable>  (experimental Graph Engineering and Memory Plane workflows; resource allocator state is host-canonical; checkpoint maintenance preserves archived full replay; runtime/redesign/memory proposals are never auto-accepted; verification lineage and memory projections are read-only)
   casegraphen lift native --store <dir> --input <native.case.space.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift workflow --store <dir> --input <workflow.graph.json> --revision-id <id> --format json [--output <path>]
   casegraphen lift case-graph --store <dir> --input <case.graph.json> --revision-id <id> --format json [--output <path>]

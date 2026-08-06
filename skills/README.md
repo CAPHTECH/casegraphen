@@ -10,6 +10,9 @@ crate. (The repository's own development skills stay in `.claude/skills/`.)
 | [`casegraphen-design`](casegraphen-design/SKILL.md) | Turning a problem statement into an unreviewed, typed, linted execution-topology proposal before selecting or running a runtime |
 | [`casegraphen-audit`](casegraphen-audit/SKILL.md) | Auditing static topology and canonical planned-versus-reported completeness without promoting runtime declarations |
 | [`casegraphen-integrate`](casegraphen-integrate/SKILL.md) | Ingesting generic external-runtime JSONL, reconciling canonical completeness, and stopping at unreviewed evidence/morphism proposals |
+| [`casegraphen-memory-query`](casegraphen-memory-query/SKILL.md) | Reading revision-bound accepted project memory while preserving sources, authority, time, conflict, and projection loss |
+| [`casegraphen-memory-curate`](casegraphen-memory-curate/SKILL.md) | Creating immutable-source-backed, scoped, temporal, unreviewed claim and relation proposals without accepting them |
+| [`casegraphen-memory-audit`](casegraphen-memory-audit/SKILL.md) | Auditing provenance, authority laundering, stale memory, conflicts, scope leakage, loss, and index replay equivalence without mutation |
 
 ## Install
 
@@ -48,6 +51,12 @@ cp -R /path/to/casegraphen/skills/casegraphen-audit ~/.claude/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-audit ~/.codex/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-integrate ~/.claude/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-integrate ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-query ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-query ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-curate ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-curate ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-audit ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-memory-audit ~/.codex/skills/
 ```
 
 Claude Code discovers skills in `.claude/skills/` (project) and
