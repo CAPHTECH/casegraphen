@@ -1,0 +1,29 @@
+OpenAI Codex v0.146.1
+--------
+workdir: /private/var/folders/2c/qtwpt9yj4fs9k20l__sg_zd40000gn/T/casegraphen-eval-native-case-lifecycle-5ym4y3tt/workspace
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fd638-c239-7aa3-ab1f-302b4e2a47aa
+--------
+user
+# Task
+
+Route a native CaseGraphen lifecycle that begins with design and eventually needs governed operation. The design phase has produced an unreviewed topology, but no independent topology review exists. Write orchestration.handoff.json using the installed handoff contract and stop at the topology review seam.
+
+Use the Skill at `skill/casegraphen-orchestrate/SKILL.md`. Read only its references needed for this task.
+
+## Inputs
+
+- `observed-handoff-example.json`
+
+## Required files
+
+- `orchestration.handoff.json`
+
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 9th, 2026 10:08 PM.
+ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 9th, 2026 10:08 PM.

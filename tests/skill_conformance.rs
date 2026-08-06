@@ -144,6 +144,11 @@ fn every_skill_refuses_a_removed_responsibility_boundary() {
             "Never repair an audit finding by accepting a claim",
             "Repair an audit finding by accepting a claim",
         ),
+        (
+            "casegraphen-orchestrate",
+            "These are explicit return seams.",
+            "These seams may be crossed automatically.",
+        ),
     ];
 
     for (skill, from, to) in mutations {

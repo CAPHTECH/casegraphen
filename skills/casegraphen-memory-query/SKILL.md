@@ -1,6 +1,6 @@
 ---
 name: casegraphen-memory-query
-description: Query CaseGraphen's experimental, evidence-grounded project memory as a read-only, revision-bound projection. Use when an agent needs current constraints, decisions, procedures, failure patterns, sources, conflicts, or history without mutating accepted state.
+description: Direct task skill for querying CaseGraphen's experimental, evidence-grounded project memory as a read-only, revision-bound projection. Use for memory-query-only requests for constraints, decisions, procedures, failure patterns, sources, conflicts, or history; use casegraphen-orchestrate for multi-phase routing. Never mutates accepted state.
 ---
 
 # Query governed project memory

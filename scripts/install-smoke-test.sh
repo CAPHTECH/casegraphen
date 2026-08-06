@@ -29,14 +29,14 @@ grep -F 'claude mcp get casegraphen' "$install_output" >/dev/null
 grep -F "$repository_dir/docs/guides/mcp-operational-host.md" "$install_output" >/dev/null
 
 for runtime in .claude .codex; do
-  for skill in casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
+  for skill in casegraphen-orchestrate casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
     installed="$test_dir/home/$runtime/skills/$skill/SKILL.md"
     if [ ! -f "$installed" ]; then
       printf 'missing installed skill: %s\n' "$installed" >&2
       exit 1
     fi
   done
-  for skill in casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
+  for skill in casegraphen-orchestrate casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
     installed_agent="$test_dir/home/$runtime/skills/$skill/agents/openai.yaml"
     if [ ! -f "$installed_agent" ]; then
       printf 'missing installed skill agent metadata: %s\n' "$installed_agent" >&2
@@ -73,6 +73,18 @@ for runtime in .claude .codex; do
   done
   cmp "$repository_dir/schemas/experimental/execution.topology.v0.schema.json" "$design_schema"
   cmp "$repository_dir/docs/design/execution-topology-contract.md" "$design_contract"
+  orchestrate_reference="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/routing.md"
+  orchestrate_handoff="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/handoff.md"
+  orchestrate_schema="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/skill.orchestration_handoff.v0.schema.json"
+  orchestrate_example="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/skill.orchestration_handoff.v0.example.json"
+  for installed_asset in "$orchestrate_reference" "$orchestrate_handoff" "$orchestrate_schema" "$orchestrate_example"; do
+    if [ ! -f "$installed_asset" ]; then
+      printf 'missing installed process skill asset: %s\n' "$installed_asset" >&2
+      exit 1
+    fi
+  done
+  cmp "$repository_dir/schemas/experimental/skill.orchestration_handoff.v0.schema.json" "$orchestrate_schema"
+  cmp "$repository_dir/schemas/experimental/skill.orchestration_handoff.v0.example.json" "$orchestrate_example"
 done
 
 if [ -e "$test_dir/project/.claude" ]; then

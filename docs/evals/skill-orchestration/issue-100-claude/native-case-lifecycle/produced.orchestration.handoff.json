@@ -1,0 +1,34 @@
+{
+  "schema": "casegraphen.experimental.skill.orchestration_handoff.v0",
+  "handoff_id": "handoff:native-lifecycle:topology-review",
+  "phase": "topology_proposed",
+  "selected_task_skill": "casegraphen-design",
+  "selection_reason": "The native route is intake -> casegraphen-design -> topology_review -> casegraphen-operate. The completed phase is design, which owns the unreviewed execution-topology proposal and whose output boundary ends there. The next boundary is an independent topology review, which no task skill owns and which the process skill cannot substitute for, so casegraphen-operate is not selected: routing to it would cross an open review seam into the mutation/operation-gate phase.",
+  "observed": {
+    "case_space_id": null,
+    "revision_id": null,
+    "topology_content_hash": null,
+    "report_ids": []
+  },
+  "artifacts": [],
+  "unresolved_evidence": [
+    "case_space_id was not returned by any CaseGraphen tool call in this session",
+    "revision_id of the design-phase case space was not observed",
+    "topology_content_hash is unavailable: no execution-topology bytes were present to hash independently",
+    "the unreviewed topology proposal itself was not produced as a readable artifact, so no proposal-role artifact can be recorded",
+    "no graph-lint or other design-phase report ids were observed",
+    "no independent topology review record exists",
+    "the only supplied file, observed-handoff-example.json, is a byte-identical copy of the installed schema example; its identifiers and sha256 values are illustrative placeholders and were not treated as observed evidence"
+  ],
+  "seams": [
+    {
+      "kind": "topology_review",
+      "status": "open",
+      "required_actor_or_policy": "independent topology reviewer"
+    }
+  ],
+  "return_required": true,
+  "next_action": {"kind": "return_for_review", "task_skill": null},
+  "mutation_performed": false,
+  "accepted_state_changed": false
+}

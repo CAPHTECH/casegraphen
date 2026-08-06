@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Operate"
+  short_description: "Apply revision-bound gated case operations"
+  default_prompt: "Use $casegraphen-operate for this direct CaseGraphen operation while preserving revisions, gates, review seams, and refusals."

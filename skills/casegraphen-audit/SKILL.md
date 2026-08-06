@@ -1,6 +1,6 @@
 ---
 name: casegraphen-audit
-description: Audit a CaseGraphen execution topology and, when canonical runtime completeness data is available, compare planned and reported behavior. Use for dependency, critical-path, barrier, resource, fan-in, verification, authority, retry, missing-report, schema, latency, cost, allocation, or convergence investigations. Keeps deterministic violations, runtime observations, runtime-declared metadata, and review-required inferences separate and never promotes runtime claims.
+description: Direct task skill for auditing a CaseGraphen execution topology and canonical runtime completeness data. Use for audit-only dependency, critical-path, barrier, resource, fan-in, verification, authority, retry, missing-report, schema, latency, cost, allocation, or convergence investigations; use casegraphen-orchestrate for multi-phase routing. Keeps deterministic violations, runtime observations, runtime-declared metadata, and review-required inferences separate and never promotes runtime claims.
 ---
 
 # Audit graph shape and runtime reports

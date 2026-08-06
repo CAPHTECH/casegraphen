@@ -1,5 +1,10 @@
 # Fresh-agent release evaluation
 
+> The six skill-orchestration routing prompts are a separate non-release suite:
+> `evals/fresh-agent/skill-orchestration-scenarios.v0.json`. Validate or run it
+> by passing that exact path with `--manifest`. Its results cannot replace any
+> of the ten release scenarios or satisfy stable-promotion policy.
+
 The checked-in ten-scenario harness is deterministic infrastructure, not
 evidence that a real agent followed a Skill. A release evaluation becomes
 evidence only when a `summary.json` from a real provider run is retained with

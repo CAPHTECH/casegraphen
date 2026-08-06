@@ -1,6 +1,6 @@
 ---
 name: casegraphen-design
-description: Turn a problem statement into an unreviewed, linted CaseGraphen execution-topology proposal. Use when decomposing governed work into runtime nodes, typed handoffs, resource claims, verification seams, reductions, budgets, or expansion policies before execution. Produces proposal artifacts only; never accepts or mutates a case graph.
+description: Direct task skill for turning a problem statement into an unreviewed, linted CaseGraphen execution-topology proposal. Use for design-only decomposition into runtime nodes, typed handoffs, resource claims, verification seams, reductions, budgets, or expansion policies before execution; use casegraphen-orchestrate for multi-phase routing. Produces proposal artifacts only; never accepts or mutates a case graph.
 ---
 
 # Design an execution topology proposal

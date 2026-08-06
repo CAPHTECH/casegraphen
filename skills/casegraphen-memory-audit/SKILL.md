@@ -1,6 +1,6 @@
 ---
 name: casegraphen-memory-audit
-description: Audit CaseGraphen's experimental Memory Plane for missing provenance, authority laundering, stale memory, temporal overlap, hidden conflict, unsupported generalization, scope leakage, projection loss, and non-rebuildable indexes without changing state.
+description: Direct task skill for auditing CaseGraphen's experimental Memory Plane for missing provenance, authority laundering, stale memory, temporal overlap, hidden conflict, unsupported generalization, scope leakage, projection loss, and non-rebuildable indexes. Use casegraphen-orchestrate for multi-phase routing; never changes state.
 ---
 
 # Audit governed memory

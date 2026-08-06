@@ -1,0 +1,25 @@
+{
+  "selected_task_skill": "casegraphen-integrate",
+  "automatic_continuation": true,
+  "accepted_state_changed": false,
+  "rationale": {
+    "phase": "Topology review is complete and an external runtime has produced generic JSONL reports; the next boundary is reconciliation of those reports into unreviewed evidence/morphism proposals.",
+    "ownership": "casegraphen-integrate owns generic external-runtime JSONL reconciliation. Its output boundary is unreviewed evidence/morphism proposals only.",
+    "outside_scope": [
+      "evidence review (independent reviewer seam, after integration)",
+      "acceptance-ledger mutation and operation gating (casegraphen-operate)",
+      "worker enablement, capability, credential, scope, or authority changes"
+    ],
+    "continuation_rule": {
+      "completed_phase_proposal_or_read_only": true,
+      "next_phase_proposal_or_read_only": true,
+      "open_seams": [],
+      "unresolved_required_evidence": []
+    },
+    "evidence_roles": {
+      "external_runtime_jsonl": "runtime_declared",
+      "integration_output": "proposal"
+    },
+    "acceptance_note": "Runtime-declared JSONL claims and the integration proposals are not accepted state; no accepted revision is read, advanced, or mutated by this route."
+  }
+}

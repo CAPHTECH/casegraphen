@@ -1,0 +1,15 @@
+{
+  "selected_task_skill": "casegraphen-design",
+  "orchestration_used": false,
+  "mutation_performed": false,
+  "request_class": "direct_task",
+  "rationale": "The request is a single bounded phase: design a CaseGraphen execution topology. Per routing.md, 'Design/decompose governed runtime work' is owned by casegraphen-design, whose output boundary is unreviewed topology/policy proposals. SKILL.md workflow step 1 requires naming the task skill and stopping orchestration for a direct task, so the process layer is not kept active and no skill.orchestration_handoff.v0 is emitted (no phase boundary is crossed).",
+  "out_of_scope": [
+    "topology_review (independent reviewer seam; not requested)",
+    "casegraphen-audit (no review or findings requested)",
+    "casegraphen-integrate (no external-runtime JSONL to reconcile)",
+    "casegraphen-operate (sole owner of revision/gate/mutation; not requested)"
+  ],
+  "seams_open": [],
+  "return_required": false
+}
