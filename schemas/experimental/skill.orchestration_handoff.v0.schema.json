@@ -64,6 +64,14 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"unresolved_evidence": {"minItems": 1}}},
+      "then": {"properties": {"return_required": {"const": true}}}
+    },
+    {
+      "if": {"properties": {"seams": {"contains": {"properties": {"status": {"const": "open"}}, "required": ["status"]}}}},
+      "then": {"properties": {"return_required": {"const": true}}}
+    },
+    {
       "if": {"properties": {"return_required": {"const": true}}},
       "then": {"properties": {"next_action": {"properties": {"kind": {"enum": ["return_for_review", "return_for_authority", "return_for_revision"]}}}}}
     },
