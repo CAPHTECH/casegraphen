@@ -17,6 +17,9 @@ SKILLS = {
         "casegraphen-audit",
         "casegraphen-integrate",
         "casegraphen-operate",
+        "casegraphen-memory-query",
+        "casegraphen-memory-curate",
+        "casegraphen-memory-audit",
     )
 }
 OPERATE_SKILL = SKILLS["casegraphen-operate"]
@@ -51,6 +54,21 @@ ROLE_CONTRACTS = {
         "Every durable mutation needs a valid operation gate.",
         "CaseGraphen decides",
         "Carry the revision returned by each mutating command.",
+    ),
+    "casegraphen-memory-query": (
+        "Use the Memory Plane as a read-only projection of an exact replayed CaseSpace.",
+        "It is not a conversation store, and relevance is not authority.",
+        "Do not call `review`, `morphism apply`, `evidence attach`, `run`, or `operate`",
+    ),
+    "casegraphen-memory-curate": (
+        "Produce proposals only.",
+        "The proposer does not accept, review, apply, or persist managed CaseGraphen state.",
+        "Summarization cannot raise authority.",
+    ),
+    "casegraphen-memory-audit": (
+        "Audit without mutating the CaseGraph, proposals, review state, artifacts, or indexes.",
+        "A clean audit establishes the documented procedural invariants, not absolute truth.",
+        "Never repair an audit finding by accepting a claim",
     ),
 }
 

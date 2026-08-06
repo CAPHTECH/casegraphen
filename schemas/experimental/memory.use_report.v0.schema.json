@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.use_report.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "projection_content_hash", "action_id", "cited_claim_ids", "ignored_constraint_ids", "runtime_reported_effect", "self_reported", "accepted"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.use_report.v0"},
+    "projection_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "action_id": {"type": "string", "minLength": 1},
+    "cited_claim_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "ignored_constraint_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "runtime_reported_effect": {"type": "string"},
+    "self_reported": {"const": true},
+    "accepted": {"const": false}
+  }
+}

@@ -14,7 +14,16 @@
     {"workflow":"expansion","entry_point":"operational_mcp_host","tool":"evaluate_expansion_round","owner":"src/dynamic_expansion.rs","skills":["casegraphen-design","casegraphen-audit"]},
     {"workflow":"streaming","entry_point":"operational_mcp_host","tool":"reconcile_streaming_run","semantics":"terminal_artifact_stage_pipelining_v0","compatibility_name":"streaming","owner":"src/streaming_reconciliation.rs","skills":["casegraphen-integrate"]},
     {"workflow":"verification_lineage","entry_point":"operational_mcp_host","tool":"reconcile_verification_lineage","semantics":"read_only_ledger_derived_proof_reconciliation_v0","owner":"src/verification_policy.rs","skills":["casegraphen-integrate","casegraphen-operate"]},
-    {"workflow":"redesign","entry_point":"operational_mcp_host","tool":"propose_topology_redesign","owner":"src/topology_redesign.rs","skills":["casegraphen-audit"]}
+    {"workflow":"redesign","entry_point":"operational_mcp_host","tool":"propose_topology_redesign","owner":"src/topology_redesign.rs","skills":["casegraphen-audit"]},
+    {"workflow":"memory_query","entry_point":"operational_mcp_host","tool":"memory_query","semantics":"read_only_revision_bound_projection_v0","owner":"src/memory/projection.rs","skills":["casegraphen-memory-query"]},
+    {"workflow":"memory_explain","entry_point":"operational_mcp_host","tool":"memory_explain","semantics":"read_only_revision_bound_projection_v0","owner":"src/memory/projection.rs","skills":["casegraphen-memory-query","casegraphen-memory-audit"]},
+    {"workflow":"memory_history","entry_point":"operational_mcp_host","tool":"memory_history","semantics":"explicit_historical_projection_v0","owner":"src/memory/projection.rs","skills":["casegraphen-memory-query","casegraphen-memory-audit"]},
+    {"workflow":"memory_conflicts","entry_point":"operational_mcp_host","tool":"memory_conflicts","semantics":"conflict_visible_projection_v0","owner":"src/memory/conflicts.rs","skills":["casegraphen-memory-query","casegraphen-memory-audit"]},
+    {"workflow":"memory_sources","entry_point":"operational_mcp_host","tool":"memory_sources","semantics":"immutable_source_escalation_v0","owner":"src/memory/query.rs","skills":["casegraphen-memory-query","casegraphen-memory-audit"]},
+    {"workflow":"memory_propose_claim","entry_point":"operational_mcp_host","tool":"memory_propose_claim","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/validation.rs","skills":["casegraphen-memory-curate"]},
+    {"workflow":"memory_propose_supersession","entry_point":"operational_mcp_host","tool":"memory_propose_supersession","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/conflicts.rs","skills":["casegraphen-memory-curate"]},
+    {"workflow":"memory_propose_retraction","entry_point":"operational_mcp_host","tool":"memory_propose_retraction","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/conflicts.rs","skills":["casegraphen-memory-curate"]},
+    {"workflow":"memory_propose_procedure","entry_point":"operational_mcp_host","tool":"memory_propose_procedure","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/validation.rs","skills":["casegraphen-memory-curate"]}
   ],
   "invariants": {
     "runtime_reports_are_untrusted": true,
@@ -28,6 +37,8 @@
     "operational_resource_reservations_require_reviewed_deployment_authority": true,
     "resource_bearing_runtime_reconciliation_requires_a_versioned_expectation_bundle": true,
     "streaming_v0_requires_terminal_producer_and_final_artifact": true,
-    "verification_lineage_proofs_are_canonical_opaque_and_never_serialized": true
+    "verification_lineage_proofs_are_canonical_opaque_and_never_serialized": true,
+    "memory_tools_never_mutate_accepted_state": true,
+    "memory_indexes_are_derived_and_non_authoritative": true
   }
 }

@@ -29,10 +29,17 @@ grep -F 'claude mcp get casegraphen' "$install_output" >/dev/null
 grep -F "$repository_dir/docs/guides/mcp-operational-host.md" "$install_output" >/dev/null
 
 for runtime in .claude .codex; do
-  for skill in casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate; do
+  for skill in casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
     installed="$test_dir/home/$runtime/skills/$skill/SKILL.md"
     if [ ! -f "$installed" ]; then
       printf 'missing installed skill: %s\n' "$installed" >&2
+      exit 1
+    fi
+  done
+  for skill in casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
+    installed_agent="$test_dir/home/$runtime/skills/$skill/agents/openai.yaml"
+    if [ ! -f "$installed_agent" ]; then
+      printf 'missing installed skill agent metadata: %s\n' "$installed_agent" >&2
       exit 1
     fi
   done

@@ -252,10 +252,10 @@ impl Command {
         match required_segment(&mut args, "command")?.to_str() {
             Some("version") | Some("--version") | Some("-V") => Ok(Self::Version),
             Some(
-                segment @ ("lift" | "graph" | "space" | "obstruction" | "completion" | "projection"
-                | "equivalence" | "invariant" | "morphism" | "plan" | "binding" | "run"
-                | "operate" | "review" | "topology-review" | "evidence" | "cell"
-                | "packet"),
+                segment @ ("lift" | "graph" | "memory" | "space" | "obstruction" | "completion"
+                | "projection" | "equivalence" | "invariant" | "morphism" | "plan"
+                | "binding" | "run" | "operate" | "review" | "topology-review"
+                | "evidence" | "cell" | "packet"),
             ) => NativeCliCommand::parse(segment, args)
                 .map(|command| Self::Native(Box::new(command)))
                 .map_err(CliError::from),

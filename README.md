@@ -199,6 +199,10 @@ and `graph lint` supports JSON or text without creating a second decision rule.
 casegraphen lift native|workflow|case-graph      # native and graph lifts
 casegraphen lift github-issues                   # bounded GitHub issue snapshot lift
 casegraphen graph lint                           # experimental topology analysis; json|text
+casegraphen memory query|explain|history|conflicts|candidates|sources
+casegraphen memory source attach|inspect         # proposal/read-only; no accepted write
+casegraphen memory check|propose                  # propose is always unreviewed
+casegraphen memory index rebuild|validate         # derived and non-authoritative
 casegraphen space new|list|inspect|history|replay|validate|reason|frontier|evidence|project|topology
 casegraphen space rebuild [--adopt-existing-log]  # adoption is a human trust assertion
 casegraphen morphism propose|check|apply|reject   # apply/reject are gated
@@ -303,9 +307,11 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0025: runtime edge-handoff completeness](docs/adr/0025-runtime-completeness-requires-edge-handoffs.md)
 - [ADR 0026: content-addressed allocator checkpoints](docs/adr/0026-content-addressed-resource-allocator-checkpoints.md)
 - [ADR 0027: exact compiler profile compatibility](docs/adr/0027-exact-compiler-profile-compatibility.md)
+- [ADR 0028: Memory Plane positioning](docs/adr/0028-memory-plane-positioning.md)
+- [ADR 0029: Memory Plane stable-promotion decision](docs/adr/0029-memory-plane-stable-promotion.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0028**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0030**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

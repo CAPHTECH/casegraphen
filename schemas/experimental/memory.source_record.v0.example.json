@@ -1,0 +1,12 @@
+{
+  "schema": "casegraphen.experimental.memory.source_record.v0",
+  "source_record_id": "memory-source:adr-0002",
+  "source_kind": "document",
+  "content_hash": "sha256:2b405eb740a7b49fd3252e1d406dcaa22ccac8f2cb7e550c92350a71766ea1a9",
+  "captured_at": "2026-08-06T00:00:00Z",
+  "origin_actor_id": "actor:architecture-reviewer",
+  "source_boundary_id": "source_boundary:repository",
+  "authority_origin": "reviewer",
+  "sensitivity": "internal",
+  "artifact_ref": "docs/adr/0002-graph-engineering-positioning.md"
+}

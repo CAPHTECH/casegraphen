@@ -1,0 +1,32 @@
+{
+  "schema": "casegraphen.experimental.memory.projection.v0",
+  "projection_id": "memory-projection:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "base_revision_id": "revision:accepted-casegraphen",
+  "query_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "audience": "ai_agent",
+  "selected_claim_ids": ["memory:runtime-boundary"],
+  "source_refs": ["artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+  "contested_claim_ids": [],
+  "omissions": [],
+  "losses": [],
+  "authority_summary": {"project_constraint": 1},
+  "temporal_cutoff": "2026-08-06T00:00:00Z",
+  "token_budget": 6000,
+  "projection_content_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "items": [{
+    "claim_id": "memory:runtime-boundary",
+    "memory_kind": "constraint",
+    "statement": {"predicate": "must_not_depend_on", "object": "agent-runtime"},
+    "subject_refs": ["repo:CAPHTECH/casegraphen"],
+    "source_refs": ["artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    "status": "accepted",
+    "authority": "project_constraint",
+    "sensitivity": "internal",
+    "valid_time": {"valid_from": "2026-07-30T00:00:00Z"},
+    "relevance_score": 2,
+    "evidence_strength": "source_backed",
+    "hard_conflict": false
+  }],
+  "read_only": true,
+  "accepted_state_changed": false
+}

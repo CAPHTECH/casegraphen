@@ -34,6 +34,7 @@ mod binding;
 mod github_issue_lift;
 mod io;
 mod lift;
+mod memory;
 mod mutations;
 mod packet;
 mod plan;
@@ -46,6 +47,10 @@ use io::{
     read_proposal, timestamp, write_json,
 };
 pub(super) use lift::{case_import, case_new, lift_structured_source};
+pub(super) use memory::{
+    memory_check, memory_index, memory_propose, memory_read, memory_source, MemoryIndexMode,
+    MemoryReadMode, MemorySourceMode,
+};
 pub(super) use mutations::{cell_transition, evidence_attach, review_apply};
 use mutations::{existing_case_space_ids, prepare_claim, ClaimPreparationState};
 pub use packet::EVIDENCE_PACKET_SCHEMA;

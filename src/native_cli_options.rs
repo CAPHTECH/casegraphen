@@ -99,6 +99,10 @@ pub(super) struct NativeOptions {
     pub(super) left_store: Option<PathBuf>,
     pub(super) right_store: Option<PathBuf>,
     pub(super) input: Option<PathBuf>,
+    pub(super) policy: Option<PathBuf>,
+    pub(super) source_record: Option<PathBuf>,
+    pub(super) source_artifact: Option<PathBuf>,
+    pub(super) index: Option<PathBuf>,
     pub(super) policy_manifest: Option<PathBuf>,
     pub(super) projection: Option<PathBuf>,
     pub(super) packet: Option<PathBuf>,
@@ -250,6 +254,14 @@ impl NativeOptions {
             Some("--policy-manifest") => {
                 self.policy_manifest = Some(require_path(args, "--policy-manifest")?)
             }
+            Some("--policy") => self.policy = Some(require_path(args, "--policy")?),
+            Some("--source-record") => {
+                self.source_record = Some(require_path(args, "--source-record")?)
+            }
+            Some("--source-artifact") => {
+                self.source_artifact = Some(require_path(args, "--source-artifact")?)
+            }
+            Some("--index") => self.index = Some(require_path(args, "--index")?),
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
             Some("--packet") => self.packet = Some(require_path(args, "--packet")?),
             Some("--output") => self.output = Some(require_path(args, "--output")?),
@@ -471,6 +483,10 @@ impl NativeOptions {
     pub(super) fn require_path(&self, flag: &str) -> Result<PathBuf, NativeCliError> {
         match flag {
             "--input" => self.input.clone(),
+            "--policy" => self.policy.clone(),
+            "--source-record" => self.source_record.clone(),
+            "--source-artifact" => self.source_artifact.clone(),
+            "--index" => self.index.clone(),
             "--projection" => self.projection.clone(),
             "--packet" => self.packet.clone(),
             "--left-store" => self.left_store.clone(),

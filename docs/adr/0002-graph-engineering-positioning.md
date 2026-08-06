@@ -205,10 +205,14 @@ constant-size log-head file independently anchors the unsnapshotted tail.
   step-input field. Any future decision must introduce and implement typed
   handoff through the contract-change process rather than advertise a
   half-alive hook.
-- **No memory of past misjudgments.** The judgment-precision critique is only
+- **No autonomous core memory of past misjudgments.** The judgment-precision critique is only
   half-answered here: branch decisions must be evidence-backed and a wrong one
   surfaces as an obstruction rather than passing silently, but nothing
-  accumulates "this judgment failed before". Out of scope for a ledger.
+  in core autonomously accumulates "this judgment failed before". This remains
+  out of scope for the ledger itself. [ADR 0028](0028-memory-plane-positioning.md)
+  adds an optional experimental Memory Plane that may propose evidence-backed,
+  reviewable claims about prior outcomes without bypassing this Acceptance
+  Ledger boundary.
 
 ## Consequences
 

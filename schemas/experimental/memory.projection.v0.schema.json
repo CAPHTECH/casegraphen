@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.projection.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "projection_id", "base_revision_id", "query_hash", "audience", "selected_claim_ids", "source_refs", "contested_claim_ids", "omissions", "losses", "authority_summary", "temporal_cutoff", "token_budget", "projection_content_hash", "items", "read_only", "accepted_state_changed"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.projection.v0"},
+    "projection_id": {"type": "string", "minLength": 1},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "query_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "audience": {"enum": ["human_review", "ai_agent", "audit", "system"]},
+    "selected_claim_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "source_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "contested_claim_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "omissions": {"type": "array", "items": {"$ref": "#/$defs/omission"}},
+    "losses": {"type": "array", "items": {"$ref": "#/$defs/loss"}},
+    "authority_summary": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0},
+      "propertyNames": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/authority"}
+    },
+    "temporal_cutoff": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "token_budget": {"type": "integer", "minimum": 1},
+    "projection_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "read_only": {"const": true},
+    "accepted_state_changed": {"const": false}
+  },
+  "$defs": {
+    "status": {"enum": ["candidate", "accepted", "contested", "superseded", "expired", "retracted", "rejected"]},
+    "omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "reason"],
+      "properties": {"claim_id": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}}
+    },
+    "loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loss_kind", "detail", "omitted_claim_ids"],
+      "properties": {
+        "loss_kind": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "omitted_claim_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "memory_kind", "statement", "subject_refs", "source_refs", "status", "authority", "sensitivity", "valid_time", "relevance_score", "evidence_strength", "hard_conflict"],
+      "properties": {
+        "claim_id": {"type": "string", "minLength": 1},
+        "memory_kind": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/memory_kind"},
+        "statement": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/statement"},
+        "subject_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "source_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "status": {"$ref": "#/$defs/status"},
+        "authority": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/authority"},
+        "sensitivity": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/sensitivity"},
+        "valid_time": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/valid_time"},
+        "relevance_score": {"type": "integer", "minimum": 0},
+        "evidence_strength": {"type": "string", "minLength": 1},
+        "hard_conflict": {"type": "boolean"}
+      }
+    }
+  }
+}

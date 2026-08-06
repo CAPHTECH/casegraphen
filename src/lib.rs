@@ -15,6 +15,7 @@ pub mod graph_lint;
 pub mod graph_simulation;
 pub mod math_diagnostics;
 pub mod mcp_stdio;
+pub mod memory;
 pub mod native_cli;
 pub mod native_eval;
 pub mod native_halt;

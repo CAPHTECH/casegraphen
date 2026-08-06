@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Memory Audit"
+  short_description: "Audit provenance, time, conflict, scope, and replay"
+  default_prompt: "Use $casegraphen-memory-audit to inspect this Memory Plane revision for trust, temporal, conflict, scope, loss, and rebuild violations without mutation."

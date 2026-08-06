@@ -1,0 +1,2 @@
+CaseGraphen is the acceptance ledger of a graph-engineered system, not its runtime.
+CaseGraphen does not execute LLM nodes, own a scheduler, or treat runtime output as accepted evidence.

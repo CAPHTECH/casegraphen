@@ -166,6 +166,209 @@ fn operational_simulation_equals_the_canonical_library_report() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn operational_memory_tools_are_read_only_or_unreviewed_proposals() {
+    let directory = temp("memory-boundary");
+    let store = directory.join("store");
+    fs::create_dir_all(&store).unwrap();
+    let create = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "space",
+            "new",
+            "--store",
+            store.to_str().unwrap(),
+            "--case-space-id",
+            "case_space:memory-mcp",
+            "--space-id",
+            "space:memory-mcp",
+            "--title",
+            "Memory MCP fixture",
+            "--revision-id",
+            "revision:memory-mcp",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        create.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+
+    let artifacts = directory.join("artifacts");
+    fs::create_dir_all(artifacts.join("memory-sources")).unwrap();
+    let source_bytes = b"CaseGraphen does not own LLM execution.\n";
+    fs::write(artifacts.join("memory-sources/adr-0002.txt"), source_bytes).unwrap();
+    let digest = casegraphen::memory::content_hash(source_bytes);
+    let policy = json!({
+        "schema":"casegraphen.experimental.memory.policy.v0",
+        "policy_id":"memory-policy:mcp",
+        "project_id":"casegraphen",
+        "actor_grants":[{
+            "actor_id":"actor:coding-agent",
+            "allowed_audiences":["ai_agent"],
+            "allowed_purposes":["code_change"],
+            "project_ids":["casegraphen"],
+            "max_sensitivity":"internal",
+            "max_authority":"project_constraint"
+        }],
+        "valid_time_required_kinds":["preference","goal","commitment"],
+        "hard_conflict_relation_types":["contradicts"],
+        "exact_source_escalation":true
+    });
+    let query = json!({
+        "schema":"casegraphen.experimental.memory.query.v0",
+        "query_id":"memory-query:mcp",
+        "base_revision_id":"revision:memory-mcp",
+        "requesting_actor_id":"actor:coding-agent",
+        "audience":"ai_agent",
+        "purpose":"code_change",
+        "risk_class":"normal",
+        "as_of":"2026-08-06T00:00:00Z",
+        "scope":{"case_space_id":"case_space:memory-mcp","project_id":"casegraphen","actor_ids":[]},
+        "memory_kinds":["constraint"],
+        "budget":{"max_items":30,"max_tokens":6000},
+        "query_text":"runtime boundary",
+        "include_historical":false,
+        "include_contested":false
+    });
+    let source_record = json!({
+        "schema":"casegraphen.experimental.memory.source_record.v0",
+        "source_record_id":"memory-source:mcp",
+        "source_kind":"document",
+        "content_hash":format!("sha256:{digest}"),
+        "captured_at":"2026-08-06T00:00:00Z",
+        "origin_actor_id":"actor:architecture-reviewer",
+        "source_boundary_id":"source_boundary:repository",
+        "authority_origin":"reviewer",
+        "sensitivity":"internal",
+        "artifact_ref":"docs/adr/0002-graph-engineering-positioning.md"
+    });
+    let claim = json!({
+        "schema":"casegraphen.experimental.memory.claim.v0",
+        "claim_id":"memory:runtime-boundary-mcp",
+        "memory_kind":"constraint",
+        "subject_refs":["repo:CAPHTECH/casegraphen"],
+        "statement":{"predicate":"must_not_depend_on","object":"agent-runtime"},
+        "scope":{"case_space_id":"case_space:memory-mcp","project_id":"casegraphen","actor_ids":[]},
+        "valid_time":{"valid_from":"2026-07-30T00:00:00Z"},
+        "source_refs":[format!("artifact:sha256-{digest}")],
+        "derivation_actor_id":"actor:memory-proposer",
+        "derivation_method":"extraction",
+        "model_assertions_are_untrusted":true,
+        "provenance_role":"reviewed_architecture_decision",
+        "authority_ceiling":"project_constraint",
+        "sensitivity":"internal"
+    });
+    let proposal = json!({
+        "case_space_id":"case_space:memory-mcp",
+        "source_record":source_record,
+        "claim":claim,
+        "policy":policy,
+        "artifact_path":"memory-sources/adr-0002.txt"
+    });
+    let responses = run_host(
+        &directory,
+        &[
+            rpc(1, "initialize", json!({"protocolVersion":"2025-06-18"})),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+            rpc(
+                2,
+                "tools/call",
+                json!({
+                    "authorization":"token:surface",
+                    "name":"memory_query",
+                    "arguments":{
+                        "request_id":"request:memory-query",
+                        "idempotency_key":"idempotency:memory-query",
+                        "base_revision_id":"revision:memory-mcp",
+                        "payload":{"memory_request":{
+                            "case_space_id":"case_space:memory-mcp",
+                            "query":query,
+                            "policy":policy
+                        }}
+                    }
+                }),
+            ),
+            rpc(
+                3,
+                "tools/call",
+                json!({
+                    "authorization":"token:surface",
+                    "name":"memory_propose_claim",
+                    "arguments":{
+                        "request_id":"request:memory-propose",
+                        "idempotency_key":"idempotency:memory-propose",
+                        "base_revision_id":"revision:memory-mcp",
+                        "payload":{"memory_proposal":proposal}
+                    }
+                }),
+            ),
+            rpc(
+                4,
+                "tools/call",
+                json!({
+                    "authorization":"token:surface",
+                    "name":"memory_propose_claim",
+                    "arguments":{
+                        "request_id":"request:memory-forged-acceptance",
+                        "idempotency_key":"idempotency:memory-forged-acceptance",
+                        "base_revision_id":"revision:memory-mcp",
+                        "payload":{"memory_proposal":{
+                            "accepted":true,
+                            "case_space_id":"case_space:memory-mcp",
+                            "source_record":source_record,
+                            "claim":claim,
+                            "policy":policy,
+                            "artifact_path":"memory-sources/adr-0002.txt"
+                        }}
+                    }
+                }),
+            ),
+        ],
+    );
+    let query_result = &responses[1]["result"]["structuredContent"]["result"];
+    assert_eq!(query_result["projection"]["read_only"], true);
+    assert_eq!(query_result["mutation_performed"], false);
+    let proposal_result = &responses[2]["result"]["structuredContent"]["result"];
+    assert_eq!(proposal_result["accepted"], false);
+    assert_eq!(proposal_result["mutation_performed"], false);
+    assert_eq!(
+        proposal_result["claim_proposal"]["claim_cell"]["lifecycle"],
+        "proposed"
+    );
+    assert_eq!(
+        proposal_result["claim_proposal"]["claim_cell"]["provenance"]["review_status"],
+        "unreviewed"
+    );
+    assert_eq!(
+        responses[3]["result"]["structuredContent"]["refusal"]["code"],
+        "invalid_payload"
+    );
+
+    let replay = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "space",
+            "replay",
+            "--store",
+            store.to_str().unwrap(),
+            "--case-space-id",
+            "case_space:memory-mcp",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(replay.status.success());
+    let replay: Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(
+        replay["result"]["replay"]["current_revision_id"],
+        "revision:memory-mcp"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 fn rpc(id: u64, method: &str, params: Value) -> String {
     json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}).to_string()
 }

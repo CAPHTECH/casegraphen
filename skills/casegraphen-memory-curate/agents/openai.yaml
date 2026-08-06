@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Memory Curate"
+  short_description: "Create source-bound unreviewed memory proposals"
+  default_prompt: "Use $casegraphen-memory-curate to turn these exact sources into scoped, temporal, unreviewed Memory Claim proposals."

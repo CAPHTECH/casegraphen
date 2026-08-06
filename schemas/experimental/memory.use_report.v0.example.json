@@ -1,0 +1,10 @@
+{
+  "schema": "casegraphen.experimental.memory.use_report.v0",
+  "projection_content_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "action_id": "action:add-runtime-integration",
+  "cited_claim_ids": ["memory:runtime-boundary"],
+  "ignored_constraint_ids": [],
+  "runtime_reported_effect": "The runtime boundary constrained the implementation.",
+  "self_reported": true,
+  "accepted": false
+}

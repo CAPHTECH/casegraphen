@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.index.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "base_revision_id", "policy_id", "query_hash", "items", "index_content_hash", "derived", "authoritative"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.index.v0"},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "policy_id": {"type": "string", "minLength": 1},
+    "query_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "memory_kind", "subject_refs", "lexical_terms", "source_refs"],
+        "properties": {
+          "claim_id": {"type": "string", "minLength": 1},
+          "memory_kind": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/memory_kind"},
+          "subject_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "lexical_terms": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "source_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "index_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "derived": {"const": true},
+    "authoritative": {"const": false}
+  }
+}

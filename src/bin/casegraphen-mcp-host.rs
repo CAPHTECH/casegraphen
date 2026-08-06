@@ -16,6 +16,11 @@ use casegraphen::{
     graph_lint::lint_execution_topology,
     graph_simulation::{simulate_execution_topology, GraphSimulationRequest},
     mcp_stdio::{serve_stdio, McpStdioServer},
+    memory::{
+        build_claim_proposal, query_memory, source_records_for_claim, validate_memory_claim,
+        validate_memory_policy, validate_memory_proposal, MemoryClaim, MemoryKind, MemoryPolicy,
+        MemoryQuery, SourceRecord,
+    },
     native_eval::evaluate_native_case,
     native_store::NativeCaseStore,
     resource_allocator::{
@@ -231,6 +236,28 @@ enum VerificationAnchorInput {
         artifact_id: String,
         artifact_path: String,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryReadInput {
+    case_space_id: String,
+    query: MemoryQuery,
+    policy: MemoryPolicy,
+    #[serde(default)]
+    claim_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryProposalInput {
+    case_space_id: String,
+    source_record: SourceRecord,
+    claim: MemoryClaim,
+    policy: MemoryPolicy,
+    artifact_path: String,
+    #[serde(default)]
+    target_claim_id: Option<String>,
 }
 
 impl DecisionDelegate for OperationalDelegate {
@@ -746,12 +773,225 @@ impl DecisionDelegate for OperationalDelegate {
                     "review_status": "unreviewed"
                 }))
             }
+            ControlPlaneTool::MemoryQuery
+            | ControlPlaneTool::MemoryExplain
+            | ControlPlaneTool::MemoryHistory
+            | ControlPlaneTool::MemoryConflicts
+            | ControlPlaneTool::MemorySources => memory_read_tool(self, request),
+            ControlPlaneTool::MemoryProposeClaim
+            | ControlPlaneTool::MemoryProposeSupersession
+            | ControlPlaneTool::MemoryProposeRetraction
+            | ControlPlaneTool::MemoryProposeProcedure => memory_proposal_tool(self, request),
             _ => Err(refusal(
                 "unsupported_operational_host_tool",
                 "this host release supports topology proposal/lint, content-addressed runtime attachment, and canonical run reconciliation; mutation tools remain delegated to the existing CaseGraphen CLI owner",
             )),
         }
     }
+}
+
+fn memory_read_tool(
+    delegate: &OperationalDelegate,
+    request: &ControlPlaneRequest,
+) -> Result<Value, ControlPlaneRefusal> {
+    let mut input: MemoryReadInput = payload_value(&request.payload, "memory_request")?;
+    require_matching_revision(request, &input.query.base_revision_id)?;
+    let replay = replay_exact_memory_case(delegate, request, &input.case_space_id)?;
+    match request.tool {
+        ControlPlaneTool::MemoryHistory | ControlPlaneTool::MemoryExplain => {
+            input.query.include_historical = true;
+            input.query.include_contested = true;
+        }
+        ControlPlaneTool::MemoryConflicts => input.query.include_contested = true,
+        ControlPlaneTool::MemoryQuery | ControlPlaneTool::MemorySources => {}
+        _ => unreachable!("memory read helper called for proposal tool"),
+    }
+    let projection = query_memory(&replay.case_space, &input.query, &input.policy)
+        .map_err(|findings| findings_refusal("memory_query_refused", &findings))?;
+    match request.tool {
+        ControlPlaneTool::MemoryQuery => Ok(json!({
+            "projection": projection,
+            "read_only": true,
+            "mutation_performed": false,
+            "accepted": false
+        })),
+        ControlPlaneTool::MemoryConflicts => Ok(json!({
+            "base_revision_id": projection.base_revision_id,
+            "contested_claim_ids": projection.contested_claim_ids,
+            "items": projection.items.into_iter().filter(|item| {
+                item.hard_conflict
+                    || item.status == casegraphen::memory::MemoryStatus::Contested
+            }).collect::<Vec<_>>(),
+            "losses": projection.losses,
+            "read_only": true,
+            "mutation_performed": false,
+            "accepted": false
+        })),
+        ControlPlaneTool::MemoryExplain | ControlPlaneTool::MemoryHistory => {
+            let claim_id = input.claim_id.as_deref().ok_or_else(|| {
+                refusal(
+                    "invalid_payload",
+                    "memory_request.claim_id is required for explain/history",
+                )
+            })?;
+            Ok(json!({
+                "base_revision_id": projection.base_revision_id,
+                "claim_id": claim_id,
+                "item": projection.items.iter().find(|item| item.claim_id == claim_id),
+                "omissions": projection.omissions.iter().filter(|item| item.claim_id == claim_id).collect::<Vec<_>>(),
+                "contested": projection.contested_claim_ids.iter().any(|id| id == claim_id),
+                "projection_content_hash": projection.projection_content_hash,
+                "read_only": true,
+                "mutation_performed": false,
+                "accepted": false
+            }))
+        }
+        ControlPlaneTool::MemorySources => {
+            let claim_id = input.claim_id.as_deref().ok_or_else(|| {
+                refusal(
+                    "invalid_payload",
+                    "memory_request.claim_id is required for sources",
+                )
+            })?;
+            let item = projection
+                .items
+                .iter()
+                .find(|item| item.claim_id == claim_id);
+            let source_records = item
+                .is_some()
+                .then(|| source_records_for_claim(&replay.case_space, claim_id))
+                .unwrap_or_default();
+            Ok(json!({
+                "base_revision_id": projection.base_revision_id,
+                "claim_id": claim_id,
+                "source_refs": item.map(|item| item.source_refs.clone()).unwrap_or_default(),
+                "source_records": source_records,
+                "omissions": projection.omissions.iter().filter(|item| item.claim_id == claim_id).collect::<Vec<_>>(),
+                "projection_content_hash": projection.projection_content_hash,
+                "read_only": true,
+                "mutation_performed": false,
+                "accepted": false
+            }))
+        }
+        _ => unreachable!("memory read helper called for proposal tool"),
+    }
+}
+
+fn memory_proposal_tool(
+    delegate: &OperationalDelegate,
+    request: &ControlPlaneRequest,
+) -> Result<Value, ControlPlaneRefusal> {
+    let input: MemoryProposalInput = payload_value(&request.payload, "memory_proposal")?;
+    let replay = replay_exact_memory_case(delegate, request, &input.case_space_id)?;
+    if input.claim.scope.case_space_id.as_deref() != Some(input.case_space_id.as_str()) {
+        return Err(refusal(
+            "memory_scope_mismatch",
+            "memory proposal claim scope must name the replayed CaseSpace",
+        ));
+    }
+    let artifact_bytes = read_confined_artifact(&delegate.artifact_path, &input.artifact_path)?;
+    let mut findings = validate_memory_policy(&input.policy);
+    findings.extend(validate_memory_claim(&input.claim, Some(&input.policy)));
+    findings.extend(validate_memory_proposal(
+        &input.source_record,
+        &input.claim,
+        &artifact_bytes,
+    ));
+    if request.tool == ControlPlaneTool::MemoryProposeProcedure
+        && input.claim.memory_kind != MemoryKind::Procedure
+    {
+        return Err(refusal(
+            "memory_kind_mismatch",
+            "memory_propose_procedure requires memory_kind procedure",
+        ));
+    }
+    if !findings.is_empty() {
+        return Err(findings_refusal("memory_proposal_refused", &findings));
+    }
+    let proposal = build_claim_proposal(
+        &input.source_record,
+        &input.claim,
+        &artifact_bytes,
+        &replay.case_space.space_id,
+    )
+    .map_err(|findings| findings_refusal("memory_proposal_refused", &findings))?;
+
+    let relation_proposal = match request.tool {
+        ControlPlaneTool::MemoryProposeSupersession | ControlPlaneTool::MemoryProposeRetraction => {
+            let target = input.target_claim_id.as_deref().ok_or_else(|| {
+                refusal(
+                    "invalid_payload",
+                    "memory_proposal.target_claim_id is required for relation proposals",
+                )
+            })?;
+            if !replay.case_space.case_cells.iter().any(|cell| {
+                cell.id.as_str() == target && cell.metadata.contains_key("memory_claim")
+            }) {
+                return Err(refusal(
+                    "unknown_memory_target",
+                    "target claim is absent from the replayed CaseSpace",
+                ));
+            }
+            let relation_type = if request.tool == ControlPlaneTool::MemoryProposeSupersession {
+                "supersedes"
+            } else {
+                "retracts"
+            };
+            let material = serde_json::to_vec(&(
+                relation_type,
+                input.claim.claim_id.as_str(),
+                target,
+                request.base_revision_id.as_deref(),
+            ))
+            .expect("memory relation material serializes");
+            let digest = format!("{:x}", Sha256::digest(&material));
+            json!({
+                "relation_id": format!("memory-relation:{digest}"),
+                "relation_type": relation_type,
+                "relation_strength": "hard",
+                "from_id": input.claim.claim_id,
+                "to_id": target,
+                "review_status": "unreviewed",
+                "accepted": false
+            })
+        }
+        ControlPlaneTool::MemoryProposeClaim | ControlPlaneTool::MemoryProposeProcedure => {
+            Value::Null
+        }
+        _ => unreachable!("memory proposal helper called for read tool"),
+    };
+    Ok(json!({
+        "base_revision_id": replay.current_revision_id,
+        "claim_proposal": proposal,
+        "relation_proposal": relation_proposal,
+        "review_status": "unreviewed",
+        "accepted": false,
+        "mutation_performed": false
+    }))
+}
+
+fn replay_exact_memory_case(
+    delegate: &OperationalDelegate,
+    request: &ControlPlaneRequest,
+    case_space_id: &str,
+) -> Result<casegraphen::native_store::NativeCaseSpaceReplay, ControlPlaneRefusal> {
+    let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
+        refusal(
+            "explicit_revision_required",
+            "Memory Plane tools require the client-observed revision",
+        )
+    })?;
+    let case_space_id = safe_id(case_space_id)?;
+    let replay = NativeCaseStore::new(delegate.store_path.clone())
+        .replay_current_case_space(&case_space_id)
+        .map_err(store_refusal)?;
+    if replay.current_revision_id.as_str() != expected_revision {
+        return Err(ControlPlaneRefusal::stale(
+            expected_revision,
+            replay.current_revision_id.to_string(),
+        ));
+    }
+    Ok(replay)
 }
 
 impl ResourceDelegate for OperationalDelegate {

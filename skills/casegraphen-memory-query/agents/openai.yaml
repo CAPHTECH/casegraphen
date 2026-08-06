@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Memory Query"
+  short_description: "Read revision-bound governed project memory"
+  default_prompt: "Use $casegraphen-memory-query to retrieve a read-only, source-preserving Memory Projection for this task."

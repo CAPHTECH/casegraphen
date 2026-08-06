@@ -18,6 +18,8 @@ The machine-readable source of truth is [`docs/product-surface.v0.json`](../prod
 | streaming (compatibility name) | `reconcile_streaming_run` | `streaming_reconciliation` | `terminal_artifact_stage_pipelining_v0`; exact revision, terminal producer/final bytes, canonical readiness and resource permits |
 | verification lineage | `reconcile_verification_lineage` | `verification_policy` + canonical store replay | read-only policy result derived from exact retained CLI run bytes and canonical reviews; opaque proofs are never serialized |
 | redesign | `propose_topology_redesign` | `topology_redesign` | content-bound unreviewed redesign proposal only |
+| memory read | `memory_query`, `memory_explain`, `memory_history`, `memory_conflicts`, `memory_sources` | `memory::projection`, `memory::query`, `memory::conflicts` + canonical store replay | exact-revision read-only projection retaining status, source, authority, time, conflict, omission, and loss |
+| memory proposal | `memory_propose_claim`, `memory_propose_supersession`, `memory_propose_retraction`, `memory_propose_procedure` | `memory::validation`, `memory::conflicts` + canonical store replay | strict source-bound proposed/unreviewed structures; `accepted: false`; no CaseSpace mutation |
 
 All MCP calls return `casegraphen.experimental.control_plane.response.v0`. A domain refusal is a response with `result: null` and a typed `refusal`; JSON-RPC framing/authentication errors use JSON-RPC errors. The host process exits non-zero for invalid startup configuration and remains fail-closed for unsupported tools.
 
@@ -39,6 +41,12 @@ the response contains only the read-only policy result, never proof material or
 an acceptance mutation.
 
 The walkthrough and request transcript are in [`../guides/graph-engineering-product-surface.md`](../guides/graph-engineering-product-surface.md).
+
+ADR 0028 adds the optional Memory Plane. Its MCP tools all require the exact
+client-observed revision even though they do not mutate state. Query tools
+return loss-explicit derived views; proposal tools return only unreviewed
+structures. No Memory Plane MCP tool changes managed state, accepts a claim,
+or treats caller-declared audit context as authority.
 
 ## Consequences
 
