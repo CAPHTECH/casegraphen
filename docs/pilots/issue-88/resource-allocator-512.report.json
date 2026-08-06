@@ -1,26 +1,29 @@
 {
   "accepted": false,
   "active_after_release_count": 0,
-  "append_elapsed_ms": 14407,
+  "append_elapsed_ms": 5073,
   "append_pair_latency_ms": {
-    "max": 110,
-    "p50": 50,
-    "p95": 102
+    "max": 29,
+    "p50": 19,
+    "p95": 20
   },
+  "append_pair_p95_threshold_ms": 100,
   "append_threshold_ms": 60000,
   "authority_boundary": "unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
   "checkpoint_compaction": {
     "active_event_count": 32,
     "archived_event_count": 480,
-    "checkpoint_content_hash": "8cf4d392df8c317dc5f303d9a6f863f72a54a83b17584110b52cde34c7ad25a2",
-    "checkpoint_create_ms": 42,
-    "checkpoint_independent_verify_ms": 31,
+    "checkpoint_content_hash": "329014ec58265bf8baaf95d50f356df4bc6562c755986ec0b444051e1b0e1035",
+    "checkpoint_create_ms": 33,
+    "checkpoint_independent_verify_ms": 20,
+    "checkpoint_operation_threshold_ms": 120000,
     "checkpoint_sequence": 512,
     "checkpoint_size_bytes": 919524,
-    "compaction_ms": 200,
+    "checkpoint_size_threshold_bytes": 2097152,
+    "compaction_ms": 176,
     "full_replay_equivalent": true,
     "implemented": true,
-    "suffix_replay_ms": 31
+    "suffix_replay_ms": 33
   },
   "concurrent_grant_count": 1,
   "crash_after_publication_refused": true,
@@ -28,12 +31,36 @@
   "event_threshold": 512,
   "halt": "operator_review_required",
   "journal_event_count": 512,
-  "observed_peak_rss_bytes": 5914624,
+  "observed_peak_rss_bytes": 5373952,
   "passed": true,
   "release_observed": true,
   "restart_observed": true,
-  "restart_replay_ms": 23,
+  "restart_replay_ms": 31,
   "restart_replay_threshold_ms": 5000,
   "schema": "casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
-  "supersede_active_successor": true
+  "supersede_active_successor": true,
+  "workloads": {
+    "all_active": {
+      "append_latency_ms": {
+        "max": 23,
+        "p50": 9,
+        "p95": 10
+      },
+      "elapsed_ms": 1273,
+      "observed_active_count": 128,
+      "reservation_count": 128
+    },
+    "bounded_operation_snapshot": true,
+    "mixed_churn": {
+      "elapsed_ms": 2537,
+      "observed_active_count": 128,
+      "pair_latency_ms": {
+        "max": 27,
+        "p50": 19,
+        "p95": 20
+      },
+      "release_reserve_pair_count": 128
+    },
+    "passed": true
+  }
 }

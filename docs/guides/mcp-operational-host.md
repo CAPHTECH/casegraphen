@@ -25,6 +25,32 @@ directory. Archived event bytes remain authoritative, so operators can always
 request or audit a complete replay. Pending files are ignored; published
 checkpoint, archive, or compaction corruption fails closed.
 
+Retained clean-revision evidence measured the synchronous maintenance sequence
+at about 4.9 seconds for 10k events and 53.9 seconds for 100k events. Both are
+within the experimental release budgets, but they occur on the interval-
+triggering request path. Operators must select the interval against their own
+p99 request SLO; these unattested release-candidate reports have
+`promotion_authority: false` and are not a production latency guarantee.
+
+Keep one long-lived host process per allocator journal. Its allocator holds a
+validated replay state in memory and uses an advisory writer lock plus a
+non-authoritative head hint to observe other allocator processes. The hint is
+never a recovery source: missing, malformed, stale, or rolled-back bytes force
+canonical replay. Restart reconstructs state from checkpoint plus suffix, and
+checkpoint verification/full replay remain the audit paths. A deployment that
+constructs a fresh allocator value for every request discards this bounded hot
+path and is unsupported for fleet performance.
+
+The journal directory must be writable only by the service identity and
+canonical allocator writers. The process cache is an ephemeral authority
+projection, not a filesystem tamper detector: identity and maintenance
+inventory changes invalidate it, while unsupported in-place mutation of old
+event bytes is guaranteed to be refused on restart/full replay/checkpoint
+audit. Writer-lock contention returns a bounded typed refusal instead of
+waiting indefinitely. A committed operation may report
+`head_hint_healthy: false`; the event remains committed and the next request
+reconstructs the disposable hint by replay.
+
 Clients add `authorization` to each post-initialization request's `params`.
 The token is held in memory and is excluded from journal state and responses.
 Use filesystem ownership and service-manager secret injection; never put the

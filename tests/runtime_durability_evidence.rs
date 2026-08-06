@@ -98,8 +98,7 @@ fn unsorted_source_inventory_is_canonicalized_before_offline_verification() {
     let output = temp("runtime-evidence-unsorted");
     fixture(&evidence);
     let manifest_path = evidence.join("retained-evidence.manifest.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
     manifest["files"].as_array_mut().unwrap().reverse();
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 

@@ -1,0 +1,92 @@
+{
+  "accepted": false,
+  "active_after_release_count": 0,
+  "append_elapsed_ms": 101541,
+  "append_pair_latency_ms": {
+    "max": 108,
+    "p50": 20,
+    "p95": 21
+  },
+  "append_pair_p95_threshold_ms": 100,
+  "append_threshold_ms": 300000,
+  "authority_boundary": "unreviewed allocator mechanics only; no deployment authority or evidence acceptance",
+  "checkpoint_compaction": {
+    "active_event_count": 32,
+    "archived_event_count": 9968,
+    "checkpoint_content_hash": "34b0f60b7cfa289295a7d0b6f7475cdc09da1a919d41a42d2a121d33eed6b1e4",
+    "checkpoint_create_ms": 587,
+    "checkpoint_independent_verify_ms": 504,
+    "checkpoint_operation_threshold_ms": 120000,
+    "checkpoint_sequence": 10000,
+    "checkpoint_size_bytes": 18073442,
+    "checkpoint_size_threshold_bytes": 21528576,
+    "compaction_ms": 3789,
+    "full_replay_equivalent": true,
+    "implemented": true,
+    "suffix_replay_ms": 714
+  },
+  "concurrent_grant_count": 1,
+  "crash_after_publication_refused": true,
+  "crash_before_publication_ignored": true,
+  "event_threshold": 10000,
+  "halt": "operator_review_required",
+  "journal_event_count": 10000,
+  "observed_peak_rss_bytes": 453099520,
+  "observed_peak_rss_threshold_bytes": 2147483648,
+  "passed": true,
+  "release_observed": true,
+  "release_scale_envelope": {
+    "allocator_source_sha256": "c953295e78e8a370db307fadcff2c21d52eea7278be8df868a4ebfbed4c43e5d",
+    "attestation_status": "not_attested",
+    "binary_sha256": "e70f19e157043df5649290d57a70a8b47f879c38d978d85acdac371053112cf2",
+    "elapsed_ms": 232502,
+    "evidence_class": "release-candidate",
+    "harness_sha256": "acfc7254a5df7ce0c068fe5aa9b2523507caa3f1a7510f08df40d68fd071042b",
+    "host_identity_sha256": "6e758d1ed2c45c7f49448ad22acdcacb60fbb184b422063a5ee6a3928007ccf6",
+    "long_lived_allocator_instance": true,
+    "machine": "arm64",
+    "nonzero_rss_required": true,
+    "pilot_source_sha256": "09e12268de44e61738b318ed43ce8ba96e644b84097334420ba2e89ab9b5517b",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "promotion_authority": false,
+    "python": "3.14.4",
+    "real_public_allocator_api": true,
+    "rss_method": "proc_status_or_ps_rss_50ms_sampling",
+    "rss_sample_count": 455,
+    "rustc_verbose": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: aarch64-apple-darwin\nrelease: 1.95.0\nLLVM version: 22.1.2",
+    "schema": "casegraphen.experimental.resource_allocator_release_scale.v0",
+    "schema_version": 0,
+    "source_revision": "9b23383463cb1f1fafb666e7fb87a596b3e090e2",
+    "source_worktree_dirty": false
+  },
+  "restart_observed": true,
+  "restart_replay_ms": 401,
+  "restart_replay_threshold_ms": 30000,
+  "review_disposition": "operator_review_required",
+  "schema": "casegraphen.experimental.resource_allocator_durability_pilot.report.v0",
+  "supersede_active_successor": true,
+  "workloads": {
+    "all_active": {
+      "append_latency_ms": {
+        "max": 35,
+        "p50": 9,
+        "p95": 10
+      },
+      "elapsed_ms": 100123,
+      "observed_active_count": 10000,
+      "reservation_count": 10000
+    },
+    "bounded_operation_snapshot": true,
+    "mixed_churn": {
+      "elapsed_ms": 20644,
+      "observed_active_count": 10000,
+      "pair_latency_ms": {
+        "max": 30,
+        "p50": 20,
+        "p95": 21
+      },
+      "release_reserve_pair_count": 1024
+    },
+    "passed": true
+  }
+}

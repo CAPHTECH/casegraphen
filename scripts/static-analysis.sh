@@ -98,6 +98,7 @@ say 'Graph Engineering product-surface conformance'
 python3 scripts/product-surface-conformance.py
 python3 scripts/fresh-agent-workflow-conformance.py
 python3 scripts/runtime-durability-evidence-conformance.py
+python3 scripts/resource-allocator-release-scale-conformance.py
 python3 scripts/promotion-review-conformance.py
 python3 scripts/compiler-verification-pilot.py \
   --output target/compiler-verification-current.json
