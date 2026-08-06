@@ -7,6 +7,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use serde_json::{json, Value};
+
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TemporaryDirectory(PathBuf);
@@ -49,6 +51,53 @@ fn generated_skill_surface_is_current() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn orchestration_handoff_fails_closed_for_open_seams_and_unresolved_evidence() {
+    let schema = root().join("schemas/experimental/skill.orchestration_handoff.v0.schema.json");
+    let example: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root().join("schemas/experimental/skill.orchestration_handoff.v0.example.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cases = Vec::new();
+    let mut open_seam_continues = example.clone();
+    open_seam_continues["return_required"] = json!(false);
+    open_seam_continues["next_action"] =
+        json!({"kind": "invoke_task_skill", "task_skill": "casegraphen-operate"});
+    cases.push(open_seam_continues);
+
+    let mut unresolved_evidence_continues = example;
+    unresolved_evidence_continues["seams"] = json!([]);
+    unresolved_evidence_continues["unresolved_evidence"] =
+        json!(["independent evidence review is missing"]);
+    unresolved_evidence_continues["return_required"] = json!(false);
+    unresolved_evidence_continues["next_action"] =
+        json!({"kind": "invoke_task_skill", "task_skill": "casegraphen-audit"});
+    cases.push(unresolved_evidence_continues);
+
+    for (index, value) in cases.into_iter().enumerate() {
+        let temporary = TemporaryDirectory::new();
+        let instance = temporary
+            .path()
+            .join(format!("invalid-handoff-{index}.json"));
+        fs::write(&instance, serde_json::to_vec(&value).unwrap()).unwrap();
+        let output = Command::new("python3")
+            .args(["-m", "jsonschema", "-i"])
+            .arg(&instance)
+            .arg(&schema)
+            .current_dir(root())
+            .output()
+            .expect("run handoff schema validator");
+        assert!(
+            !output.status.success(),
+            "invalid handoff {index} unexpectedly passed"
+        );
+    }
 }
 
 #[test]
@@ -143,6 +192,11 @@ fn every_skill_refuses_a_removed_responsibility_boundary() {
             "casegraphen-memory-audit",
             "Never repair an audit finding by accepting a claim",
             "Repair an audit finding by accepting a claim",
+        ),
+        (
+            "casegraphen-orchestrate",
+            "These are explicit return seams.",
+            "These seams may be crossed automatically.",
         ),
     ];
 

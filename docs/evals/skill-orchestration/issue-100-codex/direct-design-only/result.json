@@ -1,0 +1,65 @@
+{
+  "credential_material_scan": {
+    "affected_file_count": 0,
+    "disk_canary_configured": false,
+    "output_match_detected": false,
+    "status": "pass"
+  },
+  "declared_input_hash": "sha256:f466f5b1eb57d9a307639baeb58f1a651d70d733efd3e794e98a6ac89fcfc39c",
+  "elapsed_ms": 4020,
+  "evaluations": [
+    {
+      "detail": "missing",
+      "kind": "expected_output",
+      "output": "route.decision.json",
+      "status": "fail"
+    },
+    {
+      "detail": "missing route.decision.json",
+      "kind": "json_assert",
+      "status": "fail"
+    },
+    {
+      "detail": "The rationale treats the request as a bounded direct task and does not add lifecycle work.",
+      "kind": "manual_judgment",
+      "status": "manual_required"
+    }
+  ],
+  "finished_at": "2026-08-06T08:37:46.334506+00:00",
+  "produced_workspace_hash": "sha256:f466f5b1eb57d9a307639baeb58f1a651d70d733efd3e794e98a6ac89fcfc39c",
+  "prompt_hash": "sha256:fa6516ecfd32d25142fd700a80e13603637460f356e43b9194c300076f2e4d1c",
+  "provider": {
+    "available": true,
+    "command_hash": "sha256:bbca1a1e9dc038b553bb025a25dc4979423cfa8880c442509e347699444e5f27",
+    "declared_package_identity": null,
+    "executable": "/Users/rizumita/.local/share/mise/installs/node/25.2.1/lib/node_modules/@openai/codex/bin/codex.js",
+    "expected_version": null,
+    "model": null,
+    "provider": "custom",
+    "version": "codex-cli 0.146.1",
+    "version_matches": true,
+    "version_probe_exit_code": 0
+  },
+  "raw_stderr_hash": "sha256:e6ecd10941234bf71d5ec128b415fd620a4aabf88519bcbd5ef18407d187b083",
+  "raw_stdout_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "returncode": 1,
+  "runner_argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "workspace-write",
+    "--ignore-user-config",
+    "--ephemeral",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "--color",
+    "never",
+    "-"
+  ],
+  "scenario_id": "direct-design-only",
+  "skill_hash": "sha256:cabc0e5468f4b15f108bd17aa1422d35488383d29ac407acb6412cad790810db",
+  "started_at": "2026-08-06T08:37:42.313770+00:00",
+  "timed_out": false,
+  "usage_observations": [],
+  "workspace_retained": true
+}

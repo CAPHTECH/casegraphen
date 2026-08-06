@@ -1,6 +1,6 @@
 ---
 name: casegraphen-integrate
-description: Integrate generic JSONL reports and artifacts from an external runtime with a typed CaseGraphen execution topology. Use when validating runtime.node_report.v0, reconciling completeness, preserving retry lineage and caller revision, content-addressing artifacts, and stopping at unreviewed evidence/morphism proposals.
+description: Direct task skill for integrating generic JSONL reports and artifacts from an external runtime with a typed CaseGraphen execution topology. Use for integration-only validation of runtime.node_report.v0, completeness reconciliation, retry lineage, caller revision, and content-addressed artifacts; use casegraphen-orchestrate for multi-phase routing. Stops at unreviewed evidence/morphism proposals.
 ---
 
 # Integrate an external runtime without accepting its claims

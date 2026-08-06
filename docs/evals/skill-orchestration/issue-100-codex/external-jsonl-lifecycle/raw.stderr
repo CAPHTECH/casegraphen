@@ -1,0 +1,29 @@
+OpenAI Codex v0.146.1
+--------
+workdir: /private/var/folders/2c/qtwpt9yj4fs9k20l__sg_zd40000gn/T/casegraphen-eval-external-jsonl-lifecycle-rbucx1ce/workspace
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: none
+session id: 019fd638-ccd1-71f0-a0d2-166d8299313c
+--------
+user
+# Task
+
+An already reviewed topology was executed by an external runtime and generic JSONL reports are now available. Route the next proposal-only phase and write route.decision.json with selected_task_skill, automatic_continuation, and accepted_state_changed. Select external-runtime integration, allow continuation into that proposal-only phase, and do not claim acceptance.
+
+Use the Skill at `skill/casegraphen-orchestrate/SKILL.md`. Read only its references needed for this task.
+
+## Inputs
+
+
+
+## Required files
+
+- `route.decision.json`
+
+warning: Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.
+ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 9th, 2026 10:08 PM.
+ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 9th, 2026 10:08 PM.

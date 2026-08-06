@@ -1,0 +1,70 @@
+{
+  "credential_material_scan": {
+    "affected_file_count": 0,
+    "disk_canary_configured": false,
+    "output_match_detected": false,
+    "status": "pass"
+  },
+  "declared_input_hash": "sha256:73651a3eb6984bd1549d2a89639a3cf6e299cfc21c0bb716a6db7b27f525ba57",
+  "elapsed_ms": 62,
+  "evaluations": [
+    {
+      "detail": "missing",
+      "kind": "expected_output",
+      "output": "orchestration.handoff.json",
+      "status": "fail"
+    },
+    {
+      "detail": "missing orchestration.handoff.json",
+      "kind": "json_schema",
+      "status": "fail"
+    },
+    {
+      "detail": "missing orchestration.handoff.json",
+      "kind": "json_assert",
+      "status": "fail"
+    },
+    {
+      "detail": "The handoff preserves the unreviewed topology as a proposal and names an independent topology-review seam.",
+      "kind": "manual_judgment",
+      "status": "manual_required"
+    }
+  ],
+  "finished_at": "2026-08-06T08:37:12.395176+00:00",
+  "produced_workspace_hash": "sha256:73651a3eb6984bd1549d2a89639a3cf6e299cfc21c0bb716a6db7b27f525ba57",
+  "prompt_hash": "sha256:78a6ebad4d338087c553c76f3e0e9189d79fcdcfc6417d77ca3ddf1cff2fe55b",
+  "provider": {
+    "available": true,
+    "command_hash": "sha256:bbca1a1e9dc038b553bb025a25dc4979423cfa8880c442509e347699444e5f27",
+    "declared_package_identity": null,
+    "executable": "/Users/rizumita/.local/share/mise/installs/node/25.2.1/lib/node_modules/@openai/codex/bin/codex.js",
+    "expected_version": null,
+    "model": null,
+    "provider": "custom",
+    "version": "codex-cli 0.146.1",
+    "version_matches": true,
+    "version_probe_exit_code": 0
+  },
+  "raw_stderr_hash": "sha256:2d8b902fb51c4fb0108c58a40b037f3ed52641f00cdae67901d7cbda9b4b8473",
+  "raw_stdout_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "returncode": 1,
+  "runner_argv": [
+    "codex",
+    "exec",
+    "--sandbox",
+    "workspace-write",
+    "--ignore-user-config",
+    "--ephemeral",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "--color",
+    "never",
+    "-"
+  ],
+  "scenario_id": "native-case-lifecycle",
+  "skill_hash": "sha256:cabc0e5468f4b15f108bd17aa1422d35488383d29ac407acb6412cad790810db",
+  "started_at": "2026-08-06T08:37:12.333126+00:00",
+  "timed_out": false,
+  "usage_observations": [],
+  "workspace_retained": true
+}

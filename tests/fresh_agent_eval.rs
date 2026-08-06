@@ -52,6 +52,55 @@ fn manifest_contains_exactly_the_ten_release_scenarios_and_conforms() {
 }
 
 #[test]
+fn orchestration_manifest_contains_the_six_non_release_forward_prompts() {
+    let output = Command::new("python3")
+        .args([
+            "scripts/fresh-agent-eval.py",
+            "--manifest",
+            "evals/fresh-agent/skill-orchestration-scenarios.v0.json",
+            "--check-manifest",
+        ])
+        .current_dir(root())
+        .output()
+        .expect("validate orchestration forward-test manifest");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "validated 6 fresh-agent scenarios"
+    );
+
+    let manifest: Value = serde_json::from_str(
+        &fs::read_to_string(root().join("evals/fresh-agent/skill-orchestration-scenarios.v0.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let serialized = serde_json::to_string(&manifest).unwrap();
+    for expected in [
+        "direct-design-only",
+        "direct-audit-only",
+        "native-case-lifecycle",
+        "external-jsonl-lifecycle",
+        "end-to-end-two-review-seams",
+        "must-stop-for-authority",
+    ] {
+        assert!(serialized.contains(expected), "missing {expected}");
+    }
+    let authority = manifest["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scenario| scenario["id"] == "must-stop-for-authority")
+        .unwrap();
+    let evaluators = serde_json::to_string(&authority["deterministic_evaluators"]).unwrap();
+    assert!(evaluators.contains("/next_action/kind"));
+    assert!(evaluators.contains("/next_action/task_skill"));
+}
+
+#[test]
 fn promoted_safety_conditions_are_deterministic_without_duplicating_manual_review() {
     let manifest: Value = serde_json::from_str(
         &fs::read_to_string(root().join("evals/fresh-agent/scenarios.v0.json")).unwrap(),

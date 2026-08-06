@@ -27,6 +27,7 @@ pub mod resource_allocator;
 pub mod resource_protocol;
 pub mod runtime_integration;
 pub mod runtime_protocol;
+pub mod skill_orchestration;
 pub mod streaming_reconciliation;
 pub mod topology;
 pub mod topology_redesign;

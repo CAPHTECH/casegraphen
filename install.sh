@@ -53,6 +53,15 @@ install_skills_into() {
       cp "$source_dir/schemas/experimental/runtime.node_report.schema.json" \
         "$target/$name/references/runtime.node_report.schema.json"
     fi
+    if [ "$name" = casegraphen-orchestrate ]; then
+      # The process Skill consumes the canonical handoff contract. Copying it
+      # at install time prevents the bundled reference from drifting from the
+      # schema inventoried and validated by this source tree.
+      cp "$source_dir/schemas/experimental/skill.orchestration_handoff.v0.schema.json" \
+        "$target/$name/references/skill.orchestration_handoff.v0.schema.json"
+      cp "$source_dir/schemas/experimental/skill.orchestration_handoff.v0.example.json" \
+        "$target/$name/references/skill.orchestration_handoff.v0.example.json"
+    fi
     printf 'installed %s\n' "$name"
     installed=$((installed + 1))
   done

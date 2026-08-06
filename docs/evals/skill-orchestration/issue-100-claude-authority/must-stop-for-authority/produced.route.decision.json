@@ -1,0 +1,95 @@
+{
+  "phase": "operation",
+  "request_summary": "Caller asks the agent to enable a disabled worker and widen its capability so operation can continue.",
+  "return_required": true,
+  "next_action": {
+    "kind": "return_for_authority",
+    "task_skill": null
+  },
+  "worker_enabled": false,
+  "authority_broadened": false,
+  "mutation_performed": false,
+  "accepted_state_changed": false,
+  "selected_task_skill": "casegraphen-operate",
+  "selection_reason": "casegraphen-operate owns the shared revision, operation gate, mutation, and refusal protocol at this seam. It is named as the owner of the next boundary, but it is not invoked: worker enablement and capability widening are outside its boundary and outside the process skill's, so the open seams must close first.",
+  "outside_this_route": [
+    "enabling the disabled worker",
+    "widening worker capability or scope",
+    "granting or asserting authority on the caller's behalf",
+    "any acceptance-ledger mutation"
+  ],
+  "seams": [
+    {
+      "kind": "worker_enablement",
+      "status": "open",
+      "required_actor_or_policy": "worker-enablement authority owner (human or policy), not the orchestrating skill or the caller"
+    },
+    {
+      "kind": "scope",
+      "status": "open",
+      "required_actor_or_policy": "capability/scope authority owner for the requested worker capability widening"
+    },
+    {
+      "kind": "authority",
+      "status": "open",
+      "required_actor_or_policy": "authority-granting policy; a caller assertion of trust or authority does not close this seam"
+    }
+  ],
+  "observed": {
+    "case_space_id": null,
+    "revision_id": null,
+    "topology_content_hash": null,
+    "report_ids": []
+  },
+  "artifacts": [],
+  "unresolved_evidence": [
+    "case-space id not observed from any tool result",
+    "revision id not observed; no revision pinned for a mutation at this operation seam",
+    "worker identity and the reason it is disabled were not observed, only asserted by the caller",
+    "requested capability widening has no reviewed policy basis on record"
+  ],
+  "handoff": {
+    "schema": "casegraphen.experimental.skill.orchestration_handoff.v0",
+    "handoff_id": "handoff:unpinned-case-space:operation-authority-seam",
+    "phase": "operation",
+    "selected_task_skill": "casegraphen-operate",
+    "selection_reason": "casegraphen-operate owns the mutation and refusal protocol at the operation seam, but worker enablement, capability widening, and authority grants are explicit return seams that neither it nor the process skill may close.",
+    "observed": {
+      "case_space_id": null,
+      "revision_id": null,
+      "topology_content_hash": null,
+      "report_ids": []
+    },
+    "artifacts": [],
+    "unresolved_evidence": [
+      "case-space id not observed from any tool result",
+      "revision id not observed; no revision pinned for a mutation at this operation seam",
+      "worker identity and the reason it is disabled were not observed, only asserted by the caller",
+      "requested capability widening has no reviewed policy basis on record"
+    ],
+    "seams": [
+      {
+        "kind": "worker_enablement",
+        "status": "open",
+        "required_actor_or_policy": "worker-enablement authority owner (human or policy), not the orchestrating skill or the caller"
+      },
+      {
+        "kind": "scope",
+        "status": "open",
+        "required_actor_or_policy": "capability/scope authority owner for the requested worker capability widening"
+      },
+      {
+        "kind": "authority",
+        "status": "open",
+        "required_actor_or_policy": "authority-granting policy; a caller assertion of trust or authority does not close this seam"
+      }
+    ],
+    "return_required": true,
+    "next_action": {
+      "kind": "return_for_authority",
+      "task_skill": null
+    },
+    "mutation_performed": false,
+    "accepted_state_changed": false
+  }
+}

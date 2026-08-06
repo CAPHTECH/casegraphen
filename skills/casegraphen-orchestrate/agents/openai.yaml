@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen Orchestrate"
+  short_description: "Route governed work across task skills and seams"
+  default_prompt: "Use $casegraphen-orchestrate to route this multi-phase CaseGraphen workflow with exact handoffs, stopping at every review or authority seam."

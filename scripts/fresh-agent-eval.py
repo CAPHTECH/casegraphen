@@ -24,6 +24,7 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "evals/fresh-agent/scenarios.v0.json"
+ORCHESTRATION_MANIFEST = ROOT / "evals/fresh-agent/skill-orchestration-scenarios.v0.json"
 DEFAULT_RELEASE_POLICY = ROOT / "evals/fresh-agent/release-policy.v0.json"
 REQUIRED_SCENARIOS = {
     "independent-20-file-fanout",
@@ -36,6 +37,14 @@ REQUIRED_SCENARIOS = {
     "stale-revision-no-auto-rebase",
     "tool-failure-versus-domain-halt",
     "proposal-not-direct-mutation",
+}
+REQUIRED_ORCHESTRATION_SCENARIOS = {
+    "direct-design-only",
+    "direct-audit-only",
+    "native-case-lifecycle",
+    "external-jsonl-lifecycle",
+    "end-to-end-two-review-seams",
+    "must-stop-for-authority",
 }
 EVALUATOR_KINDS = {"graph_lint", "json_schema", "completeness_oracle", "json_assert"}
 RUNNER_PROFILES = {
@@ -368,7 +377,16 @@ def safe_relative(value: str, field: str) -> pathlib.Path:
     return pathlib.Path(*path.parts)
 
 
-def validate_manifest(manifest: dict[str, Any]) -> list[str]:
+def manifest_scenario_ids(path: pathlib.Path) -> set[str]:
+    resolved = path.resolve()
+    if resolved == DEFAULT_MANIFEST.resolve():
+        return REQUIRED_SCENARIOS
+    if resolved == ORCHESTRATION_MANIFEST.resolve():
+        return REQUIRED_ORCHESTRATION_SCENARIOS
+    raise ValueError("manifest must be a shipped, named fresh-agent suite")
+
+
+def validate_manifest(manifest: dict[str, Any], required_scenarios: set[str]) -> list[str]:
     errors: list[str] = []
     if manifest.get("schema") != "casegraphen.eval.fresh_agent_manifest.v0":
         errors.append("unsupported manifest schema")
@@ -378,8 +396,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     if not isinstance(scenarios, list):
         return errors + ["scenarios must be an array"]
     ids = [scenario.get("id") for scenario in scenarios if isinstance(scenario, dict)]
-    if set(ids) != REQUIRED_SCENARIOS or len(ids) != len(REQUIRED_SCENARIOS):
-        errors.append("manifest must contain each of the ten required scenario ids exactly once")
+    if set(ids) != required_scenarios or len(ids) != len(required_scenarios):
+        errors.append("manifest must contain each required scenario id exactly once")
     for index, scenario in enumerate(scenarios):
         location = f"scenarios[{index}]"
         if not isinstance(scenario, dict):
@@ -674,8 +692,13 @@ def main() -> int:
     parser.add_argument("--budget-usd", type=float, help="declared aggregate release-run budget")
     parser.add_argument("--casegraphen-bin", default="casegraphen")
     args = parser.parse_args()
-    manifest = load_manifest(args.manifest.resolve())
-    errors = validate_manifest(manifest)
+    manifest_path = args.manifest.resolve()
+    try:
+        required_scenarios = manifest_scenario_ids(manifest_path)
+    except ValueError as error:
+        parser.error(str(error))
+    manifest = load_manifest(manifest_path)
+    errors = validate_manifest(manifest, required_scenarios)
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -689,7 +712,7 @@ def main() -> int:
     if not isinstance(runner, list) or not runner or not all(isinstance(token, str) and token for token in runner):
         parser.error("--runner-json must be a non-empty JSON array of command tokens")
     selected = set(args.scenario)
-    unknown = selected - REQUIRED_SCENARIOS
+    unknown = selected - required_scenarios
     if unknown:
         parser.error(f"unknown scenarios: {sorted(unknown)}")
     scenarios = [scenario for scenario in manifest["scenarios"] if not selected or scenario["id"] in selected]

@@ -1,0 +1,19 @@
+{
+  "route": "intake -> casegraphen-design -> topology_review -> external runtime -> casegraphen-integrate -> casegraphen-audit -> evidence_review -> casegraphen-operate",
+  "seams": [
+    {
+      "kind": "topology_review",
+      "status": "open",
+      "required_actor_or_policy": "independent human reviewer of the unreviewed topology proposal from casegraphen-design",
+      "return_required": true,
+      "mutation_performed": false
+    },
+    {
+      "kind": "evidence_review",
+      "status": "open",
+      "required_actor_or_policy": "independent human reviewer of the unreviewed evidence/morphism proposals reconciled by casegraphen-integrate and reported on by casegraphen-audit",
+      "return_required": true,
+      "mutation_performed": false
+    }
+  ]
+}

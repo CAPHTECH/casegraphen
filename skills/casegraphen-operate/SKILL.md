@@ -1,6 +1,6 @@
 ---
 name: casegraphen-operate
-description: Use when driving work through a CaseGraphen case space with the casegraphen CLI — lifting a case space, reading readiness or blockers, proposing and applying a morphism, attaching or promoting evidence, transitioning a cell, registering a worker binding, accepting a plan, running a step, or governing an agent runtime's graph by recording what it produced as reviewable evidence. Covers the revision and gate discipline every mutating command needs and the refusals that will otherwise waste attempts.
+description: Direct task skill for revision-bound CaseGraphen case-space operations with the CLI — lifting, reading readiness, applying morphisms, attaching or promoting evidence, transitioning cells, registering workers, accepting plans, or running steps. Use casegraphen-orchestrate for multi-phase routing. Owns the shared gate, mutation, and refusal protocol and is intentionally not split.
 ---
 
 # Operating a case space

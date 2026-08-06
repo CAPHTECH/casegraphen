@@ -20,6 +20,7 @@ SKILLS = {
         "casegraphen-memory-query",
         "casegraphen-memory-curate",
         "casegraphen-memory-audit",
+        "casegraphen-orchestrate",
     )
 }
 OPERATE_SKILL = SKILLS["casegraphen-operate"]
@@ -46,7 +47,7 @@ ROLE_CONTRACTS = {
         "A runtime status or a 199/200 report set never proves completion.",
     ),
     "casegraphen-integrate": (
-        "stopping at unreviewed evidence/morphism proposals",
+        "Stops at unreviewed evidence/morphism proposals.",
         "Every proposal remains `unreviewed`; `accepted` remains false.",
         "Never turn an ingest report into accepted evidence",
     ),
@@ -70,7 +71,17 @@ ROLE_CONTRACTS = {
         "A clean audit establishes the documented procedural invariants, not absolute truth.",
         "Never repair an audit finding by accepting a claim",
     ),
+    "casegraphen-orchestrate": (
+        "Use this process skill only when the request spans multiple phases",
+        "Never review or accept a proposal, silently rebase a stale revision, enable a worker, widen scope, or grant authority.",
+        "`casegraphen-operate` remains the single task skill that owns the shared revision, operation-gate, mutation, and refusal protocol",
+        "These are explicit return seams.",
+    ),
 }
+
+TASK_SKILLS = set(SKILLS) - {"casegraphen-orchestrate"}
+ORCHESTRATION_SCHEMA = ROOT / "schemas/experimental/skill.orchestration_handoff.v0.schema.json"
+ORCHESTRATION_EXAMPLE = ROOT / "schemas/experimental/skill.orchestration_handoff.v0.example.json"
 
 OVERCLAIMS = (
     "MCP support is complete",
@@ -348,6 +359,25 @@ def check() -> list[str]:
         for path in sorted(skill.rglob("*.md")):
             if path != GENERATED:
                 errors.extend(validate_document(path))
+        name = skill.name
+        skill_text = (skill / "SKILL.md").read_text()
+        if name in TASK_SKILLS and "description: Direct task skill" not in skill_text:
+            errors.append(f"{skill.relative_to(ROOT)}/SKILL.md: task skill must declare its direct-task routing boundary")
+        metadata = skill / "agents/openai.yaml"
+        if not metadata.is_file():
+            errors.append(f"{metadata.relative_to(ROOT)}: shipped Skill agent metadata is missing")
+        else:
+            metadata_text = metadata.read_text()
+            for required in ("interface:", "display_name:", "short_description:", "default_prompt:", f"${name}"):
+                if required not in metadata_text:
+                    errors.append(f"{metadata.relative_to(ROOT)}: missing metadata field or Skill reference {required!r}")
+    orchestration_refs = SKILLS["casegraphen-orchestrate"] / "references"
+    for canonical, bundled in (
+        (ORCHESTRATION_SCHEMA, orchestration_refs / ORCHESTRATION_SCHEMA.name),
+        (ORCHESTRATION_EXAMPLE, orchestration_refs / ORCHESTRATION_EXAMPLE.name),
+    ):
+        if not bundled.is_file() or canonical.read_bytes() != bundled.read_bytes():
+            errors.append(f"{bundled.relative_to(ROOT)}: bundled handoff contract must match {canonical.relative_to(ROOT)}")
     errors.extend(validate_document(ROOT / "README.md"))
     return errors
 

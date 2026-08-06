@@ -1,0 +1,32 @@
+{
+  "schema": "casegraphen.experimental.skill.orchestration_handoff.v0",
+  "handoff_id": "handoff:issue-100:topology-review",
+  "phase": "topology_proposed",
+  "selected_task_skill": "casegraphen-design",
+  "selection_reason": "The completed phase produced an unreviewed execution-topology proposal.",
+  "observed": {
+    "case_space_id": "case-space:issue-100",
+    "revision_id": "revision:observed",
+    "topology_content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "report_ids": ["graph-lint:issue-100"]
+  },
+  "artifacts": [
+    {
+      "path": "execution.topology.json",
+      "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "role": "proposal"
+    }
+  ],
+  "unresolved_evidence": [],
+  "seams": [
+    {
+      "kind": "topology_review",
+      "status": "open",
+      "required_actor_or_policy": "independent topology reviewer"
+    }
+  ],
+  "return_required": true,
+  "next_action": {"kind": "return_for_review", "task_skill": null},
+  "mutation_performed": false,
+  "accepted_state_changed": false
+}

@@ -1,0 +1,18 @@
+{
+  "selected_task_skill": "casegraphen-audit",
+  "orchestration_used": false,
+  "mutation_performed": false,
+  "classification": "direct_task",
+  "rationale": "The request is a single bounded phase: a read-only audit of a supplied execution topology. The routing table assigns 'Audit topology or canonical runtime observations' to casegraphen-audit, whose output boundary is read-only findings and unresolved review judgments. Per the orchestrate workflow, a direct task means naming the task skill and stopping orchestration, so the process layer is not kept active and no orchestration handoff is emitted.",
+  "not_selected": {
+    "casegraphen-memory-audit": "Scope is an execution topology, not governed project memory.",
+    "casegraphen-operate": "No mutation or acceptance-ledger advance was requested; it owns the mutation seam only.",
+    "casegraphen-design": "No topology or policy proposal was requested.",
+    "casegraphen-integrate": "No external-runtime JSONL reconciliation was requested."
+  },
+  "out_of_scope_for_selected_skill": [
+    "accepting or reviewing any finding (independent review seam)",
+    "rebasing or advancing an observed revision",
+    "any acceptance-ledger mutation or worker enablement"
+  ]
+}

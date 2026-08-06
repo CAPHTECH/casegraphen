@@ -1,6 +1,6 @@
 ---
 name: casegraphen-memory-curate
-description: Turn immutable project sources into strict, unreviewed CaseGraphen Memory Claim and supersession/retraction/procedure proposals. Use when curating reusable coding-agent memory while preserving valid time, scope, provenance role, authority ceiling, and the existing independent review seam.
+description: Direct task skill for turning immutable project sources into strict, unreviewed CaseGraphen Memory Claim and supersession/retraction/procedure proposals. Use for memory-curation-only work preserving valid time, scope, provenance role, authority ceiling, and the independent review seam; use casegraphen-orchestrate for multi-phase routing.
 ---
 
 # Curate memory proposals

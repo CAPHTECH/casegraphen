@@ -242,7 +242,13 @@ original command and report shape.
 
 ## Driving it from an agent
 
-Four separately constrained Skills ship under [`skills/`](skills/):
+CaseGraphen ships a two-layer Skill surface under [`skills/`](skills/): one
+process skill for routing and exact handoffs, plus direct task skills that remain
+independently invocable.
+
+- `casegraphen-orchestrate` routes multi-phase work and stops at review,
+  revision, worker-enablement, scope, credential, and authority seams. It cannot
+  accept, review, silently rebase, mutate, or broaden authority.
 
 - `casegraphen-design` creates linted, unreviewed topology proposals and never
   mutates, reviews, accepts, or runs them.
@@ -252,7 +258,11 @@ Four separately constrained Skills ship under [`skills/`](skills/):
   as untrusted observations, reconciles them through the canonical library,
   and stops at the review seam.
 - `casegraphen-operate` owns the revision/gate/refusal protocol for mutations
-  of the acceptance ledger.
+  of the acceptance ledger and remains whole rather than duplicating that
+  protocol across smaller mutation skills.
+- `casegraphen-memory-query`, `casegraphen-memory-curate`, and
+  `casegraphen-memory-audit` keep governed memory reading, proposal, and audit
+  responsibilities separate.
 
 [`install.sh`](install.sh) installs the binary and the skill together, because a
 skill for a CLI is useless without the CLI it documents:
@@ -311,7 +321,7 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0029: Memory Plane stable-promotion decision](docs/adr/0029-memory-plane-stable-promotion.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0030**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0031**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and
