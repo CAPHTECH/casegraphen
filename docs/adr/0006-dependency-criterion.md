@@ -5,6 +5,13 @@
 Accepted on 2026-07-31. Amends the first non-negotiable rule in `CLAUDE.md` and
 addresses candidate 3 of `docs/audit/local-optima-audit-2026-07-31.md`.
 
+Partially superseded on 2026-08-07: the fourth bullet of the decision below —
+*"the addition is recorded in an ADR"* — no longer holds. A dependency's
+measured `cargo tree` size is now recorded in the proposing pull request
+instead. Every other clause of the criterion stands unchanged, including the
+requirement that the measurement be made per proposal rather than argued by
+precedent, and the outright ban on `higher-graphen-runtime`.
+
 ## Context
 
 The rule was absolute: *"No new dependencies. The crate depends on
