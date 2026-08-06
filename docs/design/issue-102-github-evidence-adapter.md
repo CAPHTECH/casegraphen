@@ -4,7 +4,7 @@ Design for [issue #102](https://github.com/CAPHTECH/casegraphen/issues/102).
 Everything here is an **experimental v0 product surface** in the sense of ADR
 0028/0029: proposal-only, store-free, replayable, never an acceptance
 authority. The architectural decisions are recorded in
-[ADR 0030](../adr/0030-github-evidence-observation-boundary.md).
+[ADR 0031](../adr/0031-github-evidence-observation-boundary.md).
 
 ## 1. What already exists, and what this design reuses
 
@@ -694,13 +694,12 @@ not provable only by a classifier that always answers "not satisfied".
 | E2 | no blocking findings; rate-limited bot review and self-review limitation declared | `residual_risks` + tier rule (§8) | pilot integration test on projection content |
 | E3 | delete derived outputs, rebuild → same normalized result | `project`/`observe` recompute from source (§5, §9) | delete-and-rebuild replay test |
 
-## 13. Open contingency
+## 13. ADR numbering, resolved
 
-ADR numbering: this branch's `main` has no tracked ADR past 0029, so this
-branch legitimately owns **ADR 0030** (`docs/adr/0030-github-evidence-observation-boundary.md`);
-the next available identifier after it is 0031. If issue #100's branch also
-lands its own ADR 0030 before this one merges, the ADR conformance gate's
-contiguous, non-duplicate identifier rule means whichever of the two merges
-second must renumber to the next free slot (file, heading, links, and the
-next-available counters in `docs/adr/0012` consequences and `README.md`).
-`cargo test --test adr_conformance` is the oracle either way.
+This branch originally carried ADR 0030. Issue #100's branch landed its own
+ADR 0030 (`docs/adr/0030-task-skills-and-process-orchestration.md`) on `main`
+first, so — per the contingency this section previously recorded — the branch
+merging second renumbered. This work is now
+[ADR 0031](../adr/0031-github-evidence-observation-boundary.md), and the next
+available identifier is 0032. The ADR conformance gate's contiguous,
+non-duplicate identifier rule is the oracle: `cargo test --test adr_conformance`.

@@ -14,7 +14,7 @@ not write to a CaseStore: every record this pilot's commands emit carries
 
 See [`comparison-report.md`](comparison-report.md) for how this reproduces,
 and where it extends, the manual PR-101 review record (acceptance criterion
-A12). See [ADR 0030](../../adr/0030-github-evidence-observation-boundary.md)
+A12). See [ADR 0031](../../adr/0031-github-evidence-observation-boundary.md)
 and the [design doc](../../design/issue-102-github-evidence-adapter.md) for
 the full architectural rationale.
 

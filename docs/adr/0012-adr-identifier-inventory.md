@@ -37,7 +37,7 @@ their identifiers.
 - Renames and references must be updated atomically.
 - A deleted decision must remain as a status-bearing ADR record rather than
   creating a number gap.
-- The next available identifier is 0031.
+- The next available identifier is 0032.
 
 ## Rejected alternatives
 

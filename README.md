@@ -320,10 +320,11 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0027: exact compiler profile compatibility](docs/adr/0027-exact-compiler-profile-compatibility.md)
 - [ADR 0028: Memory Plane positioning](docs/adr/0028-memory-plane-positioning.md)
 - [ADR 0029: Memory Plane stable-promotion decision](docs/adr/0029-memory-plane-stable-promotion.md)
-- [ADR 0030: GitHub issue-to-PR evidence is bounded, replayable observation](docs/adr/0030-github-evidence-observation-boundary.md)
+- [ADR 0030: Separate direct task skills from process orchestration](docs/adr/0030-task-skills-and-process-orchestration.md)
+- [ADR 0031: GitHub issue-to-PR evidence is bounded, replayable observation](docs/adr/0031-github-evidence-observation-boundary.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0031**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0032**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

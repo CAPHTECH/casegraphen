@@ -1,4 +1,4 @@
-# ADR 0030: GitHub issue-to-PR evidence is bounded, replayable observation
+# ADR 0031: GitHub issue-to-PR evidence is bounded, replayable observation
 
 - Status: Accepted for experimental v0
 - Date: 2026-08-06
