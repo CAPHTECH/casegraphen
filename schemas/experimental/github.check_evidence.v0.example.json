@@ -1,0 +1,17 @@
+{
+  "check_id": "check:c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b:status_context:CodeRabbit:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "created_at": "2026-08-06T08:06:16Z",
+  "creator": {
+    "id": "BOT_kgDOCCSy2w",
+    "login": "coderabbitai",
+    "typename": "Bot"
+  },
+  "description": "Review rate limited",
+  "evidence_role": "ci_check",
+  "head_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+  "kind": "status_context",
+  "name": "CodeRabbit",
+  "schema": "casegraphen.experimental.github.check_evidence.v0",
+  "source_record_id": "github-source:checks:sha256-216cf7c74bb3a3992d89e8e195a47af9c18cb0f0ac63cdf9c439b771ceb6a82c",
+  "state": "SUCCESS"
+}

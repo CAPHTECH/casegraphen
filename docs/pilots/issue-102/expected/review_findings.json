@@ -1,0 +1,874 @@
+[
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:760d28fe311f8c9d0a38cf76746c25d06cbcf3acc10c0471e8f30755ad319e46",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:f3db2d91a13a1982a3d18cd9ed47a1f653230437067a71af5e3c36f39aa934a9",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:29Z",
+    "path": "schemas/experimental/memory.source_record.v0.example.json",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sN"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868166"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:1bc9022a2550db1309ebf070a98fb6b05cb982aa2130b921e2e27097dc947639",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:4000dd8d895a280c65d117f316676cf53e9218b32dd4122eb688c1c5c78b6c4a",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:31Z",
+    "path": "skills/casegraphen-memory-query/SKILL.md",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sS"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868174"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:34d431db6a01d110617704e589a845a08632a869923d78fb2979e40b7e0bce80",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:f77099258860484bdf5df7d1fd8844b31325011ba3bb71a039805991375b7d1c",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:31Z",
+    "path": "src/bin/casegraphen-mcp-host.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sa"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868198"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:8cf53db4b5f3aa84d8062f8dbf6c54998f0d2934281e9ad6ff9d5eea3d095ad1",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:96badcf4878ef4977204aad52cacc2c53f9400e7b1a5e6192a2aacd84fc6d61e",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:33Z",
+    "path": "src/memory/authority.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58se"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868206"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:7b036e7101b2f36bc02b78dc476138d328c851cdc385c55680308bcf3df3a6de",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:bdd38d88d47fd4fce3297811db02a2f1d27eea844cae5764961472af50472f45",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:33Z",
+    "path": "src/memory/conflicts.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58si"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868212"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:16Z",
+    "body_content_hash": "sha256:14fc938eb248866739abf246ffe262e1a8dfb0305cc54c7127b76526c5baa869",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:5b3e65ded051ce00e45f66db5cfe93ffb456a7656548cb45894a909ef8c8c12d",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:35Z",
+    "path": "src/memory/query.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58so"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868221"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:17Z",
+    "body_content_hash": "sha256:848192ed36f6327072304605cd0e594511c1343ca3708e2139b5c484235f9999",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:2a12217584111f98934b0b71cfd1b1f66846e6111f493097aae5351812862079",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:06:08Z",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58ss"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868226"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:17Z",
+    "body_content_hash": "sha256:cf55400a8868c7ac682b099d67e8ce0a79c93c3a9f74aac8c4c1637d328fed53",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:6db94e57507704c9fdbb5cfef21b2c736cce48a02c1bb7d347a266ae94783762",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:05:37Z",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s0"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868235"
+  },
+  {
+    "actionable": true,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:17Z",
+    "body_content_hash": "sha256:c8455e8a7ba6fc4838f206b8e1a34154c4be8018e843fdfd31fa2ea9ed54bb60",
+    "duplicate_count": 1,
+    "edited": true,
+    "finding_id": "finding:44cff42807677106d1fda3f7123d72d3fd24e33641de5e22fa6a9be899136df8",
+    "kind": "thread_comment",
+    "last_edited_at": "2026-08-06T08:06:15Z",
+    "path": "src/native_cli/parser.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s5"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868242"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T07:44:19Z",
+    "body_content_hash": "sha256:61cacbcd3e4adfdf76686a40b87b9d4b0b677661e455b8e53b4a84468e14178d",
+    "commit_sha": "5403673f13b45d8deb0f4be62f50390172071bb0",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:3c6a30ea302f6032292503d1cf1f780f18694ce85dfee7bf5e6c4aa03df37d37",
+    "kind": "review_summary",
+    "review_state": "COMMENTED",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:reviews:sha256-ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348",
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#pullrequestreview-4872254337"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:24Z",
+    "body_content_hash": "sha256:becb22b803f961294bbb8e71da88518c821e28bb3d31613eec975c57403a438c",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:979ec344be95d8b4873002a7c5a45cc2a5d4f75c5bd06ae5330f95f7f2e5c317",
+    "kind": "thread_comment",
+    "path": "schemas/experimental/memory.source_record.v0.example.json",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sN"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726997460"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:24Z",
+    "body_content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "commit_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+    "duplicate_count": 9,
+    "edited": false,
+    "finding_id": "finding:0e72a9672c53593c8c97284c71a0f65b3c928304ca438c511a3dba1c46ad844d",
+    "kind": "review_summary",
+    "review_state": "COMMENTED",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:reviews:sha256-ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348",
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#pullrequestreview-4872418859"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:25Z",
+    "body_content_hash": "sha256:433d8eb795131e56914a0bd6653073a899eddaf9ae579a5510117761ff95c945",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:689061cb37cce16a08f9bef13c0180ae261e214e752385a3cc8d730a05690fa4",
+    "kind": "thread_comment",
+    "path": "skills/casegraphen-memory-query/SKILL.md",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sS"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726997672"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:27Z",
+    "body_content_hash": "sha256:62db8b436e2c48aca038099621f16e0aa5285254359dc1f3e565558d8323e036",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:396c40b128403af0e02db6dc4b6259c0f36fceaff9d66a565304eee67417b597",
+    "kind": "thread_comment",
+    "path": "src/bin/casegraphen-mcp-host.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sa"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726997833"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:28Z",
+    "body_content_hash": "sha256:f6c2ef28fbfea4041b88fa0195961b6255700ca93bc678d4032722a780f4f407",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:4e74bc1790767d9f846dad58714cc42c35d6642ff809c0b554fcac918667f00b",
+    "kind": "thread_comment",
+    "path": "src/memory/authority.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58se"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998001"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:29Z",
+    "body_content_hash": "sha256:53cd2b7a0e71aa33420e37fa41222e9b3f394cd4a27746cd2ed52063e11e5814",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:b6fe8c0b3c8edd8dc359d2b75a5c06f8eafe92ca07bf9b58fdeeb9f946495065",
+    "kind": "thread_comment",
+    "path": "src/memory/conflicts.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58si"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998184"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:30Z",
+    "body_content_hash": "sha256:139a820ccea6e88e33bd4eb2670460b75e2e62c44a78c57bef69ebcdf98a343f",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:4cb0f1d19a5b8249ef02dfd982d7b5c7b9c1d49377c6c2478159d3cb48bbb091",
+    "kind": "thread_comment",
+    "path": "src/memory/query.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58so"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998352"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:32Z",
+    "body_content_hash": "sha256:8141e522b9b0eeb6b66182eeb4adfc6dfa8cb600f38b77d119d83a75f53c9515",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:0b8f0cfe342ef35495175ed9add89dd0a43b6fe95ac2140155f09b6ac24e66f5",
+    "kind": "thread_comment",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58ss"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998512"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:33Z",
+    "body_content_hash": "sha256:4b8d122cec66cd780c9d0f33cb334f2b9f5525023ba0ddbbd1bc03b5b8c3b5f2",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:9081c46e3ea083b27489dd8942208d21c49e0fba695823adece0d9674ab02b96",
+    "kind": "thread_comment",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s0"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998648"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:05:34Z",
+    "body_content_hash": "sha256:cb0551761545a98a1b2f937c246b502c1658602617d8d56749ec1354a55373ea",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:2fe293489d1715f286e79af62cf283ab0dbb0b176122abce8dc863fb420e81f3",
+    "kind": "thread_comment",
+    "path": "src/native_cli/parser.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s5"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726998816"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:40Z",
+    "body_content_hash": "sha256:ad68b63f28d9d9cf2a2c5ec60c896971201fbca2ace4c65842aeba062434638f",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:9f5c0868bd2e2eeed0e28ad011b9fd0f1fb341dcb8164e48fe1d684626c70637",
+    "kind": "thread_comment",
+    "path": "schemas/experimental/memory.source_record.v0.example.json",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sN"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726999598"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:40Z",
+    "body_content_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "commit_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+    "duplicate_count": 9,
+    "edited": false,
+    "finding_id": "finding:52b6d632a78ee2b95140e111d38b1a8f2e51a95275c95b15e4b36c107bcf36b1",
+    "kind": "review_summary",
+    "review_state": "COMMENTED",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:reviews:sha256-ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348",
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#pullrequestreview-4872421588"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:41Z",
+    "body_content_hash": "sha256:734973fe8a689fef77109df18c801df560c1838aef1d0379fac571cce54ef35a",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:8cdc8f9eec8b913c70c52bfdac3c5b204404bb3dc8d586fbfcf6ac54f3d1ee65",
+    "kind": "thread_comment",
+    "path": "src/bin/casegraphen-mcp-host.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sa"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726999725"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:43Z",
+    "body_content_hash": "sha256:0ff8106c146578ae1cbf5de732de09e975cdea2455f4b910b8ab70693e00bf93",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:d7cdfb585e625146d1593bee85caab14d5cabb3d7022221c3663bc4c5d7a4e9f",
+    "kind": "thread_comment",
+    "path": "skills/casegraphen-memory-query/SKILL.md",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": true,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58sS"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726999943"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:44Z",
+    "body_content_hash": "sha256:b3d1e5155e230cfcdee1e3c254812d6abbfa88faba12d3933293489d664bc115",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:fd72830a863044019346af545c658ee3d653ef04f0462451213cde3e1904d565",
+    "kind": "thread_comment",
+    "path": "src/memory/authority.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58se"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727000060"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:47Z",
+    "body_content_hash": "sha256:b629fb98b9c790d7a92e4199013aaa7f63e1b9bdcdf3cf1185078a86356fad93",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:13b9bc6b6524aff94b6837c93e9ef540a535a59bcdec89150be84d8163b42a66",
+    "kind": "thread_comment",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "MDQ6VXNlcjc5MDUxMQ==",
+        "login": "rizumita"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s0"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727000437"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:49Z",
+    "body_content_hash": "sha256:73dfc897733dc7c6585da3f07595758afdf834c650fd9ae6b2da81ecab5ae1c0",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:bea0802d20ce3f81468c9301905c91cb5aa4a728d46ddcd4ab6d9fa3f5bb38c2",
+    "kind": "thread_comment",
+    "path": "src/native_cli/parser.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58s5"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727000884"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:05:50Z",
+    "body_content_hash": "sha256:aa0fad0e77c15eb346fbf099997d552ba79201a1859400448599ecff24502868",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:9a9cdb629f73afa0b74a2058ab57df37347b3ab3d617ec596707c153ba1554cd",
+    "kind": "thread_comment",
+    "path": "src/memory/query.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58so"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727000909"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:06:02Z",
+    "body_content_hash": "sha256:a1296442c6f80d9cd6085b759aac49fa9d3f9bb3d81711bd5e446d017bb6fd00",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:b54dc8f8e32be249995a7cf72d9b2b77d78cc20c222c112f0b2a23d58ae05c63",
+    "kind": "thread_comment",
+    "path": "src/memory/conflicts.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58si"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727002592"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "NONE",
+      "id": "BOT_kgDOCCSy2w",
+      "login": "coderabbitai",
+      "typename": "Bot"
+    },
+    "authored_at": "2026-08-06T08:06:10Z",
+    "body_content_hash": "sha256:cd9a48b9f33ef64150a50de572664c3151f64dd5fd30d0f3b2ef98bb966ffb87",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:054db4a2452aa9d06d99211c539d24b4dc8a24dd76b95f87cb82cbdcf3b62d7a",
+    "kind": "thread_comment",
+    "path": "src/memory/validation.rs",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "thread": {
+      "comment_count": 3,
+      "outdated": false,
+      "resolved": true,
+      "resolved_by": {
+        "id": "BOT_kgDOCCSy2w",
+        "login": "coderabbitai[bot]"
+      },
+      "thread_id": "PRRT_kwDOTn7XYM6W58ss"
+    },
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3727003839"
+  },
+  {
+    "actionable": false,
+    "author": {
+      "association": "MEMBER",
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita",
+      "typename": "User"
+    },
+    "authored_at": "2026-08-06T08:19:07Z",
+    "body_content_hash": "sha256:1e42ba096f7d0bed7ebea33472a11cd60817770255d602eed7edcf0badc38a65",
+    "commit_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+    "duplicate_count": 1,
+    "edited": false,
+    "finding_id": "finding:2f1cdd98e5846edbf5dc7dc71038b9d7a56392e385ecd0f47ce570a8175b2b22",
+    "kind": "review_summary",
+    "review_state": "COMMENTED",
+    "schema": "casegraphen.experimental.github.review_finding.v0",
+    "source_record_id": "github-source:reviews:sha256-ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348",
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101#pullrequestreview-4872547587"
+  }
+]

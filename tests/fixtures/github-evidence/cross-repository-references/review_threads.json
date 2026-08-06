@@ -1,0 +1,64 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 7,
+        "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewThreads": {
+          "totalCount": 2,
+          "nodes": [
+            {
+              "id": "thread-1",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "a.rs",
+              "resolvedBy": null,
+              "comments": {
+                "totalCount": 1,
+                "nodes": [
+                  {
+                    "body": "see OTHER/other#1",
+                    "createdAt": "2026-01-01T02:30:00Z",
+                    "lastEditedAt": null,
+                    "url": "https://github.com/OTHER/other/pull/1#discussion_r1",
+                    "authorAssociation": "NONE",
+                    "author": {
+                      "login": "reviewbot",
+                      "__typename": "Bot",
+                      "id": "actor:bot-1"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "thread-2",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "b.rs",
+              "resolvedBy": null,
+              "comments": {
+                "totalCount": 1,
+                "nodes": [
+                  {
+                    "body": "local note",
+                    "createdAt": "2026-01-01T02:30:00Z",
+                    "lastEditedAt": null,
+                    "url": "https://github.com/OWNER/repo/pull/7#discussion_r2",
+                    "authorAssociation": "NONE",
+                    "author": {
+                      "login": "reviewbot",
+                      "__typename": "Bot",
+                      "id": "actor:bot-1"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

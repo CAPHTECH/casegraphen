@@ -17,6 +17,9 @@ commands and flags reach the shipped parser.
 | `casegraphen completion candidates` | `--case-space-id`, `--format`, `--output`, `--store` |
 | `casegraphen equivalence check` | `--format`, `--left-case-space-id`, `--left-store`, `--output`, `--right-case-space-id`, `--right-store` |
 | `casegraphen evidence attach` | `--actor-id`, `--artifact`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--input`, `--operation-scope-id`, `--output`, `--satisfies`, `--source-boundary-id`, `--store` |
+| `casegraphen github observe` | `--capture-dir`, `--format`, `--manifest`, `--output` |
+| `casegraphen github project` | `--capture-dir`, `--format`, `--manifest`, `--output`, `--require-independent-review` |
+| `casegraphen github refresh` | `--capture-dir`, `--format`, `--manifest`, `--output`, `--previous-capture-dir`, `--previous-manifest`, `--previous-observation` |
 | `casegraphen graph lint` | `--format`, `--input`, `--output` |
 | `casegraphen invariant check` | `--case-space-id`, `--format`, `--output`, `--store`, `--strict` |
 | `casegraphen invariant close-check` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--close-policy-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--operation-scope-id`, `--output`, `--source-boundary-id`, `--store`, `--strict`, `--validation-evidence-id` |

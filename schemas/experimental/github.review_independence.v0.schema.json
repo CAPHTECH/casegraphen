@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.review_independence.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "pr_observation_hash", "implementation_actor_ids", "implementation_actor_logins", "classifications", "unresolved_actionable_finding_ids", "resolved_actionable_finding_ids", "independent_human_approvals", "excluded_approvals", "policy", "independence_proven", "findings"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.review_independence.v0"},
+    "pr_observation_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "implementation_actor_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "implementation_actor_logins": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "classifications": {"type": "array", "items": {"$ref": "#/$defs/classification"}},
+    "unresolved_actionable_finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "resolved_actionable_finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "independent_human_approvals": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "excluded_approvals": {"type": "array", "items": {"$ref": "#/$defs/excluded_approval"}},
+    "policy": {"$ref": "#/$defs/policy"},
+    "independence_proven": {"const": false},
+    "findings": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/finding"}}
+  },
+  "$defs": {
+    "evidence_role": {"enum": ["self_review", "automated_bot", "ci_check", "independent_human_candidate", "unattributed"]},
+    "basis": {"enum": ["check_observation", "author_in_implementation_actor_set", "provider_bot_discriminator", "provider_bot_id_prefix", "provider_bot_id_equality", "provider_user_discriminator", "attestation_absent"]},
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject_id", "evidence_role", "basis"],
+      "properties": {
+        "subject_id": {"type": "string", "minLength": 1},
+        "evidence_role": {"$ref": "#/$defs/evidence_role"},
+        "basis": {"$ref": "#/$defs/basis"}
+      }
+    },
+    "excluded_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "reason"],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_independent_review", "satisfied", "satisfying_finding_ids"],
+      "properties": {
+        "require_independent_review": {"type": "boolean"},
+        "satisfied": {"type": "boolean"},
+        "satisfying_finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "detail"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

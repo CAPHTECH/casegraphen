@@ -1,0 +1,30 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "author": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "alice",
+                    "id": "actor:pr-author"
+                  }
+                },
+                "committer": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "old-login",
+                    "id": "actor:committer"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

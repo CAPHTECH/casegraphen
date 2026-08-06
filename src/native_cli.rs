@@ -27,15 +27,15 @@ pub use ops::EVIDENCE_PACKET_SCHEMA;
 use ops::{
     binding_register, case_close_check, case_history_text, case_import, case_new, case_reason,
     case_reason_text, case_topology, case_topology_diff, cell_transition, evidence_attach,
-    lift_structured_source, memory_check, memory_index, memory_propose, memory_read, memory_source,
-    morphism_apply, morphism_check, morphism_propose, morphism_reject, operate, operate_text,
-    packet_apply, packet_apply_text, packet_resume, packet_resume_text, plan_check, plan_propose,
-    plan_review, projection_apply, review_apply, run_frontier, run_frontier_text, run_step,
-    run_step_text, topology_review_apply, topology_review_inspect, MemoryIndexMode, MemoryReadMode,
-    MemorySourceMode, NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions,
-    NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
-    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
-    NativeTopologyReviewOptions,
+    github_observe, github_project, github_refresh, lift_structured_source, memory_check,
+    memory_index, memory_propose, memory_read, memory_source, morphism_apply, morphism_check,
+    morphism_propose, morphism_reject, operate, operate_text, packet_apply, packet_apply_text,
+    packet_resume, packet_resume_text, plan_check, plan_propose, plan_review, projection_apply,
+    review_apply, run_frontier, run_frontier_text, run_step, run_step_text, topology_review_apply,
+    topology_review_inspect, MemoryIndexMode, MemoryReadMode, MemorySourceMode,
+    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
+    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
+    NativeRunGateOptions, NativeRunStepOptions, NativeTopologyReviewOptions,
 };
 use reporting::report;
 
@@ -237,6 +237,25 @@ pub(crate) enum NativeCliCommand {
         policy: PathBuf,
         mode: MemoryIndexMode,
         index: Option<PathBuf>,
+        output: Option<PathBuf>,
+    },
+    GithubObserve {
+        manifest: PathBuf,
+        capture_dir: PathBuf,
+        output: Option<PathBuf>,
+    },
+    GithubRefresh {
+        manifest: PathBuf,
+        capture_dir: PathBuf,
+        previous_manifest: PathBuf,
+        previous_capture_dir: PathBuf,
+        previous_observation: Option<PathBuf>,
+        output: Option<PathBuf>,
+    },
+    GithubProject {
+        manifest: PathBuf,
+        capture_dir: PathBuf,
+        require_independent_review: bool,
         output: Option<PathBuf>,
     },
     MorphismPropose {
@@ -448,6 +467,9 @@ impl NativeCliCommand {
             | Self::MemoryCheck { output, .. }
             | Self::MemoryPropose { output, .. }
             | Self::MemoryIndex { output, .. }
+            | Self::GithubObserve { output, .. }
+            | Self::GithubRefresh { output, .. }
+            | Self::GithubProject { output, .. }
             | Self::MorphismPropose { output, .. }
             | Self::MorphismCheck { output, .. }
             | Self::MorphismApply { output, .. }
@@ -657,6 +679,9 @@ impl NativeCliCommand {
             | Self::MemoryCheck { .. }
             | Self::MemoryPropose { .. }
             | Self::MemoryIndex { .. } => self.run_memory_value(),
+            Self::GithubObserve { .. }
+            | Self::GithubRefresh { .. }
+            | Self::GithubProject { .. } => self.run_github_value(),
             Self::CaseNew { .. }
             | Self::CaseImport { .. }
             | Self::LiftStructuredSource { .. }
@@ -751,6 +776,37 @@ impl NativeCliCommand {
                 ..
             } => memory_index(store, case_space_id, input, policy, *mode, index.as_deref()),
             _ => unreachable!("run_memory_value called for non-memory command"),
+        }
+    }
+
+    fn run_github_value(&self) -> Result<NativeCommandResult<Value>, NativeCliError> {
+        match self {
+            Self::GithubObserve {
+                manifest,
+                capture_dir,
+                ..
+            } => github_observe(manifest, capture_dir),
+            Self::GithubRefresh {
+                manifest,
+                capture_dir,
+                previous_manifest,
+                previous_capture_dir,
+                previous_observation,
+                ..
+            } => github_refresh(
+                manifest,
+                capture_dir,
+                previous_manifest,
+                previous_capture_dir,
+                previous_observation.as_deref(),
+            ),
+            Self::GithubProject {
+                manifest,
+                capture_dir,
+                require_independent_review,
+                ..
+            } => github_project(manifest, capture_dir, *require_independent_review),
+            _ => unreachable!("run_github_value called for non-github command"),
         }
     }
 

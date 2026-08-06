@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.review_finding.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "finding_id", "kind", "author", "authored_at", "edited", "url", "body_content_hash", "actionable", "duplicate_count", "source_record_id"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.review_finding.v0"},
+    "finding_id": {"type": "string", "pattern": "^finding:[0-9a-f]{64}$"},
+    "kind": {"enum": ["review_summary", "thread_comment"]},
+    "author": {"$ref": "#/$defs/author"},
+    "authored_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "last_edited_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "edited": {"type": "boolean"},
+    "url": {"type": "string", "minLength": 1},
+    "path": {"type": "string", "minLength": 1},
+    "review_state": {"type": "string", "minLength": 1},
+    "commit_sha": {"type": "string", "minLength": 1},
+    "body_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actionable": {"type": "boolean"},
+    "thread": {"$ref": "#/$defs/thread"},
+    "duplicate_count": {"type": "integer", "minimum": 1},
+    "source_record_id": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login", "association"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "login": {"type": "string", "minLength": 1},
+        "typename": {"type": "string", "minLength": 1},
+        "association": {"type": "string", "minLength": 1}
+      }
+    },
+    "resolved_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "login"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "login": {"type": "string", "minLength": 1}
+      }
+    },
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thread_id", "resolved", "outdated", "comment_count"],
+      "properties": {
+        "thread_id": {"type": "string", "minLength": 1},
+        "resolved": {"type": "boolean"},
+        "outdated": {"type": "boolean"},
+        "resolved_by": {"$ref": "#/$defs/resolved_by"},
+        "comment_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

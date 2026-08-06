@@ -78,6 +78,7 @@ impl NativeCliCommand {
             "lift" => Self::parse_lift(required_segment(&mut args, "lift adapter")?, args),
             "graph" => Self::parse_graph(required_segment(&mut args, "graph operation")?, args),
             "memory" => Self::parse_memory(required_segment(&mut args, "memory operation")?, args),
+            "github" => Self::parse_github(required_segment(&mut args, "github operation")?, args),
             "obstruction" => {
                 Self::parse_obstruction(required_segment(&mut args, "obstruction operation")?, args)
             }
@@ -207,6 +208,42 @@ impl NativeCliCommand {
                 _ => Err(NativeCliError::usage("unsupported memory index command")),
             },
             _ => Err(NativeCliError::usage("unsupported memory command")),
+        }
+    }
+
+    /// `github observe|refresh|project` (design doc §9). Shaped like
+    /// `parse_memory`: one `NativeOptions::parse` per operation, `--format
+    /// json` required (no `--format text` — these are read-only reports,
+    /// not `space reason`'s halt rendering), no `--store`.
+    fn parse_github(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let operation = operation
+            .to_str()
+            .ok_or_else(|| NativeCliError::usage("github operation must be UTF-8"))?;
+        let options = NativeOptions::parse("github", args)?;
+        match operation {
+            "observe" => Ok(Self::GithubObserve {
+                manifest: options.require_path("--manifest")?,
+                capture_dir: options.require_path("--capture-dir")?,
+                output: options.output,
+            }),
+            "refresh" => Ok(Self::GithubRefresh {
+                manifest: options.require_path("--manifest")?,
+                capture_dir: options.require_path("--capture-dir")?,
+                previous_manifest: options.require_path("--previous-manifest")?,
+                previous_capture_dir: options.require_path("--previous-capture-dir")?,
+                previous_observation: options.previous_observation.clone(),
+                output: options.output,
+            }),
+            "project" => Ok(Self::GithubProject {
+                manifest: options.require_path("--manifest")?,
+                capture_dir: options.require_path("--capture-dir")?,
+                require_independent_review: options.require_independent_review,
+                output: options.output,
+            }),
+            _ => Err(NativeCliError::usage("unsupported github command")),
         }
     }
 

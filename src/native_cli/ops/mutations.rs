@@ -14,6 +14,7 @@ use crate::{
         reopen_review_morphism, NativeOperationGate, NativeReviewRequest, NativeReviewTargetKind,
     },
     native_store::NativeCaseStore,
+    path_confinement::path_confined,
 };
 use higher_graphen_core::{Id, ReviewStatus, SourceKind};
 use serde_json::{json, Map, Value};
@@ -378,8 +379,11 @@ impl<'a> ClaimPreparationState<'a> {
 ///    dispatched successfully, and mutated the store, whenever `/etc` (or
 ///    any other probed directory) existed.
 /// 2. **Canonicalization** of the entry joined onto `confine_within`.
-/// 3. **Containment** (`artifact_confined`) of the canonical result inside
-///    `confine_within` — still required after stage 1, because it is what
+/// 3. **Containment** (`path_confined`, `crate::path_confinement` — the one
+///    shared implementation of this predicate; the GitHub evidence adapter's
+///    `capture_manifest.v0` `artifact_path` confinement uses the same
+///    function) of the canonical result inside `confine_within` — still
+///    required after stage 1, because it is what
 ///    catches an in-tree symlink whose target leaves the directory; a
 ///    lexical check cannot see through a symlink.
 ///
@@ -464,7 +468,7 @@ pub(super) fn prepare_claim(
                 // which stage 1 cannot see.
                 fs::canonicalize(confine_within.join(artifact_path))
                     .ok()
-                    .filter(|canonical| artifact_confined(canonical, confine_within))
+                    .filter(|canonical| path_confined(canonical, confine_within))
                     .ok_or_else(|| input_refusal(artifact_path, CONFINEMENT_REFUSAL))?
             }
             None => fs::canonicalize(artifact_path)
@@ -519,21 +523,6 @@ pub(super) fn prepare_claim(
         relations,
         artifacts,
     })
-}
-
-/// Whether a canonicalized artifact path stays inside a canonicalized
-/// confinement root. Both arguments must already be canonicalized —
-/// `prepare_claim` is the only caller, and it is also the only place that
-/// canonicalizes, so this is a plain prefix check rather than a place that
-/// would need to resolve symlinks itself. This alone does not close the
-/// filesystem-existence oracle (a crafted entry can climb out and back in,
-/// canonicalizing to a result this check correctly, but too late, calls
-/// confined) — that is `prepare_claim`'s lexical rejection, stage 1 of the
-/// three-stage confined resolution described on its doc comment. This
-/// predicate is stage 3: catching an in-tree symlink pointing out, which the
-/// lexical stage cannot see.
-fn artifact_confined(canonical_artifact_path: &Path, canonical_root: &Path) -> bool {
-    canonical_artifact_path.starts_with(canonical_root)
 }
 
 /// The one confined-artifact refusal message, shared verbatim by all four
@@ -1131,19 +1120,11 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn artifact_confined_checks_a_canonical_component_prefix() {
-        let root = Path::new("/tmp/root");
-        assert!(artifact_confined(Path::new("/tmp/root/file.txt"), root));
-        assert!(artifact_confined(root, root));
-        // A string-prefix check would wrongly accept this: "/tmp/rootless"
-        // starts with the bytes "/tmp/root" but is a sibling, not a child.
-        assert!(!artifact_confined(
-            Path::new("/tmp/rootless/file.txt"),
-            root
-        ));
-        assert!(!artifact_confined(Path::new("/tmp/other/file.txt"), root));
-    }
+    // The containment predicate itself (`path_confined`, exercised here via
+    // `artifact_confined_matches_which_file_a_generated_path_actually_reaches`
+    // below) has its own unit test at `crate::path_confinement::tests` — it
+    // is the single shared implementation now, not a copy owned by this
+    // module.
 
     /// Extracts the message from a `NativeCliError::Invalid` refusal,
     /// panicking on any other variant or on `Ok`. Used instead of comparing
@@ -1486,7 +1467,7 @@ mod tests {
                     fs::canonicalize(&candidate).expect("a path that read must canonicalize");
 
                 assert_eq!(
-                    artifact_confined(&canonical_candidate, &canonical_root),
+                    path_confined(&canonical_candidate, &canonical_root),
                     ground_truth_inside,
                     "confinement check disagreed with which file {relative:?} actually reaches"
                 );

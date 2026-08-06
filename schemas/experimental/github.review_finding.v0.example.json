@@ -1,0 +1,30 @@
+{
+  "actionable": true,
+  "author": {
+    "association": "NONE",
+    "id": "BOT_kgDOCCSy2w",
+    "login": "coderabbitai",
+    "typename": "Bot"
+  },
+  "authored_at": "2026-08-06T07:44:16Z",
+  "body_content_hash": "sha256:760d28fe311f8c9d0a38cf76746c25d06cbcf3acc10c0471e8f30755ad319e46",
+  "duplicate_count": 1,
+  "edited": true,
+  "finding_id": "finding:f3db2d91a13a1982a3d18cd9ed47a1f653230437067a71af5e3c36f39aa934a9",
+  "kind": "thread_comment",
+  "last_edited_at": "2026-08-06T08:05:29Z",
+  "path": "schemas/experimental/memory.source_record.v0.example.json",
+  "schema": "casegraphen.experimental.github.review_finding.v0",
+  "source_record_id": "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+  "thread": {
+    "comment_count": 3,
+    "outdated": true,
+    "resolved": true,
+    "resolved_by": {
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita"
+    },
+    "thread_id": "PRRT_kwDOTn7XYM6W58sN"
+  },
+  "url": "https://github.com/CAPHTECH/casegraphen/pull/101#discussion_r3726868166"
+}

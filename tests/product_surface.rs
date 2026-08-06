@@ -369,6 +369,111 @@ fn operational_memory_tools_are_read_only_or_unreviewed_proposals() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Issue #102's `github observe|refresh|project`: store-free, read-only,
+/// and no more capable than that. Proves two things a schema cannot: (1)
+/// no file anywhere under the read-only pilot capture directory (or
+/// anywhere else the commands could reach) is created or modified by any of
+/// the three commands, including a `refresh` that reads a *second* capture
+/// directory as its previous-basis input; (2) every output record carries
+/// `accepted: false` and `mutation_performed: false`, the same read-only
+/// discipline `operational_memory_tools_are_read_only_or_unreviewed_proposals`
+/// proves for the Memory Plane MCP tools above.
+#[test]
+fn github_evidence_commands_never_mutate_the_filesystem() {
+    let pilot_dir = root().join("docs/pilots/issue-102");
+    let manifest = pilot_dir.join("capture_manifest.v0.json");
+    let before = snapshot_directory(&pilot_dir);
+
+    let observe = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(["github", "observe", "--manifest"])
+        .arg(&manifest)
+        .args(["--capture-dir"])
+        .arg(&pilot_dir)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        observe.status.success(),
+        "{}",
+        String::from_utf8_lossy(&observe.stderr)
+    );
+    let observe_result: Value = serde_json::from_slice(&observe.stdout).unwrap();
+    assert_eq!(observe_result["result"]["accepted"], false);
+    assert_eq!(observe_result["result"]["mutation_performed"], false);
+
+    let refresh = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(["github", "refresh", "--manifest"])
+        .arg(&manifest)
+        .args(["--capture-dir"])
+        .arg(&pilot_dir)
+        .args(["--previous-manifest"])
+        .arg(&manifest)
+        .args(["--previous-capture-dir"])
+        .arg(&pilot_dir)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        refresh.status.success(),
+        "{}",
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+    let refresh_result: Value = serde_json::from_slice(&refresh.stdout).unwrap();
+    assert_eq!(refresh_result["result"]["accepted"], false);
+    assert_eq!(refresh_result["result"]["mutation_performed"], false);
+
+    let project = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args(["github", "project", "--manifest"])
+        .arg(&manifest)
+        .args(["--capture-dir"])
+        .arg(&pilot_dir)
+        .args(["--require-independent-review", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        project.status.success(),
+        "{}",
+        String::from_utf8_lossy(&project.stderr)
+    );
+    let project_result: Value = serde_json::from_slice(&project.stdout).unwrap();
+    assert_eq!(project_result["result"]["accepted"], false);
+    assert_eq!(project_result["result"]["mutation_performed"], false);
+
+    let after = snapshot_directory(&pilot_dir);
+    assert_eq!(
+        before, after,
+        "github observe/refresh/project must not create or modify any file under \
+         docs/pilots/issue-102 (including the second, --previous-capture-dir read of \
+         the same directory)"
+    );
+}
+
+/// `(relative path, byte length, modified time)` for every file under
+/// `directory`, sorted by path — enough to catch a create, a delete, or an
+/// in-place rewrite without hashing every file's bytes on every test run.
+fn snapshot_directory(directory: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
+    fn walk(directory: &Path, root: &Path, out: &mut Vec<(PathBuf, u64, std::time::SystemTime)>) {
+        for entry in fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let metadata = entry.metadata().unwrap();
+            if metadata.is_dir() {
+                walk(&path, root, out);
+            } else {
+                out.push((
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    metadata.len(),
+                    metadata.modified().unwrap(),
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(directory, directory, &mut out);
+    out.sort();
+    out
+}
+
 fn rpc(id: u64, method: &str, params: Value) -> String {
     json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}).to_string()
 }

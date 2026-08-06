@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.refresh_result.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "previous_observation_hash", "previous_head_sha", "previous_base_sha", "observed_head_sha", "observed_base_sha", "disposition", "review_basis_moved", "observation_changes"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.refresh_result.v0"},
+    "previous_observation_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "previous_head_sha": {"type": "string", "minLength": 1},
+    "previous_base_sha": {"type": "string", "minLength": 1},
+    "observed_head_sha": {"type": "string", "minLength": 1},
+    "observed_base_sha": {"type": "string", "minLength": 1},
+    "disposition": {"enum": ["head_unchanged", "stale_head"]},
+    "review_basis_moved": {"const": false},
+    "observation_changes": {"type": "array", "items": {"$ref": "#/$defs/observation_change"}},
+    "refreshed_observation_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "observation_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "change", "subject_id", "detail"],
+      "properties": {
+        "category": {"type": "string", "minLength": 1},
+        "change": {"enum": ["added", "removed", "changed"]},
+        "subject_id": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"disposition": {"const": "head_unchanged"}}, "required": ["disposition"]}, "then": {"required": ["refreshed_observation_hash"]}},
+    {"if": {"properties": {"disposition": {"const": "stale_head"}}, "required": ["disposition"]}, "then": {"not": {"required": ["refreshed_observation_hash"]}}}
+  ]
+}

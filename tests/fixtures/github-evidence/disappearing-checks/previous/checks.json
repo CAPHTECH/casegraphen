@@ -1,0 +1,62 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "statusCheckRollup": {
+                  "contexts": {
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "quality",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "startedAt": "2026-01-01T03:00:00Z",
+                        "completedAt": "2026-01-01T03:05:00Z",
+                        "detailsUrl": "https://ci.example/1",
+                        "checkSuite": {
+                          "app": {
+                            "slug": "github-actions"
+                          },
+                          "workflowRun": {
+                            "workflow": {
+                              "name": "Quality"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "lint",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "startedAt": "2026-01-01T03:00:00Z",
+                        "completedAt": "2026-01-01T03:05:00Z",
+                        "detailsUrl": "https://ci.example/2",
+                        "checkSuite": {
+                          "app": {
+                            "slug": "github-actions"
+                          },
+                          "workflowRun": {
+                            "workflow": {
+                              "name": "Lint"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

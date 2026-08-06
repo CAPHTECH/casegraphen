@@ -106,6 +106,11 @@ pub(super) struct NativeOptions {
     pub(super) policy_manifest: Option<PathBuf>,
     pub(super) projection: Option<PathBuf>,
     pub(super) packet: Option<PathBuf>,
+    pub(super) manifest: Option<PathBuf>,
+    pub(super) capture_dir: Option<PathBuf>,
+    pub(super) previous_manifest: Option<PathBuf>,
+    pub(super) previous_capture_dir: Option<PathBuf>,
+    pub(super) previous_observation: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
     pub(super) case_space_id: Option<Id>,
     pub(super) left_case_space_id: Option<Id>,
@@ -146,6 +151,7 @@ pub(super) struct NativeOptions {
     pub(super) min_persistence_stages: usize,
     pub(super) adopt_existing_log: bool,
     pub(super) strict: bool,
+    pub(super) require_independent_review: bool,
     pub(super) format: NativeOutputFormat,
 }
 
@@ -264,6 +270,17 @@ impl NativeOptions {
             Some("--index") => self.index = Some(require_path(args, "--index")?),
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
             Some("--packet") => self.packet = Some(require_path(args, "--packet")?),
+            Some("--manifest") => self.manifest = Some(require_path(args, "--manifest")?),
+            Some("--capture-dir") => self.capture_dir = Some(require_path(args, "--capture-dir")?),
+            Some("--previous-manifest") => {
+                self.previous_manifest = Some(require_path(args, "--previous-manifest")?)
+            }
+            Some("--previous-capture-dir") => {
+                self.previous_capture_dir = Some(require_path(args, "--previous-capture-dir")?)
+            }
+            Some("--previous-observation") => {
+                self.previous_observation = Some(require_path(args, "--previous-observation")?)
+            }
             Some("--output") => self.output = Some(require_path(args, "--output")?),
             Some("--case-space-id") => {
                 self.case_space_id = Some(require_id(args, "--case-space-id")?)
@@ -362,6 +379,7 @@ impl NativeOptions {
             }
             Some("--adopt-existing-log") => self.adopt_existing_log = true,
             Some("--strict") if strict_allowed => self.strict = true,
+            Some("--require-independent-review") => self.require_independent_review = true,
             Some(_) | None => {
                 return Err(NativeCliError::usage(format!(
                     "unsupported native argument {arg:?} for {segment}"
@@ -491,6 +509,11 @@ impl NativeOptions {
             "--packet" => self.packet.clone(),
             "--left-store" => self.left_store.clone(),
             "--right-store" => self.right_store.clone(),
+            "--manifest" => self.manifest.clone(),
+            "--capture-dir" => self.capture_dir.clone(),
+            "--previous-manifest" => self.previous_manifest.clone(),
+            "--previous-capture-dir" => self.previous_capture_dir.clone(),
+            "--previous-observation" => self.previous_observation.clone(),
             _ => None,
         }
         .ok_or_else(|| NativeCliError::usage(format!("{flag} <path> is required")))
