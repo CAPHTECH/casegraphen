@@ -7,6 +7,8 @@
 # — you never have to work out a relative path.
 #
 #   sh install.sh            # binary, and skills into ~/.claude and ~/.codex
+#   sh install.sh --root DIR # binary into DIR (e.g. a branch build kept
+#                             # beside a stable `cargo install`), skills as above
 set -eu
 
 source_dir=$(cd "$(dirname "$0")" && pwd)
@@ -20,7 +22,18 @@ agent_homes() {
 }
 
 install_binary() {
-  printf '== installing the casegraphen binary from %s\n' "$source_dir"
+  existing=$(command -v casegraphen 2>/dev/null || true)
+  if [ -n "$existing" ]; then
+    printf 'existing casegraphen on PATH (%s): %s\n' "$existing" "$("$existing" --version 2>&1)"
+  else
+    printf 'no existing casegraphen found on PATH\n'
+  fi
+
+  source_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || printf 'unknown (source is not a git checkout)')
+  printf '== installing the casegraphen binary from %s (commit %s)\n' "$source_dir" "$source_commit"
+  # CARGO_INSTALL_ROOT, when exported by the --root option below, is read by
+  # `cargo install` itself; installed_binary_path() below reads the same
+  # variable so the MCP setup output stays consistent with where cargo put it.
   cargo install --path "$source_dir" --locked
 }
 
@@ -108,20 +121,28 @@ print_mcp_setup() {
 }
 
 case "$#" in
-  0)
-    if [ -z "${HOME:-}" ]; then
-      printf 'HOME must be set to install agent skills\n' >&2
-      exit 1
+  0) ;;
+  2)
+    if [ "$1" != "--root" ]; then
+      printf 'usage: %s [--root <dir>]\n' "$0" >&2
+      exit 2
     fi
-    install_binary
-    printf '\n== installing skills\n'
-    agent_homes | while IFS= read -r home; do
-      install_skills_into "$home/skills"
-    done
-    print_mcp_setup
+    CARGO_INSTALL_ROOT=$2
+    export CARGO_INSTALL_ROOT
     ;;
   *)
-    printf 'usage: %s\n' "$0" >&2
+    printf 'usage: %s [--root <dir>]\n' "$0" >&2
     exit 2
     ;;
 esac
+
+if [ -z "${HOME:-}" ]; then
+  printf 'HOME must be set to install agent skills\n' >&2
+  exit 1
+fi
+install_binary
+printf '\n== installing skills\n'
+agent_homes | while IFS= read -r home; do
+  install_skills_into "$home/skills"
+done
+print_mcp_setup

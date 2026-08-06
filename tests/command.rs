@@ -26,16 +26,44 @@ static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn version_command_reports_package_version() {
+    // This binary is built from this checkout's own git worktree by cargo's
+    // test harness, so build.rs always finds a repository here: the commit
+    // suffix is present, not merely optional. A packaged/registry build
+    // (exercised separately in the packaging gate) is the case where it is
+    // absent and the plain version prints instead.
+    let head = git_short_head();
+    let dirty = !std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status")
+        .stdout
+        .is_empty();
+    let expected = format!(
+        "casegraphen {} ({}{})",
+        env!("CARGO_PKG_VERSION"),
+        head,
+        if dirty { "-dirty" } else { "" }
+    );
+
     for args in [["version"], ["--version"], ["-V"]] {
         let output = run_cli(&args);
 
         assert!(output.status.success(), "stderr: {}", stderr(&output));
-        assert_eq!(
-            stdout(&output).trim_end(),
-            format!("casegraphen {}", env!("CARGO_PKG_VERSION"))
-        );
+        assert_eq!(stdout(&output).trim_end(), expected);
         assert!(stderr(&output).is_empty());
     }
+}
+
+fn git_short_head() -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .expect("git rev-parse");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .expect("utf8 git output")
+        .trim()
+        .to_string()
 }
 
 #[test]

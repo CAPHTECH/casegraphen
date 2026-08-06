@@ -284,8 +284,12 @@ impl Command {
     fn run_rendered(&self) -> Result<NativeCommandResult<String>, CliError> {
         match self {
             Self::Version => Ok(NativeCommandResult::success(format!(
-                "casegraphen {}",
-                env!("CARGO_PKG_VERSION")
+                "casegraphen {}{}",
+                env!("CARGO_PKG_VERSION"),
+                match option_env!("CASEGRAPHEN_GIT_DESCRIBE") {
+                    Some(describe) => format!(" ({describe})"),
+                    None => String::new(),
+                }
             ))),
             Self::Native(command) => command.run_rendered().map_err(CliError::from),
         }
