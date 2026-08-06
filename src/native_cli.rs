@@ -1494,7 +1494,11 @@ pub enum NativeCliError {
         source: std::io::Error,
     },
     Json(serde_json::Error),
-    Memory(Vec<crate::memory::MemoryValidationFinding>),
+    /// A refusal built from `crate::memory::MemoryValidationFinding` — a type
+    /// shared beyond the Memory Plane (see `native_cli/ops/github.rs`'s
+    /// module doc), so this variant's own message must not name any one
+    /// subsystem the findings happen to come from.
+    ContractValidation(Vec<crate::memory::MemoryValidationFinding>),
 }
 
 impl NativeCliError {
@@ -1529,7 +1533,7 @@ impl NativeCliError {
     pub(crate) fn error_code(&self) -> &'static str {
         match self {
             Self::Usage(_) | Self::UnsupportedArgumentValue { .. } => "usage",
-            Self::Invalid(_) | Self::Json(_) | Self::Memory(_) => "invalid",
+            Self::Invalid(_) | Self::Json(_) | Self::ContractValidation(_) => "invalid",
             Self::StaleRevision { .. } => "stale_revision",
             Self::StalePlanRevision { .. } => "stale_plan_revision",
             Self::GateViolation { .. } => "gate_violation",
@@ -1588,7 +1592,7 @@ impl NativeCliError {
             Self::Review(error) if !error.findings.is_empty() => Some(json!({
                 "findings": error.findings,
             })),
-            Self::Memory(findings) => Some(json!({ "findings": findings })),
+            Self::ContractValidation(findings) => Some(json!({ "findings": findings })),
             Self::Eval(error) => Some(json!({ "violations": error.violations })),
             Self::Store(NativeStoreError::MissingCase { case_space_id, .. }) => Some(json!({
                 "case_space_id": case_space_id,
@@ -1722,9 +1726,9 @@ impl fmt::Display for NativeCliError {
             Self::Worker(error) => write!(formatter, "{error}"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Json(error) => write!(formatter, "{error}"),
-            Self::Memory(findings) => write!(
+            Self::ContractValidation(findings) => write!(
                 formatter,
-                "memory contract validation failed: {}",
+                "contract validation failed: {}",
                 serde_json::to_string(findings).unwrap_or_else(|_| "[]".to_owned())
             ),
         }

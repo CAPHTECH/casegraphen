@@ -1345,6 +1345,27 @@ fn commits_truncation_is_a_hard_refusal() {
     );
 }
 
+/// A `github` refusal shares its finding type
+/// (`crate::memory::MemoryValidationFinding`) with the Memory Plane, but
+/// `github` has nothing to do with that subsystem — the refusal message
+/// must not leak "memory" into a command surface it does not belong to.
+#[test]
+fn github_refusal_message_does_not_leak_the_memory_subsystem_name() {
+    let dir = fixture_dir("commits-truncation").join("truncated");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.to_lowercase().contains("memory"),
+        "stderr leaks the memory subsystem name: {stderr}"
+    );
+    let refusal: Value = serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+        panic!("casegraphen github observe stderr JSON: {error}: {stderr}")
+    });
+    assert_eq!(refusal["error_code"], Value::String("invalid".to_owned()));
+}
+
 /// S4: `manifest.issue_numbers` declares issue 42 twice against a single
 /// matching `issue` entry. Caller input must not be able to duplicate a
 /// tool-computed observation record this way.

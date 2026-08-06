@@ -76,8 +76,8 @@ pub(in crate::native_cli) fn memory_read(
     }
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
-    let projection =
-        query_memory(&replay.case_space, &query, &policy).map_err(NativeCliError::Memory)?;
+    let projection = query_memory(&replay.case_space, &query, &policy)
+        .map_err(NativeCliError::ContractValidation)?;
     let result = match mode {
         MemoryReadMode::Query | MemoryReadMode::Candidates => json!({
             "projection": projection,
@@ -196,19 +196,21 @@ pub(in crate::native_cli) fn memory_propose(
     findings.extend(validate_memory_proposal(&source, &claim, &bytes));
     sort_findings(&mut findings);
     if !findings.is_empty() {
-        return Err(NativeCliError::Memory(findings));
+        return Err(NativeCliError::ContractValidation(findings));
     }
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     if claim.scope.case_space_id.as_deref() != Some(case_space_id.as_str()) {
-        return Err(NativeCliError::Memory(vec![MemoryValidationFinding {
-            code: "memory_scope_mismatch".to_owned(),
-            location: "$.scope.case_space_id".to_owned(),
-            detail: "memory proposal claim scope must name the replayed CaseSpace".to_owned(),
-        }]));
+        return Err(NativeCliError::ContractValidation(vec![
+            MemoryValidationFinding {
+                code: "memory_scope_mismatch".to_owned(),
+                location: "$.scope.case_space_id".to_owned(),
+                detail: "memory proposal claim scope must name the replayed CaseSpace".to_owned(),
+            },
+        ]));
     }
     let proposal = build_claim_proposal(&source, &claim, &bytes, &replay.case_space.space_id)
-        .map_err(NativeCliError::Memory)?;
+        .map_err(NativeCliError::ContractValidation)?;
     Ok(NativeCommandResult::success(report(
         "casegraphen memory propose",
         serde_json::to_value(proposal)?,
@@ -228,7 +230,7 @@ pub(in crate::native_cli) fn memory_index(
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let rebuilt = rebuild_memory_index(&replay.case_space, &query, &policy)
-        .map_err(NativeCliError::Memory)?;
+        .map_err(NativeCliError::ContractValidation)?;
     match mode {
         MemoryIndexMode::Rebuild => Ok(NativeCommandResult::success(report(
             "casegraphen memory index rebuild",

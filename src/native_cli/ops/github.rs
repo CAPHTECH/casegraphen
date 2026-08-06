@@ -7,7 +7,7 @@
 //! `mutation_performed: false`. Integrity failures (manifest hash mismatch,
 //! path escape, missing category, intra-capture disagreement, a declared
 //! `--previous-observation` basis that disagrees with the retained bytes) are
-//! hard errors via `NativeCliError::Memory`, the same disposition
+//! hard errors via `NativeCliError::ContractValidation`, the same disposition
 //! `memory_propose` uses for a pre-store validation refusal. `stale_head` and
 //! an unmet `--require-independent-review` are domain findings — successful
 //! results carrying an obstruction, the same exit discipline `memory check`
@@ -114,7 +114,7 @@ pub(in crate::native_cli) fn github_refresh(
         &previous_capture.review_findings,
         &capture,
     )
-    .map_err(|finding| NativeCliError::Memory(vec![finding]))?;
+    .map_err(|finding| NativeCliError::ContractValidation(vec![finding]))?;
 
     // `domain_findings` is the same complete, always-present channel
     // `github_project` exposes — a caller checking only this field (never
@@ -211,7 +211,8 @@ fn normalize_capture(
     manifest: &CaptureManifest,
     capture_dir: &Path,
 ) -> Result<NormalizedCapture, NativeCliError> {
-    normalize(manifest, capture_dir).map_err(|finding| NativeCliError::Memory(vec![finding]))
+    normalize(manifest, capture_dir)
+        .map_err(|finding| NativeCliError::ContractValidation(vec![finding]))
 }
 
 fn read_manifest(path: &Path) -> Result<CaptureManifest, NativeCliError> {
