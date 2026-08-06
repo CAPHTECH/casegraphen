@@ -57,6 +57,10 @@ A claim is represented by an evidence cell whose `metadata.memory_claim`
 contains the strict typed contract. Every `source_ref` must identify a
 `custom:artifact` cell whose `content_hash` matches its content-addressed ID,
 and a `derives_from` relation must connect the claim to the artifact.
+Artifact-cell metadata follows the existing core contract and stores the bare
+64-character digest; the Source Record contract uses the explicit `sha256:`
+prefix. Both values are derived from the same content-addressed artifact ID and
+are validated in their respective canonical forms.
 `metadata.memory_source_records` retains the strict Source Record contracts so
 replay can recheck source-origin authority ceilings rather than trusting the
 claim's provenance-role label. Every cited artifact must have a matching
@@ -74,12 +78,23 @@ retracted  = accepted current retraction points to the claim
 rejected   = rejected lifecycle or effective review
 ```
 
+`not_yet_valid` is an omission reason, not a durable status: the claim retains
+its review-derived status but is unavailable before `valid_from` except in an
+explicit historical projection.
+
 `supersedes`, `retracts`, `contradicts`, and `authorized_by` affect the view
 only when their relations are accepted. A superseder or retractor must itself
 be an accepted, currently valid claim. Conflict and suppression are resolved to
 a fixed point: a contested claim cannot hide another claim through
 supersession or retraction, and a superseded claim cannot create a current
 conflict.
+
+An empty `claim.scope.actor_ids` is common project/case memory and remains
+visible to an actor-limited query. A non-empty claim actor scope remains visible
+only to its named actor and intersects any non-empty query actor scope.
+`hard_conflict_relation_types` promotes accepted `contradicts` relations with
+the listed v0 name to hard conflicts; other relation types do not become
+conflicts merely because a caller supplies their name.
 
 ## Validation order
 
@@ -105,6 +120,10 @@ ceilings, and claim. Its result is an unreviewed proposed evidence cell and the
 exact source artifact ID; it reports `accepted: false` and
 `mutation_performed: false`. A host may submit that structure to the existing
 CaseGraphen morphism workflow, but the Memory Plane never does so itself.
+Proposal helpers intentionally reject authority amplification. An elevated
+claim plus its hard `authorized_by` relation must be authored and independently
+reviewed through the canonical morphism workflow; the accepted-memory read path
+then validates that replayed binding before allowing the higher ceiling.
 
 Revision, supersession, and retraction are new proposals and accepted relations,
 not in-place writes. The original source and claim remain replayable.

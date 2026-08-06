@@ -66,6 +66,7 @@ pub(crate) fn claim_in_scope(claim: &MemoryClaim, query: &MemoryQuery) -> bool {
         return false;
     }
     query.scope.actor_ids.is_empty()
+        || claim.scope.actor_ids.is_empty()
         || query
             .scope
             .actor_ids

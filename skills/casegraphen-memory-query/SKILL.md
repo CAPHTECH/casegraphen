@@ -22,8 +22,8 @@ It is not a conversation store, and relevance is not authority.
    equivalent is `memory_query`.
 5. Before acting, inspect `selected_claim_ids`, item `status`, `source_refs`,
    `authority`, `valid_time`, `hard_conflict`, `omissions`, and `losses`. Require
-   `read_only: true`, `accepted_state_changed: false`, and the exact base
-   revision.
+   `mutation_performed: false` and the exact base revision. For MCP responses,
+   also require `read_only: true` and `accepted: false`.
 6. Use `memory_explain` / `casegraphen memory explain` for one claim and
    `memory_sources` / `casegraphen memory sources` to obtain its immutable
    source references. Escalate to source bytes when a decision depends on a

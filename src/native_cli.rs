@@ -222,11 +222,12 @@ pub(crate) enum NativeCliCommand {
         output: Option<PathBuf>,
     },
     MemoryPropose {
+        store: PathBuf,
+        case_space_id: Id,
         input: PathBuf,
         source_record: PathBuf,
         source_artifact: PathBuf,
         policy: PathBuf,
-        space_id: Id,
         output: Option<PathBuf>,
     },
     MemoryIndex {
@@ -725,13 +726,21 @@ impl NativeCliCommand {
                 ..
             } => memory_check(input, source_record, source_artifact, policy),
             Self::MemoryPropose {
+                store,
+                case_space_id,
                 input,
                 source_record,
                 source_artifact,
                 policy,
-                space_id,
                 ..
-            } => memory_propose(input, source_record, source_artifact, policy, space_id),
+            } => memory_propose(
+                store,
+                case_space_id,
+                input,
+                source_record,
+                source_artifact,
+                policy,
+            ),
             Self::MemoryIndex {
                 store,
                 case_space_id,

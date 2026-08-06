@@ -48,24 +48,43 @@ pub fn validate_memory_index(
     match rebuild_memory_index(case_space, query, policy) {
         Ok(expected) => {
             let recomputed_actual_hash = index_content_hash(actual);
-            let valid = actual.derived
-                && !actual.authoritative
-                && actual.index_content_hash == recomputed_actual_hash
-                && actual == &expected;
+            let mut findings = Vec::new();
+            if !actual.derived {
+                findings.push(MemoryValidationFinding {
+                    code: "memory_index_not_derived".to_owned(),
+                    location: "$.derived".to_owned(),
+                    detail: "a memory index must declare itself derived".to_owned(),
+                });
+            }
+            if actual.authoritative {
+                findings.push(MemoryValidationFinding {
+                    code: "memory_index_claims_authority".to_owned(),
+                    location: "$.authoritative".to_owned(),
+                    detail: "a derived memory index must never claim authority".to_owned(),
+                });
+            }
+            if actual.index_content_hash != recomputed_actual_hash {
+                findings.push(MemoryValidationFinding {
+                    code: "memory_index_content_hash_mismatch".to_owned(),
+                    location: "$.index_content_hash".to_owned(),
+                    detail: "the declared content hash does not match the supplied index body"
+                        .to_owned(),
+                });
+            }
+            if actual != &expected {
+                findings.push(MemoryValidationFinding {
+                    code: "memory_index_not_rebuild_equivalent".to_owned(),
+                    location: "$.items".to_owned(),
+                    detail: "the supplied derived index differs from a replay-based rebuild"
+                        .to_owned(),
+                });
+            }
+            let valid = findings.is_empty();
             MemoryIndexValidation {
                 valid,
                 expected_content_hash: expected.index_content_hash,
                 actual_content_hash: actual.index_content_hash.clone(),
-                findings: if valid {
-                    Vec::new()
-                } else {
-                    vec![MemoryValidationFinding {
-                        code: "memory_index_not_rebuild_equivalent".to_owned(),
-                        location: "$.index_content_hash".to_owned(),
-                        detail: "the supplied derived index differs from a replay-based rebuild"
-                            .to_owned(),
-                    }]
-                },
+                findings,
             }
         }
         Err(findings) => MemoryIndexValidation {

@@ -28,10 +28,11 @@ managed CaseGraphen state.
    <source.json> --source-artifact <bytes> --policy <policy.json> --format
    json`. Resolve hash, source, time, scope, and authority findings without
    weakening the policy.
-6. Run `casegraphen memory propose ... --space-id <id> --format json`, or use
-   the proposal-only MCP tools `memory_propose_claim` and
-   `memory_propose_procedure`. Confirm proposed lifecycle, unreviewed status,
-   `accepted: false`, and `mutation_performed: false`.
+6. Run `casegraphen memory propose --store <dir> --case-space-id <id> ...
+   --format json`, or use the proposal-only MCP tools `memory_propose_claim`
+   and `memory_propose_procedure`. The claim scope must name that replayed
+   CaseSpace. Confirm proposed lifecycle, unreviewed status, `accepted: false`,
+   and `mutation_performed: false`.
 7. Never overwrite an old claim. Use `memory_propose_supersession` or
    `memory_propose_retraction`, naming the exact target claim and replayed base
    revision. Their relation proposals remain unreviewed.

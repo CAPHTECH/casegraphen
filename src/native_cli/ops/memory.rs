@@ -180,11 +180,12 @@ pub(in crate::native_cli) fn memory_check(
 }
 
 pub(in crate::native_cli) fn memory_propose(
+    store: &Path,
+    case_space_id: &Id,
     claim_path: &Path,
     source_path: &Path,
     artifact_path: &Path,
     policy_path: &Path,
-    space_id: &Id,
 ) -> Result<NativeCommandResult<Value>, NativeCliError> {
     let claim = parse_memory_claim(&read_text(claim_path)?)?;
     let source = parse_memory_source_record(&read_text(source_path)?)?;
@@ -197,8 +198,17 @@ pub(in crate::native_cli) fn memory_propose(
     if !findings.is_empty() {
         return Err(NativeCliError::Memory(findings));
     }
-    let proposal =
-        build_claim_proposal(&source, &claim, &bytes, space_id).map_err(NativeCliError::Memory)?;
+    let replay =
+        NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
+    if claim.scope.case_space_id.as_deref() != Some(case_space_id.as_str()) {
+        return Err(NativeCliError::Memory(vec![MemoryValidationFinding {
+            code: "memory_scope_mismatch".to_owned(),
+            location: "$.scope.case_space_id".to_owned(),
+            detail: "memory proposal claim scope must name the replayed CaseSpace".to_owned(),
+        }]));
+    }
+    let proposal = build_claim_proposal(&source, &claim, &bytes, &replay.case_space.space_id)
+        .map_err(NativeCliError::Memory)?;
     Ok(NativeCommandResult::success(report(
         "casegraphen memory propose",
         serde_json::to_value(proposal)?,

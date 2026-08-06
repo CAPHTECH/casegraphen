@@ -20,12 +20,32 @@ use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
     fs,
+    path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const REVISION: &str = "revision:memory-test";
 const AS_OF: &str = "2026-08-06T00:00:00Z";
+
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn create(path: PathBuf) -> Self {
+        fs::create_dir_all(&path).expect("create CLI fixture directory");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
 
 #[test]
 fn proposal_validation_fails_closed_on_hash_authority_and_caller_trust() {
@@ -35,7 +55,7 @@ fn proposal_validation_fails_closed_on_hash_authority_and_caller_trust() {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );
     source.sensitivity = Sensitivity::Restricted;
-    let mut claim = claim(
+    let mut claim = claim_with_source(
         "mem:constraint",
         MemoryKind::Constraint,
         "artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -63,6 +83,12 @@ fn proposal_validation_fails_closed_on_hash_authority_and_caller_trust() {
     let mut value = serde_json::to_value(&claim).unwrap();
     value["accepted"] = json!(true);
     assert!(serde_json::from_value::<MemoryClaim>(value).is_err());
+
+    let mut invalid_policy = policy();
+    invalid_policy.hard_conflict_relation_types = vec!["custom:caller-defined".to_owned()];
+    assert!(casegraphen::memory::validate_memory_policy(&invalid_policy)
+        .iter()
+        .any(|finding| finding.code == "unsupported_hard_conflict_relation_type"));
 }
 
 #[test]
@@ -74,7 +100,7 @@ fn claim_proposal_is_unreviewed_and_binds_exact_source_artifact() {
         AuthorityOrigin::Reviewer,
         &format!("sha256:{digest}"),
     );
-    let claim = claim(
+    let claim = claim_with_source(
         "mem:runtime-boundary",
         MemoryKind::Constraint,
         &format!("artifact:sha256-{digest}"),
@@ -100,48 +126,28 @@ fn current_query_filters_before_ranking_and_exposes_hard_conflicts() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "mem:current-constraint",
-            MemoryKind::Constraint,
-            "artifact:sha256-current",
-        ),
+        claim("mem:current-constraint", MemoryKind::Constraint),
         "current",
         true,
     );
-    let mut expired = claim(
-        "mem:expired-decision",
-        MemoryKind::Decision,
-        "artifact:sha256-expired",
-    );
+    let mut expired = claim("mem:expired-decision", MemoryKind::Decision);
     expired.valid_time.valid_until = Some("2026-02-01T00:00:00Z".to_owned());
     add_claim(&mut space, expired, "expired", true);
     add_claim(
         &mut space,
-        claim(
-            "mem:unreviewed",
-            MemoryKind::Constraint,
-            "artifact:sha256-unreviewed",
-        ),
+        claim("mem:unreviewed", MemoryKind::Constraint),
         "unreviewed",
         false,
     );
     add_claim(
         &mut space,
-        claim(
-            "mem:conflicting-a",
-            MemoryKind::Constraint,
-            "artifact:sha256-conflict-a",
-        ),
+        claim("mem:conflicting-a", MemoryKind::Constraint),
         "conflict-a",
         true,
     );
     add_claim(
         &mut space,
-        claim(
-            "mem:conflicting-b",
-            MemoryKind::Constraint,
-            "artifact:sha256-conflict-b",
-        ),
+        claim("mem:conflicting-b", MemoryKind::Constraint),
         "conflict-b",
         true,
     );
@@ -178,11 +184,7 @@ fn a_contested_superseder_cannot_retire_an_accepted_claim() {
     for claim_id in ["mem:old", "mem:replacement", "mem:rival"] {
         add_claim(
             &mut space,
-            claim(
-                claim_id,
-                MemoryKind::Constraint,
-                &format!("artifact:sha256-{claim_id}"),
-            ),
+            claim(claim_id, MemoryKind::Constraint),
             claim_id,
             true,
         );
@@ -225,11 +227,7 @@ fn a_superseded_claim_cannot_contest_the_current_view() {
     for claim_id in ["mem:old", "mem:replacement", "mem:current"] {
         add_claim(
             &mut space,
-            claim(
-                claim_id,
-                MemoryKind::Constraint,
-                &format!("artifact:sha256-{claim_id}"),
-            ),
+            claim(claim_id, MemoryKind::Constraint),
             claim_id,
             true,
         );
@@ -266,10 +264,10 @@ fn a_superseded_claim_cannot_contest_the_current_view() {
 #[test]
 fn superseded_claims_require_historical_mode_and_keep_bitemporal_history() {
     let mut space = case_space();
-    let mut old = claim("mem:firebase", MemoryKind::Fact, "artifact:sha256-firebase");
+    let mut old = claim("mem:firebase", MemoryKind::Fact);
     old.valid_time.valid_from = Some("2026-01-01T00:00:00Z".to_owned());
     old.valid_time.valid_until = Some("2026-06-01T00:00:00Z".to_owned());
-    let mut new = claim("mem:supabase", MemoryKind::Fact, "artifact:sha256-supabase");
+    let mut new = claim("mem:supabase", MemoryKind::Fact);
     new.valid_time.valid_from = Some("2026-06-01T00:00:00Z".to_owned());
     add_claim(&mut space, old, "firebase", true);
     add_claim(&mut space, new, "supabase", true);
@@ -303,11 +301,7 @@ fn budget_loss_is_explicit_and_projection_hash_binds_content() {
     for suffix in ["one", "two", "three"] {
         add_claim(
             &mut space,
-            claim(
-                &format!("mem:{suffix}"),
-                MemoryKind::Constraint,
-                &format!("artifact:sha256-{suffix}"),
-            ),
+            claim(&format!("mem:{suffix}"), MemoryKind::Constraint),
             suffix,
             true,
         );
@@ -333,11 +327,7 @@ fn derived_index_rebuild_is_equivalent_and_never_authoritative() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "mem:indexed",
-            MemoryKind::Procedure,
-            "artifact:sha256-indexed",
-        ),
+        claim("mem:indexed", MemoryKind::Procedure),
         "indexed",
         true,
     );
@@ -353,6 +343,20 @@ fn derived_index_rebuild_is_equivalent_and_never_authoritative() {
         .lexical_terms
         .push("caller-injected".to_owned());
     assert!(!validate_memory_index(&space, &query(false, false), &policy(), &tampered).valid);
+
+    let mut invalid_flags = built;
+    invalid_flags.derived = false;
+    invalid_flags.authoritative = true;
+    invalid_flags.index_content_hash = "sha256:caller-declared".to_owned();
+    let codes = validate_memory_index(&space, &query(false, false), &policy(), &invalid_flags)
+        .findings
+        .into_iter()
+        .map(|finding| finding.code)
+        .collect::<Vec<_>>();
+    assert!(codes.contains(&"memory_index_not_derived".to_owned()));
+    assert!(codes.contains(&"memory_index_claims_authority".to_owned()));
+    assert!(codes.contains(&"memory_index_content_hash_mismatch".to_owned()));
+    assert!(codes.contains(&"memory_index_not_rebuild_equivalent".to_owned()));
 }
 
 #[test]
@@ -360,11 +364,7 @@ fn memory_use_report_remains_untrusted_self_report() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "mem:constraint",
-            MemoryKind::Constraint,
-            "artifact:sha256-use",
-        ),
+        claim("mem:constraint", MemoryKind::Constraint),
         "use",
         true,
     );
@@ -380,6 +380,17 @@ fn memory_use_report_remains_untrusted_self_report() {
         accepted: false,
     };
     assert!(validate_memory_use_report(&report, &projection).is_empty());
+
+    let mut malformed = report.clone();
+    malformed.action_id.clear();
+    malformed.cited_claim_ids = vec![String::new(), String::new()];
+    malformed.ignored_constraint_ids = vec!["mem:constraint".to_owned(); 2];
+    let malformed_codes = validate_memory_use_report(&malformed, &projection)
+        .into_iter()
+        .map(|finding| finding.code)
+        .collect::<Vec<_>>();
+    assert!(malformed_codes.contains(&"empty_required_field".to_owned()));
+    assert!(malformed_codes.contains(&"duplicate_use_report_claim_id".to_owned()));
 
     let mut false_claim = report;
     false_claim.accepted = true;
@@ -406,12 +417,11 @@ fn real_cli_queries_a_replayed_case_without_mutating_it() {
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!(
+    let directory = TestDirectory::create(std::env::temp_dir().join(format!(
         "casegraphen-memory-cli-{}-{nanos}",
         std::process::id()
-    ));
-    let store = directory.join("store");
-    fs::create_dir_all(&directory).expect("create CLI fixture directory");
+    )));
+    let store = directory.path().join("store");
     let create = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
         .args([
             "space",
@@ -437,8 +447,8 @@ fn real_cli_queries_a_replayed_case_without_mutating_it() {
         String::from_utf8_lossy(&create.stderr)
     );
 
-    let query_path = directory.join("query.json");
-    let policy_path = directory.join("policy.json");
+    let query_path = directory.path().join("query.json");
+    let policy_path = directory.path().join("policy.json");
     let mut request = query(false, false);
     request.base_revision_id = "revision:memory-cli".to_owned();
     request.scope.case_space_id = Some("case_space:memory-cli".to_owned());
@@ -479,7 +489,87 @@ fn real_cli_queries_a_replayed_case_without_mutating_it() {
     assert_eq!(report["result"]["projection"]["read_only"], json!(true));
     assert_eq!(report["result"]["mutation_performed"], json!(false));
 
-    fs::remove_dir_all(directory).expect("remove CLI fixture directory");
+    let source_bytes = b"CaseGraphen keeps memory proposals unreviewed.\n";
+    let digest = sha256(source_bytes);
+    let artifact_path = directory.path().join("source.bin");
+    let source_path = directory.path().join("source.json");
+    let claim_path = directory.path().join("claim.json");
+    fs::write(&artifact_path, source_bytes).expect("write source artifact");
+    fs::write(
+        &source_path,
+        serde_json::to_vec(&source_record(
+            "memory-source:cli",
+            AuthorityOrigin::Reviewer,
+            &format!("sha256:{digest}"),
+        ))
+        .unwrap(),
+    )
+    .expect("write source record");
+    let mut proposed_claim = claim_with_source(
+        "memory:cli-proposal",
+        MemoryKind::Constraint,
+        &format!("artifact:sha256-{digest}"),
+    );
+    proposed_claim.scope.case_space_id = Some("case_space:memory-cli".to_owned());
+    fs::write(&claim_path, serde_json::to_vec(&proposed_claim).unwrap()).expect("write claim");
+    let propose = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "memory",
+            "propose",
+            "--store",
+            store.to_str().unwrap(),
+            "--case-space-id",
+            "case_space:memory-cli",
+            "--input",
+            claim_path.to_str().unwrap(),
+            "--source-record",
+            source_path.to_str().unwrap(),
+            "--source-artifact",
+            artifact_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run memory propose");
+    assert!(
+        propose.status.success(),
+        "memory propose stderr: {}",
+        String::from_utf8_lossy(&propose.stderr)
+    );
+    let proposal: Value = serde_json::from_slice(&propose.stdout).expect("memory proposal JSON");
+    assert_eq!(
+        proposal["result"]["claim_cell"]["space_id"],
+        json!("space:memory-cli")
+    );
+    assert_eq!(proposal["result"]["mutation_performed"], json!(false));
+
+    proposed_claim.scope.case_space_id = Some("case_space:other".to_owned());
+    fs::write(&claim_path, serde_json::to_vec(&proposed_claim).unwrap())
+        .expect("write mismatched claim");
+    let refused = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "memory",
+            "propose",
+            "--store",
+            store.to_str().unwrap(),
+            "--case-space-id",
+            "case_space:memory-cli",
+            "--input",
+            claim_path.to_str().unwrap(),
+            "--source-record",
+            source_path.to_str().unwrap(),
+            "--source-artifact",
+            artifact_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run mismatched memory propose");
+    assert!(!refused.status.success());
 }
 
 #[test]
@@ -495,7 +585,7 @@ fn external_tool_and_repeated_sources_cannot_launder_authority() {
             origin,
             &format!("sha256:{digest}"),
         );
-        let mut elevated = claim(
+        let mut elevated = claim_with_source(
             "memory:forged-policy",
             MemoryKind::Constraint,
             &format!("artifact:sha256-{digest}"),
@@ -514,20 +604,12 @@ fn external_tool_and_repeated_sources_cannot_launder_authority() {
 #[test]
 fn actor_scoped_preference_cannot_leak_to_another_actor() {
     let mut space = case_space();
-    let mut preference = claim(
-        "memory:actor-a-preference",
-        MemoryKind::Preference,
-        "artifact:sha256-preference",
-    );
+    let mut preference = claim("memory:actor-a-preference", MemoryKind::Preference);
     preference.scope.actor_ids = vec!["actor:a".to_owned()];
     add_claim(&mut space, preference, "preference", true);
     add_claim(
         &mut space,
-        claim(
-            "memory:actor-b-constraint",
-            MemoryKind::Constraint,
-            "artifact:sha256-actor-b",
-        ),
+        claim("memory:actor-b-constraint", MemoryKind::Constraint),
         "actor-b",
         true,
     );
@@ -553,15 +635,57 @@ fn actor_scoped_preference_cannot_leak_to_another_actor() {
 }
 
 #[test]
+fn common_claims_remain_visible_to_actor_limited_queries() {
+    let mut space = case_space();
+    add_claim(
+        &mut space,
+        claim("memory:common-constraint", MemoryKind::Constraint),
+        "common",
+        true,
+    );
+    let mut request = query(false, false);
+    request.scope.actor_ids = vec!["actor:agent".to_owned()];
+
+    let projection = query_memory(&space, &request, &policy()).expect("query");
+    assert_eq!(
+        projection.selected_claim_ids,
+        vec!["memory:common-constraint"]
+    );
+}
+
+#[test]
+fn an_out_of_scope_superseder_cannot_hide_a_common_claim() {
+    let mut space = case_space();
+    add_claim(
+        &mut space,
+        claim("memory:common-old", MemoryKind::Constraint),
+        "common-old",
+        true,
+    );
+    let mut actor_specific = claim("memory:actor-a-new", MemoryKind::Constraint);
+    actor_specific.scope.actor_ids = vec!["actor:a".to_owned()];
+    add_claim(&mut space, actor_specific, "actor-a-new", true);
+    space.case_relations.push(relation(
+        "relation:actor-a-supersedes-common",
+        CaseRelationType::Supersedes,
+        "memory:actor-a-new",
+        "memory:common-old",
+        RelationStrength::Hard,
+    ));
+
+    let projection = query_memory(&space, &query(false, false), &policy()).expect("query");
+    assert_eq!(projection.selected_claim_ids, vec!["memory:common-old"]);
+    assert!(projection.omissions.iter().any(|omission| {
+        omission.claim_id == "memory:actor-a-new" && omission.reason == "outside_scope"
+    }));
+}
+
+#[test]
 fn deleting_source_lineage_makes_an_accepted_cell_unusable() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "memory:orphaned-summary",
-            MemoryKind::Fact,
-            "artifact:sha256-orphaned",
-        ),
+        claim("memory:orphaned-summary", MemoryKind::Fact),
         "orphaned",
         true,
     );
@@ -581,11 +705,7 @@ fn unreviewed_source_lineage_cannot_support_accepted_memory() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "memory:unreviewed-lineage",
-            MemoryKind::Fact,
-            "artifact:sha256-unreviewed-lineage",
-        ),
+        claim("memory:unreviewed-lineage", MemoryKind::Fact),
         "unreviewed-lineage",
         true,
     );
@@ -608,11 +728,7 @@ fn accepted_view_rechecks_source_origin_authority_ceiling() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "memory:laundered-accepted-policy",
-            MemoryKind::Constraint,
-            "artifact:sha256-laundered",
-        ),
+        claim("memory:laundered-accepted-policy", MemoryKind::Constraint),
         "laundered",
         true,
     );
@@ -642,11 +758,7 @@ fn accepted_view_refuses_source_sensitivity_downgrade() {
     let mut space = case_space();
     add_claim(
         &mut space,
-        claim(
-            "memory:downgraded-sensitivity",
-            MemoryKind::Fact,
-            "artifact:sha256-sensitive",
-        ),
+        claim("memory:downgraded-sensitivity", MemoryKind::Fact),
         "sensitive",
         true,
     );
@@ -680,7 +792,7 @@ fn a_condition_dropped_by_extraction_still_cannot_self_accept() {
         AuthorityOrigin::External,
         &format!("sha256:{digest}"),
     );
-    let mut generalized = claim(
+    let mut generalized = claim_with_source(
         "memory:unsupported-generalization",
         MemoryKind::Procedure,
         &format!("artifact:sha256-{digest}"),
@@ -715,7 +827,7 @@ fn source_record(id_value: &str, authority_origin: AuthorityOrigin, hash: &str) 
     }
 }
 
-fn claim(id_value: &str, kind: MemoryKind, source_ref: &str) -> MemoryClaim {
+fn claim(id_value: &str, kind: MemoryKind) -> MemoryClaim {
     MemoryClaim {
         schema: MEMORY_CLAIM_SCHEMA.to_owned(),
         claim_id: id_value.to_owned(),
@@ -734,7 +846,7 @@ fn claim(id_value: &str, kind: MemoryKind, source_ref: &str) -> MemoryClaim {
             valid_from: Some("2026-01-01T00:00:00Z".to_owned()),
             valid_until: None,
         },
-        source_refs: vec![source_ref.to_owned()],
+        source_refs: vec![],
         derivation_actor_id: "actor:memory-proposer".to_owned(),
         derivation_method: "extraction".to_owned(),
         model_assertions_are_untrusted: true,
@@ -742,6 +854,12 @@ fn claim(id_value: &str, kind: MemoryKind, source_ref: &str) -> MemoryClaim {
         authority_ceiling: AuthorityLevel::ProjectConstraint,
         sensitivity: Sensitivity::Internal,
     }
+}
+
+fn claim_with_source(id_value: &str, kind: MemoryKind, source_ref: &str) -> MemoryClaim {
+    let mut value = claim(id_value, kind);
+    value.source_refs = vec![source_ref.to_owned()];
+    value
 }
 
 fn query(include_historical: bool, include_contested: bool) -> MemoryQuery {

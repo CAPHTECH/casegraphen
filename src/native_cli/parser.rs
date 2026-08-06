@@ -177,11 +177,12 @@ impl NativeCliCommand {
                 output: options.output,
             }),
             "propose" => Ok(Self::MemoryPropose {
+                store: options.require_store()?,
+                case_space_id: options.require_id("--case-space-id")?,
                 input: options.require_path("--input")?,
                 source_record: options.require_path("--source-record")?,
                 source_artifact: options.require_path("--source-artifact")?,
                 policy: options.require_path("--policy")?,
-                space_id: options.require_id("--space-id")?,
                 output: options.output,
             }),
             "index" => match nested {

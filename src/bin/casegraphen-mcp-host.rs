@@ -818,7 +818,10 @@ fn memory_read_tool(
         ControlPlaneTool::MemoryConflicts => Ok(json!({
             "base_revision_id": projection.base_revision_id,
             "contested_claim_ids": projection.contested_claim_ids,
-            "items": projection.items.into_iter().filter(|item| item.status == casegraphen::memory::MemoryStatus::Contested).collect::<Vec<_>>(),
+            "items": projection.items.into_iter().filter(|item| {
+                item.hard_conflict
+                    || item.status == casegraphen::memory::MemoryStatus::Contested
+            }).collect::<Vec<_>>(),
             "losses": projection.losses,
             "read_only": true,
             "mutation_performed": false,

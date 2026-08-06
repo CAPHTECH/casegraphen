@@ -49,7 +49,10 @@ a new write path.
    A derivation cannot exceed the lower of its Source Record origin ceiling and
    provenance-role ceiling. Elevation requires a separate hard
    `authorized_by` relation accepted by a suitably authoritative reviewer.
-   Confidence and repetition do not raise authority.
+   Confidence and repetition do not raise authority. The v0 memory proposal
+   helpers do not mint this elevation: an elevated claim and its binding must
+   be authored and reviewed through the canonical morphism path, after which
+   replayed queries validate the accepted binding.
 7. v0 is bitemporal. Transaction time is the selected MorphismLog revision;
    valid time is the claim's `[valid_from, valid_until)` interval. A current
    query returns only current accepted claims. Explicit historical queries may

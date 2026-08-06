@@ -1,8 +1,8 @@
 use super::{
     authority::{claim_in_scope, claim_within_grant, origin_ceiling},
     conflicts::{
-        contradictions, has_authority_binding, has_source_relation, retracting_claims,
-        superseding_claims,
+        accepted_relation_ids, contradictions, has_authority_binding, has_source_relation,
+        retracting_claims, superseding_claims,
     },
     temporal::{disposition, TemporalDisposition},
     validation::{
@@ -44,10 +44,19 @@ pub(crate) fn derive_memory(
                 .map(|value| (cell, serde_json::from_value::<MemoryClaim>(value)))
         })
         .collect::<Vec<_>>();
+    let accepted_relations = accepted_relation_ids(case_space);
     let mut base = parsed
         .into_iter()
         .map(|(cell, parsed_claim)| match parsed_claim {
-            Ok(claim) => derive_base(case_space, cell, claim, query, policy, grant),
+            Ok(claim) => derive_base(
+                case_space,
+                &accepted_relations,
+                cell,
+                claim,
+                query,
+                policy,
+                grant,
+            ),
             Err(_) => DerivedMemory {
                 item: malformed_item(cell),
                 exclusion_reason: Some("invalid_claim_contract".to_owned()),
@@ -67,6 +76,7 @@ pub(crate) fn derive_memory(
         .collect::<BTreeSet<_>>();
     let contested_current = resolve_current_conflicts(
         case_space,
+        &accepted_relations,
         &accepted_current,
         &policy.hard_conflict_relation_types,
     );
@@ -87,14 +97,14 @@ pub(crate) fn derive_memory(
             continue;
         }
         let claim_id = derived.item.claim_id.as_str();
-        if retracting_claims(case_space, claim_id)
+        if retracting_claims(case_space, &accepted_relations, claim_id)
             .any(|source_id| active_current.contains(source_id))
         {
             derived.item.status = MemoryStatus::Retracted;
             derived.exclusion_reason = Some("retracted".to_owned());
             continue;
         }
-        if superseding_claims(case_space, claim_id)
+        if superseding_claims(case_space, &accepted_relations, claim_id)
             .any(|source_id| active_current.contains(source_id))
         {
             derived.item.status = MemoryStatus::Superseded;
@@ -122,6 +132,7 @@ pub(crate) fn derive_memory(
 /// the finite accepted-current set.
 fn resolve_current_conflicts(
     case_space: &CaseSpace,
+    accepted_relation_ids: &BTreeSet<higher_graphen_core::Id>,
     accepted_current: &BTreeSet<String>,
     hard_relation_names: &[String],
 ) -> BTreeMap<String, bool> {
@@ -135,8 +146,12 @@ fn resolve_current_conflicts(
         let suppressed = accepted_current
             .iter()
             .filter(|target_id| {
-                retracting_claims(case_space, target_id)
-                    .chain(superseding_claims(case_space, target_id))
+                retracting_claims(case_space, accepted_relation_ids, target_id)
+                    .chain(superseding_claims(
+                        case_space,
+                        accepted_relation_ids,
+                        target_id,
+                    ))
                     .any(|source_id| activators.contains(source_id))
             })
             .cloned()
@@ -147,7 +162,12 @@ fn resolve_current_conflicts(
             .collect::<BTreeSet<_>>();
         let mut next = BTreeMap::<String, bool>::new();
         for claim_id in &visible {
-            for (other_id, hard) in contradictions(case_space, claim_id, hard_relation_names) {
+            for (other_id, hard) in contradictions(
+                case_space,
+                accepted_relation_ids,
+                claim_id,
+                hard_relation_names,
+            ) {
                 if !visible.contains(other_id) {
                     continue;
                 }
@@ -185,6 +205,7 @@ pub(crate) fn is_pre_rank_exclusion(reason: Option<&str>) -> bool {
 
 fn derive_base(
     case_space: &CaseSpace,
+    accepted_relation_ids: &BTreeSet<higher_graphen_core::Id>,
     cell: &CaseCell,
     claim: MemoryClaim,
     query: &MemoryQuery,
@@ -211,8 +232,12 @@ fn derive_base(
         exclusion_reason = Some("claim_identity_mismatch".to_owned());
     }
     let mut claim_findings = validate_memory_claim(&claim, Some(policy));
-    let authority_binding =
-        has_authority_binding(case_space, &claim.claim_id, claim.authority_ceiling);
+    let authority_binding = has_authority_binding(
+        case_space,
+        accepted_relation_ids,
+        &claim.claim_id,
+        claim.authority_ceiling,
+    );
     if authority_binding {
         claim_findings.retain(|finding| finding.code != "authority_amplification");
     }
@@ -221,9 +246,9 @@ fn derive_base(
         exclusion_reason = Some("invalid_claim_contract".to_owned());
     }
     let source_records = source_records(cell);
-    let immutable_sources = source_records
-        .as_ref()
-        .is_some_and(|records| sources_are_immutable(case_space, &claim, records));
+    let immutable_sources = source_records.as_ref().is_some_and(|records| {
+        sources_are_immutable(case_space, accepted_relation_ids, &claim, records)
+    });
     if !immutable_sources {
         status = MemoryStatus::Candidate;
         exclusion_reason = Some("unsupported_source".to_owned());
@@ -318,6 +343,7 @@ pub fn source_records_for_claim(case_space: &CaseSpace, claim_id: &str) -> Vec<S
 
 fn sources_are_immutable(
     case_space: &CaseSpace,
+    accepted_relation_ids: &BTreeSet<higher_graphen_core::Id>,
     claim: &MemoryClaim,
     records: &[SourceRecord],
 ) -> bool {
@@ -332,7 +358,12 @@ fn sources_are_immutable(
                 })
             });
             record_matches
-                && has_source_relation(case_space, &claim.claim_id, source_id)
+                && has_source_relation(
+                    case_space,
+                    accepted_relation_ids,
+                    &claim.claim_id,
+                    source_id,
+                )
                 && case_space.case_cells.iter().any(|source| {
                     source.id.as_str() == source_id
                         && source.cell_type == CaseCellType::Custom("artifact".to_owned())

@@ -314,7 +314,6 @@ pub struct MemoryIndexValidation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct MemoryClaimProposal {
     pub claim_cell: CaseCell,
     pub source_artifact_id: Id,

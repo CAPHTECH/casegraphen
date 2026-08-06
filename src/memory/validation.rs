@@ -357,6 +357,15 @@ pub fn validate_memory_policy(policy: &MemoryPolicy) -> Vec<MemoryValidationFind
             ));
         }
     }
+    for (index, relation_type) in policy.hard_conflict_relation_types.iter().enumerate() {
+        if relation_type != "contradicts" {
+            findings.push(finding(
+                "unsupported_hard_conflict_relation_type",
+                &format!("$.hard_conflict_relation_types[{index}]"),
+                "v0 classifies only accepted contradicts relations as conflicts",
+            ));
+        }
+    }
     findings
 }
 
@@ -371,6 +380,23 @@ pub fn validate_memory_use_report(
         "$.schema",
         &mut findings,
     );
+    require_non_empty(&report.action_id, "$.action_id", &mut findings);
+    for (field, ids) in [
+        ("cited_claim_ids", &report.cited_claim_ids),
+        ("ignored_constraint_ids", &report.ignored_constraint_ids),
+    ] {
+        let mut seen = BTreeSet::new();
+        for (index, id) in ids.iter().enumerate() {
+            require_non_empty(id, &format!("$.{field}[{index}]"), &mut findings);
+            if !seen.insert(id.as_str()) {
+                findings.push(finding(
+                    "duplicate_use_report_claim_id",
+                    &format!("$.{field}[{index}]"),
+                    "claim IDs in a memory use report array must be unique",
+                ));
+            }
+        }
+    }
     if !report.self_reported {
         findings.push(finding(
             "use_report_must_be_self_reported",

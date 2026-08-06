@@ -32,7 +32,7 @@ commands and flags reach the shipped parser.
 | `casegraphen memory index` | — |
 | `casegraphen memory index rebuild` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
 | `casegraphen memory index validate` | `--case-space-id`, `--format`, `--index`, `--input`, `--output`, `--policy`, `--store` |
-| `casegraphen memory propose` | `--format`, `--input`, `--output`, `--policy`, `--source-artifact`, `--source-record`, `--space-id` |
+| `casegraphen memory propose` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--source-artifact`, `--source-record`, `--store` |
 | `casegraphen memory query` | `--case-space-id`, `--format`, `--input`, `--output`, `--policy`, `--store` |
 | `casegraphen memory source` | — |
 | `casegraphen memory source attach` | `--format`, `--output`, `--source-artifact`, `--source-record` |

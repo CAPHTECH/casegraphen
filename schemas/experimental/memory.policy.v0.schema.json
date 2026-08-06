@@ -26,7 +26,12 @@
       }
     },
     "valid_time_required_kinds": {"type": "array", "uniqueItems": true, "items": {"$ref": "casegraphen.experimental.memory.claim.v0#/$defs/memory_kind"}},
-    "hard_conflict_relation_types": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "hard_conflict_relation_types": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Accepted contradicts relations whose v0 relation name is promoted to a hard conflict; v0 supports only the canonical contradicts name.",
+      "items": {"const": "contradicts"}
+    },
     "exact_source_escalation": {"type": "boolean"}
   }
 }

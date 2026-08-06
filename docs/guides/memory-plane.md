@@ -29,14 +29,17 @@ attachment proposal. It does not copy bytes into a CaseStore.
 
 ```sh
 casegraphen memory propose \
+  --store case-store \
+  --case-space-id case_space:project \
   --input memory.claim.json \
   --source-record memory.source.json \
   --source-artifact source.bin \
   --policy memory.policy.json \
-  --space-id space:project \
   --format json
 ```
 
+The CLI replays that exact CaseSpace, rejects a mismatched
+`claim.scope.case_space_id`, and derives the cell's `space_id` from the replay.
 Require lifecycle `proposed`, review status `unreviewed`, `accepted: false`, and
 `mutation_performed: false`. To persist it, an operator must deliberately map
 the proposal to the existing content-addressed artifact/evidence and gated
