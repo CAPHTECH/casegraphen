@@ -76,7 +76,10 @@ rejected   = rejected lifecycle or effective review
 
 `supersedes`, `retracts`, `contradicts`, and `authorized_by` affect the view
 only when their relations are accepted. A superseder or retractor must itself
-be an accepted, currently valid claim.
+be an accepted, currently valid claim. Conflict and suppression are resolved to
+a fixed point: a contested claim cannot hide another claim through
+supersession or retraction, and a superseded claim cannot create a current
+conflict.
 
 ## Validation order
 

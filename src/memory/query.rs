@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use higher_graphen_core::ReviewStatus;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub(crate) struct DerivedMemory {
@@ -44,11 +44,6 @@ pub(crate) fn derive_memory(
                 .map(|value| (cell, serde_json::from_value::<MemoryClaim>(value)))
         })
         .collect::<Vec<_>>();
-    let claims = parsed
-        .iter()
-        .filter_map(|(cell, claim)| claim.as_ref().ok().map(|_| cell.id.to_string()))
-        .collect::<BTreeSet<_>>();
-
     let mut base = parsed
         .into_iter()
         .map(|(cell, parsed_claim)| match parsed_claim {
@@ -70,6 +65,16 @@ pub(crate) fn derive_memory(
         })
         .map(|derived| derived.item.claim_id.clone())
         .collect::<BTreeSet<_>>();
+    let contested_current = resolve_current_conflicts(
+        case_space,
+        &accepted_current,
+        &policy.hard_conflict_relation_types,
+    );
+    let contested_current_ids = contested_current.keys().cloned().collect::<BTreeSet<_>>();
+    let active_current = accepted_current
+        .difference(&contested_current_ids)
+        .cloned()
+        .collect::<BTreeSet<_>>();
 
     for derived in &mut base {
         if is_pre_rank_exclusion(derived.exclusion_reason.as_deref()) {
@@ -83,29 +88,23 @@ pub(crate) fn derive_memory(
         }
         let claim_id = derived.item.claim_id.as_str();
         if retracting_claims(case_space, claim_id)
-            .any(|source_id| accepted_current.contains(source_id))
+            .any(|source_id| active_current.contains(source_id))
         {
             derived.item.status = MemoryStatus::Retracted;
             derived.exclusion_reason = Some("retracted".to_owned());
             continue;
         }
         if superseding_claims(case_space, claim_id)
-            .any(|source_id| accepted_current.contains(source_id))
+            .any(|source_id| active_current.contains(source_id))
         {
             derived.item.status = MemoryStatus::Superseded;
             derived.exclusion_reason = Some("superseded".to_owned());
             continue;
         }
-        let conflict = contradictions(case_space, claim_id, &policy.hard_conflict_relation_types)
-            .filter(|(other_id, _)| claims.contains(*other_id))
-            .filter(|(other_id, _)| accepted_current.contains(*other_id))
-            .fold(None, |state, (_, hard)| {
-                Some(state.unwrap_or(false) || hard)
-            });
-        if let Some(hard) = conflict {
+        if let Some(hard) = contested_current.get(claim_id) {
             derived.item.status = MemoryStatus::Contested;
-            derived.item.hard_conflict = hard;
-            derived.exclusion_reason = Some(if hard {
+            derived.item.hard_conflict = *hard;
+            derived.exclusion_reason = Some(if *hard {
                 "hard_conflict".to_owned()
             } else {
                 "contested".to_owned()
@@ -115,6 +114,56 @@ pub(crate) fn derive_memory(
 
     base.sort_by(|left, right| left.item.claim_id.cmp(&right.item.claim_id));
     base
+}
+
+/// Resolves conflicts to a fixed point because a contested claim cannot hide
+/// another claim through supersession or retraction. Removing that suppressor
+/// can expose another current conflict, but the contested set only grows over
+/// the finite accepted-current set.
+fn resolve_current_conflicts(
+    case_space: &CaseSpace,
+    accepted_current: &BTreeSet<String>,
+    hard_relation_names: &[String],
+) -> BTreeMap<String, bool> {
+    let mut contested = BTreeMap::new();
+    loop {
+        let contested_ids = contested.keys().cloned().collect::<BTreeSet<_>>();
+        let activators = accepted_current
+            .difference(&contested_ids)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let suppressed = accepted_current
+            .iter()
+            .filter(|target_id| {
+                retracting_claims(case_space, target_id)
+                    .chain(superseding_claims(case_space, target_id))
+                    .any(|source_id| activators.contains(source_id))
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let visible = accepted_current
+            .difference(&suppressed)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut next = BTreeMap::<String, bool>::new();
+        for claim_id in &visible {
+            for (other_id, hard) in contradictions(case_space, claim_id, hard_relation_names) {
+                if !visible.contains(other_id) {
+                    continue;
+                }
+                next.entry(claim_id.clone())
+                    .and_modify(|current| *current |= hard)
+                    .or_insert(hard);
+                next.entry(other_id.to_owned())
+                    .and_modify(|current| *current |= hard)
+                    .or_insert(hard);
+            }
+        }
+        if next == contested {
+            return next;
+        }
+        contested = next;
+    }
 }
 
 pub(crate) fn is_pre_rank_exclusion(reason: Option<&str>) -> bool {

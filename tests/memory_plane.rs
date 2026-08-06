@@ -173,6 +173,97 @@ fn current_query_filters_before_ranking_and_exposes_hard_conflicts() {
 }
 
 #[test]
+fn a_contested_superseder_cannot_retire_an_accepted_claim() {
+    let mut space = case_space();
+    for claim_id in ["mem:old", "mem:replacement", "mem:rival"] {
+        add_claim(
+            &mut space,
+            claim(
+                claim_id,
+                MemoryKind::Constraint,
+                &format!("artifact:sha256-{claim_id}"),
+            ),
+            claim_id,
+            true,
+        );
+    }
+    space.case_relations.push(relation(
+        "relation:replacement-supersedes-old",
+        CaseRelationType::Supersedes,
+        "mem:replacement",
+        "mem:old",
+        RelationStrength::Hard,
+    ));
+    space.case_relations.push(relation(
+        "relation:replacement-conflicts-with-rival",
+        CaseRelationType::Contradicts,
+        "mem:replacement",
+        "mem:rival",
+        RelationStrength::Hard,
+    ));
+
+    let projection = query_memory(&space, &query(false, true), &policy()).expect("query");
+    assert_eq!(
+        projection
+            .items
+            .iter()
+            .find(|item| item.claim_id == "mem:old")
+            .map(|item| item.status),
+        Some(casegraphen::memory::MemoryStatus::Accepted)
+    );
+    assert!(projection
+        .contested_claim_ids
+        .contains(&"mem:replacement".to_owned()));
+    assert!(projection
+        .contested_claim_ids
+        .contains(&"mem:rival".to_owned()));
+}
+
+#[test]
+fn a_superseded_claim_cannot_contest_the_current_view() {
+    let mut space = case_space();
+    for claim_id in ["mem:old", "mem:replacement", "mem:current"] {
+        add_claim(
+            &mut space,
+            claim(
+                claim_id,
+                MemoryKind::Constraint,
+                &format!("artifact:sha256-{claim_id}"),
+            ),
+            claim_id,
+            true,
+        );
+    }
+    space.case_relations.push(relation(
+        "relation:replacement-supersedes-old",
+        CaseRelationType::Supersedes,
+        "mem:replacement",
+        "mem:old",
+        RelationStrength::Hard,
+    ));
+    space.case_relations.push(relation(
+        "relation:old-conflicts-with-current",
+        CaseRelationType::Contradicts,
+        "mem:old",
+        "mem:current",
+        RelationStrength::Hard,
+    ));
+
+    let projection = query_memory(&space, &query(false, false), &policy()).expect("query");
+    assert!(projection.contested_claim_ids.is_empty());
+    assert!(projection
+        .selected_claim_ids
+        .contains(&"mem:replacement".to_owned()));
+    assert!(projection
+        .selected_claim_ids
+        .contains(&"mem:current".to_owned()));
+    assert!(projection
+        .omissions
+        .iter()
+        .any(|omission| { omission.claim_id == "mem:old" && omission.reason == "superseded" }));
+}
+
+#[test]
 fn superseded_claims_require_historical_mode_and_keep_bitemporal_history() {
     let mut space = case_space();
     let mut old = claim("mem:firebase", MemoryKind::Fact, "artifact:sha256-firebase");
