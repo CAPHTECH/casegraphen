@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaseGraphen GitHub Evidence"
+  short_description: "Turn captured GitHub PR state into replayable observation records"
+  default_prompt: "Use $casegraphen-github-evidence to capture this PR's state with gh, author the capture manifest, and produce the observation and reviewer projection without accepting anything."

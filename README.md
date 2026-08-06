@@ -264,6 +264,9 @@ independently invocable.
 - `casegraphen-memory-query`, `casegraphen-memory-curate`, and
   `casegraphen-memory-audit` keep governed memory reading, proposal, and audit
   responsibilities separate.
+- `casegraphen-github-evidence` turns operator-captured GitHub issue/PR state
+  into content-addressed, store-free observation records and a reviewer
+  projection; every record stays `accepted: false`.
 
 [`install.sh`](install.sh) installs the binary and the skill together, because a
 skill for a CLI is useless without the CLI it documents:
@@ -324,7 +327,7 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0031: GitHub issue-to-PR evidence is bounded, replayable observation](docs/adr/0031-github-evidence-observation-boundary.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0032**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0033**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

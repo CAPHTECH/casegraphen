@@ -20,6 +20,7 @@ SKILLS = {
         "casegraphen-memory-query",
         "casegraphen-memory-curate",
         "casegraphen-memory-audit",
+        "casegraphen-github-evidence",
         "casegraphen-orchestrate",
     )
 }
@@ -70,6 +71,11 @@ ROLE_CONTRACTS = {
         "Audit without mutating the CaseGraph, proposals, review state, artifacts, or indexes.",
         "A clean audit establishes the documented procedural invariants, not absolute truth.",
         "Never repair an audit finding by accepting a claim",
+    ),
+    "casegraphen-github-evidence": (
+        "The tool never fetches from GitHub: you run `gh` yourself and vouch for the capture.",
+        "Every record these commands emit carries `accepted: false`",
+        "A refresh never rebases a review basis.",
     ),
     "casegraphen-orchestrate": (
         "Use this process skill only when the request spans multiple phases",

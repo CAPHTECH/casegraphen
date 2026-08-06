@@ -1,0 +1,27 @@
+## log
+
+- `casegraphen github observe --help` -> exit 1
+- `casegraphen github observe --capture-dir capture --output observation.json` -> exit 1
+- `casegraphen github observe --capture-dir capture --format json --output observation.json` -> exit 1
+- `echo {} > manifest.json; casegraphen github observe --capture-dir capture --format json --manifest manifest.json --output observation.json` -> exit 1
+- `manifest={"schema":"?"}; casegraphen github observe ...` -> exit 1
+- `manifest with repository/pull_request/captured_at/files; casegraphen github observe ...` -> exit 1
+- `manifest with entries:[{}]; casegraphen github observe ...` -> exit 1
+- `entries[0].category="?"; casegraphen github observe ...` -> exit 1
+- `entries[0]={category:pr}; casegraphen github observe ...` -> exit 1
+- `entries[0]={category:pr,artifact_path:pr-101.json}; casegraphen github observe ...` -> exit 1
+- `entries[0] with content_hash sha256:<hex>; casegraphen github observe ...` -> exit 1
+- `entries[0].command_record={}; casegraphen github observe ...` -> exit 1
+- `entries[0].command_record=["gh","pr","view","101"]; casegraphen github observe ...` -> exit 1
+- `full manifest (6 entries, real sha256); casegraphen github observe --capture-dir capture --format json --manifest manifest.json --output observation.json` -> exit 1 (invalid_category_count: need exactly one files entry)
+- derived capture/pr-101-files.json from pr-101.json .files; `casegraphen github observe --capture-dir capture --format json --manifest manifest.json --output observation.json` -> exit 1
+- added issue_number=92 to issue entry; `casegraphen github observe ...` -> exit 0
+- `casegraphen github project --capture-dir capture --format json --manifest manifest.json --output projection.json --require-independent-review` -> exit 0
+- `casegraphen github project ... --require-independent-review=abc` -> exit 1
+- `casegraphen github project --capture-dir capture --format json --manifest manifest.json --require-independent-review` (no --output) -> exit 0
+- re-ran project with --output, direct exit check -> exit 0
+- `casegraphen github` (usage probe) -> exit 1
+- `casegraphen github wat` (operation enumeration probe) -> exit 1
+- `casegraphen github wat --format json --manifest manifest.json --capture-dir capture` -> exit 1
+- `casegraphen` (top-level usage) -> exit 1
+- `casegraphen` (usage tail) -> exit 1

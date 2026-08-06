@@ -12,6 +12,7 @@ for requests spanning phases or needing route selection.
 | Read accepted project memory | `casegraphen-memory-query` | read-only revision-bound projection |
 | Curate project memory | `casegraphen-memory-curate` | source-bound unreviewed proposals |
 | Audit governed memory | `casegraphen-memory-audit` | read-only trust/temporal/replay findings |
+| Observe GitHub issue/PR state as replayable evidence | `casegraphen-github-evidence` | store-free observation/projection records, `accepted: false` |
 
 Do not route by whichever skill can make progress. Route by ownership of the
 next boundary. In particular, the process skill cannot substitute for

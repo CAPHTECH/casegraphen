@@ -20,6 +20,7 @@ accept, review, silently rebase, or broaden authority.
 | [`casegraphen-memory-query`](casegraphen-memory-query/SKILL.md) | Reading revision-bound accepted project memory while preserving sources, authority, time, conflict, and projection loss |
 | [`casegraphen-memory-curate`](casegraphen-memory-curate/SKILL.md) | Creating immutable-source-backed, scoped, temporal, unreviewed claim and relation proposals without accepting them |
 | [`casegraphen-memory-audit`](casegraphen-memory-audit/SKILL.md) | Auditing provenance, authority laundering, stale memory, conflicts, scope leakage, loss, and index replay equivalence without mutation |
+| [`casegraphen-github-evidence`](casegraphen-github-evidence/SKILL.md) | Capturing GitHub issue/PR state with `gh` and turning it into content-addressed observation records and a reviewer projection that are never accepted facts |
 
 ## Install
 
@@ -67,6 +68,8 @@ cp -R /path/to/casegraphen/skills/casegraphen-memory-curate ~/.claude/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-memory-curate ~/.codex/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-memory-audit ~/.claude/skills/
 cp -R /path/to/casegraphen/skills/casegraphen-memory-audit ~/.codex/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-github-evidence ~/.claude/skills/
+cp -R /path/to/casegraphen/skills/casegraphen-github-evidence ~/.codex/skills/
 ```
 
 Claude Code discovers skills in `.claude/skills/` (project) and
