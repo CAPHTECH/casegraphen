@@ -34,7 +34,7 @@ use super::model::{
     IndependenceFinding, IndependencePolicy, PrObservation, ReviewFinding, ReviewIndependence,
     GITHUB_REVIEW_INDEPENDENCE_SCHEMA,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Reads the already-computed implementation actor-id set off a
 /// `pr_observation`. The set's *construction* — pr author id ∪ commit
@@ -228,7 +228,15 @@ pub fn evaluate_independence(
     let bot_attested_ids = compute_bot_attested_ids(findings, checks);
 
     let mut classifications = Vec::with_capacity(findings.len() + checks.len());
-    let mut roles_by_finding_id: BTreeMap<&str, EvidenceRole> = BTreeMap::new();
+    // Paired with the finding it was computed from, not looked up later by
+    // `finding_id` — `finding_id` is `sha256(url)` (`normalize.rs`) and
+    // nothing upstream of this function enforces its uniqueness within one
+    // capture, so a map keyed by it can let two findings share one role
+    // slot (a `finding_id` collision then lets whichever finding wrote the
+    // map last decide the other's authority). Carrying `(role, finding)`
+    // together instead means classification and consumption can never
+    // decouple, independent of whether `finding_id` collides.
+    let mut finding_roles: Vec<(EvidenceRole, &ReviewFinding)> = Vec::with_capacity(findings.len());
 
     for check in checks {
         classifications.push(Classification {
@@ -246,7 +254,7 @@ pub fn evaluate_independence(
             &actor_ids,
             &bot_attested_ids,
         );
-        roles_by_finding_id.insert(finding.finding_id.as_str(), role);
+        finding_roles.push((role, finding));
         classifications.push(Classification {
             subject_id: finding.finding_id.clone(),
             evidence_role: role,
@@ -270,13 +278,11 @@ pub fn evaluate_independence(
 
     let mut independent_human_approvals = Vec::new();
     let mut excluded_approvals = Vec::new();
-    for finding in findings {
+    for (role, finding) in &finding_roles {
         if finding.review_state.as_deref() != Some("APPROVED") {
             continue;
         }
-        if roles_by_finding_id.get(finding.finding_id.as_str())
-            != Some(&EvidenceRole::IndependentHumanCandidate)
-        {
+        if *role != EvidenceRole::IndependentHumanCandidate {
             continue;
         }
         if finding.commit_sha.as_deref() == Some(observation.head.sha.as_str()) {
@@ -1074,6 +1080,59 @@ mod tests {
             };
             assert_eq!(can_satisfy, role == EvidenceRole::IndependentHumanCandidate);
         }
+    }
+
+    /// S1 regression: with the old `roles_by_finding_id: BTreeMap<&str,
+    /// EvidenceRole>` (last write wins), two findings sharing one
+    /// `finding_id` shared one role slot — whichever finding classified
+    /// last decided the role the *other* finding's approval was checked
+    /// against. Here the self-review is inserted first and the outside
+    /// candidate second, which under the old map is exactly the ordering
+    /// that let the self-review borrow `independent_human_candidate` and
+    /// satisfy the policy. `normalize.rs` now refuses a `finding_id`
+    /// collision outright (a URL collision is a provider impossibility),
+    /// but this proves `evaluate_independence` itself no longer depends on
+    /// that upstream refusal to get the right answer: role is carried with
+    /// the finding it was computed from, not looked up by id afterward.
+    #[test]
+    fn finding_id_collision_never_lets_a_self_review_borrow_an_outside_finding_s_role() {
+        let observation = observation();
+        let findings = vec![
+            review(
+                "finding:collide",
+                Some(PR_AUTHOR_ID),
+                Some("User"),
+                "rizumita",
+                "MEMBER",
+                "APPROVED",
+                Some(HEAD_SHA),
+            ),
+            review(
+                "finding:collide",
+                Some("actor:outside"),
+                Some("User"),
+                "carol",
+                "NONE",
+                "COMMENTED",
+                Some(HEAD_SHA),
+            ),
+        ];
+        let result = evaluate_independence(&observation, &findings, &[], true);
+        assert_eq!(result.classifications.len(), 2);
+        assert!(result
+            .classifications
+            .iter()
+            .any(|classification| classification.evidence_role == EvidenceRole::SelfReview));
+        assert!(result.classifications.iter().any(|classification| {
+            classification.evidence_role == EvidenceRole::IndependentHumanCandidate
+        }));
+        assert!(
+            result.independent_human_approvals.is_empty(),
+            "the self-review finding must never be credited via a finding_id collision \
+             with the sibling outside finding's role: independent_human_approvals = {:?}",
+            result.independent_human_approvals
+        );
+        assert!(!result.policy.satisfied);
     }
 
     #[test]

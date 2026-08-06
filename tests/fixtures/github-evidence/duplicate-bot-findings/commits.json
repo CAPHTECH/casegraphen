@@ -3,6 +3,7 @@
     "repository": {
       "pullRequest": {
         "commits": {
+          "totalCount": 1,
           "nodes": [
             {
               "commit": {

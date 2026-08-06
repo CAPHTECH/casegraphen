@@ -242,6 +242,7 @@ pub(crate) enum NativeCliCommand {
     GithubObserve {
         manifest: PathBuf,
         capture_dir: PathBuf,
+        strict: bool,
         output: Option<PathBuf>,
     },
     GithubRefresh {
@@ -250,12 +251,14 @@ pub(crate) enum NativeCliCommand {
         previous_manifest: PathBuf,
         previous_capture_dir: PathBuf,
         previous_observation: Option<PathBuf>,
+        strict: bool,
         output: Option<PathBuf>,
     },
     GithubProject {
         manifest: PathBuf,
         capture_dir: PathBuf,
         require_independent_review: bool,
+        strict: bool,
         output: Option<PathBuf>,
     },
     MorphismPropose {
@@ -659,7 +662,10 @@ impl NativeCliCommand {
             | Self::CaseCloseCheck { strict, .. }
             | Self::RunStep { strict, .. }
             | Self::RunFrontier { strict, .. }
-            | Self::Operate { strict, .. } => *strict,
+            | Self::Operate { strict, .. }
+            | Self::GithubObserve { strict, .. }
+            | Self::GithubRefresh { strict, .. }
+            | Self::GithubProject { strict, .. } => *strict,
             _ => false,
         }
     }

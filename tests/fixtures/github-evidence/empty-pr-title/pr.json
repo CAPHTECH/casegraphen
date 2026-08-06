@@ -1,0 +1,19 @@
+{
+  "number": 7,
+  "title": "",
+  "url": "https://github.com/OWNER/repo/pull/7",
+  "state": "OPEN",
+  "author": {
+    "id": "actor:pr-author",
+    "login": "alice"
+  },
+  "baseRefName": "main",
+  "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "headRefName": "feature",
+  "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "mergedAt": null,
+  "mergeable": "MERGEABLE",
+  "mergeStateStatus": "CLEAN",
+  "body": "pr body"
+}

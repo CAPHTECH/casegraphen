@@ -79,7 +79,7 @@ pub fn project_review(
 
     let must_review = group_into_items(&assignments, ReviewTier::MustReview);
     let should_review = group_into_items(&assignments, ReviewTier::ShouldReview);
-    let can_skim = can_skim_items(observation, findings);
+    let can_skim = can_skim_items(observation, findings, capture_totals);
 
     let blocking_findings = to_finding_reasons(&assignments, ReviewTier::MustReview);
     let non_blocking_findings = to_finding_reasons(&assignments, ReviewTier::ShouldReview);
@@ -101,6 +101,16 @@ pub fn project_review(
                 "{} check(s) produced no verification evidence: {}",
                 inconclusive_checks.len(),
                 inconclusive_checks.join(", ")
+            ),
+        });
+    }
+    if capture_totals.contexts_received < capture_totals.contexts_reported_total {
+        residual_risks.push(ResidualRisk {
+            code: "checks_capture_truncated".to_owned(),
+            detail: format!(
+                "checks contexts connection reported {} but the capture received {}; the \
+                 check/status set this projection tiers is incomplete",
+                capture_totals.contexts_reported_total, capture_totals.contexts_received
             ),
         });
     }
@@ -128,11 +138,24 @@ pub fn project_review(
         .collect();
     verification_sources.sort_by(|left, right| left.subject_id.cmp(&right.subject_id));
 
+    // S10: derived from `capture_totals.thread_comment_totals`, not only
+    // from `findings` — a thread whose comments were truncated to zero
+    // received no comment finding at all, so deriving this solely from
+    // `finding.thread` (as before) silently dropped it here even though
+    // `normalize.rs`'s per-thread bookkeeping already knows its resolution
+    // state independent of whether any comment survived.
     let mut unresolved_threads: Vec<String> = findings
         .iter()
         .filter_map(|f| f.thread.as_ref())
         .filter(|thread| !thread.resolved)
         .map(|thread| thread.thread_id.clone())
+        .chain(
+            capture_totals
+                .thread_comment_totals
+                .iter()
+                .filter(|thread_totals| !thread_totals.resolved)
+                .map(|thread_totals| thread_totals.thread_id.clone()),
+        )
         .collect();
     unresolved_threads.sort();
     unresolved_threads.dedup();
@@ -182,9 +205,25 @@ pub fn project_review(
 
 // ---------------------------------------------------------------------
 // Finding tiering — priority order: unresolved actionable > resolved
-// actionable > edited > self/bot/unattributed-only verification. A subject
-// is assigned at most once, by the first arm that matches, so `reason`
-// never has to describe more than one fact about the same subject.
+// actionable > edited > independent-human-candidate (not otherwise tiered)
+// > self/bot/unattributed-only verification. A subject is assigned at most
+// once, by the first arm that matches, so `reason` never has to describe
+// more than one fact about the same subject.
+//
+// Every arm here must be exhaustive over `EvidenceRole` between them and
+// the four arms above (S9): `CiCheck` never reaches this function (it has
+// no `ReviewFinding`, so `findings_by_id.contains_key` always excludes it —
+// `assign_check_tiers` is its own, separate rule), but `SelfReview`,
+// `AutomatedBot`, `Unattributed`, and `IndependentHumanCandidate` all name
+// findings and must each land in exactly one tier or be caught by an
+// actionable/edited arm above. Before this arm existed,
+// `IndependentHumanCandidate` had no arm of its own: a non-actionable
+// review summary from an independent human (every `review_summary` finding
+// is `actionable: false` by construction, `normalize.rs`) fell through
+// every arm and reached no tier, no `blocking_findings`, and no
+// `non_blocking_findings` — the only trace left was a `verification_sources`
+// entry that reads as a *positive* signal, which is the exact inverse of
+// what an unresolved objection from an independent human means.
 // ---------------------------------------------------------------------
 
 fn assign_finding_tiers(
@@ -250,6 +289,60 @@ fn assign_finding_tiers(
             tier: ReviewTier::ShouldReview,
             path,
             reason: "finding body was edited after it was authored".to_owned(),
+        });
+    }
+
+    // S9: an independent human's evidence that no arm above already claimed
+    // (i.e. not itself an unresolved/resolved actionable thread comment or
+    // an edited finding — a plain review summary is never actionable, so
+    // this is the common case for a review's own top-level `APPROVED`/
+    // `COMMENTED`/`CHANGES_REQUESTED` verdict). Split on whether it is the
+    // specific approval `evaluate_independence` counted as satisfying the
+    // policy: a satisfying approval is good news a human should still
+    // verify, so it is Should Review; anything else — a `COMMENTED` or
+    // `CHANGES_REQUESTED` verdict, or an `APPROVED` review excluded for not
+    // binding to the observed head — is an independent human's input that
+    // nothing else in this projection resolved, so it is Must Review.
+    let mut independent_human_unresolved: Vec<&Classification> = independence
+        .classifications
+        .iter()
+        .filter(|classification| {
+            classification.evidence_role == EvidenceRole::IndependentHumanCandidate
+                && findings_by_id.contains_key(classification.subject_id.as_str())
+        })
+        .collect();
+    independent_human_unresolved.sort_by(|left, right| left.subject_id.cmp(&right.subject_id));
+    for classification in independent_human_unresolved {
+        if !assigned.insert(classification.subject_id.clone()) {
+            continue;
+        }
+        let path = findings_by_id
+            .get(classification.subject_id.as_str())
+            .and_then(|finding| finding.path.clone());
+        let is_satisfying_approval = independence
+            .independent_human_approvals
+            .iter()
+            .any(|finding_id| finding_id == &classification.subject_id);
+        let (tier, reason) = if is_satisfying_approval {
+            (
+                ReviewTier::ShouldReview,
+                "independent human approval satisfying the independent-review policy — \
+                 verify it is well-founded"
+                    .to_owned(),
+            )
+        } else {
+            (
+                ReviewTier::MustReview,
+                "independent human evidence not resolved by any other tier — review it \
+                 directly"
+                    .to_owned(),
+            )
+        };
+        out.push(Assignment {
+            subject_id: classification.subject_id.clone(),
+            tier,
+            path,
+            reason,
         });
     }
 
@@ -455,15 +548,38 @@ fn stale_head_assignment(refresh: &RefreshResult) -> Assignment {
 // Can Skim — changed files with no finding at that path, in either tier.
 // ---------------------------------------------------------------------
 
-fn can_skim_items(observation: &PrObservation, findings: &[ReviewFinding]) -> Vec<TierItem> {
+/// `can_skim`'s claim is affirmative ("no review findings recorded against
+/// this file"), so it must be entailed by the finding set actually present,
+/// never by its mere absence (S10). A path is excluded from consideration
+/// here — never labelled skimmable — whenever `capture_totals` shows a
+/// thread at that path whose comments were not fully received: the
+/// truncation means findings *were* withheld, not that none exist, and
+/// `can_skim`'s wording would otherwise misstate a known gap as a clean
+/// file. `path` is only ever `None` on a thread when the provider's own
+/// `path` field is null (a PR-level, not file-level, thread); such threads
+/// carry no file to exclude and are covered instead by the
+/// `threads_truncated` loss and `unresolved_threads` alone.
+fn can_skim_items(
+    observation: &PrObservation,
+    findings: &[ReviewFinding],
+    capture_totals: &CaptureTotals,
+) -> Vec<TierItem> {
     let touched: BTreeSet<&str> = findings
         .iter()
         .filter_map(|finding| finding.path.as_deref())
         .collect();
+    let truncated_paths: BTreeSet<&str> = capture_totals
+        .thread_comment_totals
+        .iter()
+        .filter(|thread_totals| thread_totals.received < thread_totals.reported_total)
+        .filter_map(|thread_totals| thread_totals.path.as_deref())
+        .collect();
     let mut items: Vec<TierItem> = observation
         .changed_files
         .iter()
-        .filter(|file| !touched.contains(file.path.as_str()))
+        .filter(|file| {
+            !touched.contains(file.path.as_str()) && !truncated_paths.contains(file.path.as_str())
+        })
         .map(|file| TierItem {
             path: Some(file.path.clone()),
             subject_ids: Vec::new(),
@@ -626,15 +742,38 @@ fn truncation_losses(totals: &CaptureTotals) -> Vec<ProjectionLoss> {
     }
     for thread_totals in &totals.thread_comment_totals {
         if thread_totals.received < thread_totals.reported_total {
+            // S10: `omitted_refs` names the thread id *and* its path (when
+            // the provider reported one) — a reader of `losses` alone,
+            // without cross-referencing `can_skim`'s exclusion by id, must
+            // still be able to tell which file this loss is about.
+            let mut omitted_refs = vec![thread_totals.thread_id.clone()];
+            omitted_refs.extend(thread_totals.path.clone());
             losses.push(ProjectionLoss {
                 loss_kind: "threads_truncated".to_owned(),
                 detail: format!(
                     "thread {} comments connection reported {} but the capture received {}",
                     thread_totals.thread_id, thread_totals.reported_total, thread_totals.received
                 ),
-                omitted_refs: vec![thread_totals.thread_id.clone()],
+                omitted_refs,
             });
         }
+    }
+    // S2: the checks artifact's `contexts` connection, previously discarded
+    // entirely (`GraphQlContextsConnection` read only `nodes`). Unlike
+    // `commits` (the independence trust root, refused outright in
+    // `normalize()` on detected truncation), a truncated `contexts`
+    // connection is declared here plus the `checks_capture_truncated`
+    // residual risk above — proportionate to what this connection actually
+    // is: an incomplete check/status set, not a corrupted trust root.
+    if totals.contexts_received < totals.contexts_reported_total {
+        losses.push(ProjectionLoss {
+            loss_kind: "contexts_truncated".to_owned(),
+            detail: format!(
+                "checks contexts connection reported {} but the capture received {}",
+                totals.contexts_reported_total, totals.contexts_received
+            ),
+            omitted_refs: vec!["capture:checks".to_owned()],
+        });
     }
     losses
 }
@@ -858,6 +997,8 @@ mod tests {
             review_threads_reported_total: 0,
             review_threads_received: 0,
             thread_comment_totals: Vec::new(),
+            contexts_reported_total: 0,
+            contexts_received: 0,
         }
     }
 
@@ -957,6 +1098,8 @@ mod tests {
             review_threads_reported_total: 3,
             review_threads_received: 2,
             thread_comment_totals: Vec::new(),
+            contexts_reported_total: 0,
+            contexts_received: 0,
         };
         let truncated = project_review(&obs, &[], &[], &indep, &truncated_totals, &[], None);
         assert!(truncated
@@ -976,6 +1119,49 @@ mod tests {
             .iter()
             .any(|loss| loss.loss_kind == "threads_truncated"
                 && loss.detail.contains("reviews connection")));
+    }
+
+    /// S2: a truncated `checks` `contexts` connection (previously silently
+    /// discarded — `GraphQlContextsConnection` read only `nodes`, never
+    /// `totalCount`) surfaces as its own `contexts_truncated` loss plus a
+    /// `checks_capture_truncated` residual risk — proportionate to
+    /// `contexts` not being the independence trust root (`commits` is,
+    /// which `normalize()` refuses outright on detected truncation instead).
+    #[test]
+    fn truncated_checks_contexts_is_a_declared_loss_and_residual_risk() {
+        let obs = observation(&["a.rs"]);
+        let indep = independence(&[], &[], Vec::new(), &[], false);
+
+        let clean = project_review(&obs, &[], &[], &indep, &no_truncation(), &[], None);
+        assert!(!clean
+            .losses
+            .iter()
+            .any(|loss| loss.loss_kind == "contexts_truncated"));
+        assert!(!clean
+            .residual_risks
+            .iter()
+            .any(|risk| risk.code == "checks_capture_truncated"));
+
+        let truncated_totals = CaptureTotals {
+            reviews_reported_total: 0,
+            reviews_received: 0,
+            review_threads_reported_total: 0,
+            review_threads_received: 0,
+            thread_comment_totals: Vec::new(),
+            contexts_reported_total: 3,
+            contexts_received: 2,
+        };
+        let truncated = project_review(&obs, &[], &[], &indep, &truncated_totals, &[], None);
+        assert!(truncated
+            .losses
+            .iter()
+            .any(|loss| loss.loss_kind == "contexts_truncated"
+                && loss.detail.contains('3')
+                && loss.detail.contains('2')));
+        assert!(truncated
+            .residual_risks
+            .iter()
+            .any(|risk| risk.code == "checks_capture_truncated"));
     }
 
     #[test]

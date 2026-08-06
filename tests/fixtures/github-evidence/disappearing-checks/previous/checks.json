@@ -10,6 +10,7 @@
                 "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "statusCheckRollup": {
                   "contexts": {
+                    "totalCount": 2,
                     "nodes": [
                       {
                         "__typename": "CheckRun",

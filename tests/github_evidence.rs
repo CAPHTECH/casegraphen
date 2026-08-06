@@ -64,7 +64,7 @@ fn observe(manifest: &Path, capture_dir: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("casegraphen github observe stdout JSON")
 }
 
-fn project(manifest: &Path, capture_dir: &Path, require_independent_review: bool) -> Value {
+fn project_output(manifest: &Path, capture_dir: &Path, require_independent_review: bool) -> Output {
     let mut args = vec![
         "github",
         "project",
@@ -77,7 +77,11 @@ fn project(manifest: &Path, capture_dir: &Path, require_independent_review: bool
         args.push("--require-independent-review");
     }
     args.extend(["--format", "json"]);
-    let output = run(&args);
+    run(&args)
+}
+
+fn project(manifest: &Path, capture_dir: &Path, require_independent_review: bool) -> Value {
+    let output = project_output(manifest, capture_dir, require_independent_review);
     assert!(
         output.status.success(),
         "casegraphen github project stderr: {}",
@@ -185,21 +189,7 @@ fn observe_pilot() -> Value {
 }
 
 fn project_pilot_output(require_independent_review: bool) -> Output {
-    let manifest = manifest_path();
-    let capture_dir = pilot_dir();
-    let mut args = vec![
-        "github",
-        "project",
-        "--manifest",
-        manifest.to_str().unwrap(),
-        "--capture-dir",
-        capture_dir.to_str().unwrap(),
-    ];
-    if require_independent_review {
-        args.push("--require-independent-review");
-    }
-    args.extend(["--format", "json"]);
-    run(&args)
+    project_output(&manifest_path(), &pilot_dir(), require_independent_review)
 }
 
 fn project_pilot(require_independent_review: bool) -> Value {
@@ -429,7 +419,7 @@ fn write_stale_head_previous_capture(dir: &Path) -> PathBuf {
         "number": 101, "baseRefOid": BASE_SHA, "headRefOid": HEAD_SHA,
         "reviewThreads": {"totalCount": 0, "nodes": []}
     }}}});
-    let commits = serde_json::json!({"data": {"repository": {"pullRequest": {"commits": {"nodes": [
+    let commits = serde_json::json!({"data": {"repository": {"pullRequest": {"commits": {"totalCount": 1, "nodes": [
         {"commit": {
             "author": {"user": {"__typename": "User", "login": "alice", "id": "actor:pr-author"}},
             "committer": {"user": {"__typename": "User", "login": "alice", "id": "actor:pr-author"}}
@@ -1237,6 +1227,464 @@ fn disappearing_check_is_reported_as_removed_on_refresh() {
             && change["detail"].as_str().unwrap().contains("lint")),
         "observation_changes: {changes:?}"
     );
+    // S3: `quality`'s own status/conclusion did not change between these two
+    // captures — only `lint` disappeared — so the removal above must be the
+    // *only* entry. Before the fix, `quality`'s `source_record_id` (derived
+    // from the whole `checks.json` file's hash) differed between the two
+    // captures too, and a whole-struct comparison reported it `changed` as
+    // well; asserting exact equality here (not `.any(...)`, which would
+    // pass either way) is what actually catches that regression.
+    assert_eq!(
+        changes.len(),
+        1,
+        "no check other than the removed `lint` should be reported: {changes:?}"
+    );
+}
+
+/// S3: a same-head refresh with two checks in both captures, where only one
+/// check's conclusion actually changed. Because both checks are parsed from
+/// the same `checks.json` file, the byte change to the flipping check
+/// renames *every* check's `source_record_id` (derived from the whole-file
+/// hash) — a whole-struct comparison would report the untouched
+/// `stable-check` as `changed` too, burying the real drift among false
+/// positives. Reproduces the report's `fp-prev`/`fp-cur` capture pair as a
+/// permanent fixture.
+#[test]
+fn only_the_check_that_actually_changed_is_reported_on_refresh() {
+    let base = fixture_dir("single-check-changed");
+    let previous_dir = base.join("previous");
+    let current_dir = base.join("current");
+    let refreshed = refresh(
+        &current_dir.join("manifest.json"),
+        &current_dir,
+        &previous_dir.join("manifest.json"),
+        &previous_dir,
+    );
+    let refresh_result = &refreshed["result"]["refresh_result"];
+    assert_eq!(refresh_result["disposition"], "head_unchanged");
+    let changes = refresh_result["observation_changes"].as_array().unwrap();
+    assert_eq!(
+        changes.len(),
+        1,
+        "only flipping-check's own result changed: {changes:?}"
+    );
+    assert_eq!(changes[0]["category"], "checks");
+    assert_eq!(changes[0]["change"], "changed");
+    assert!(
+        changes[0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("flipping-check"),
+        "changes: {changes:?}"
+    );
+    assert!(
+        !changes
+            .iter()
+            .any(|change| change["detail"].as_str().unwrap().contains("stable-check")),
+        "stable-check's result never changed and must not appear: {changes:?}"
+    );
+}
+
+/// S1: two review nodes sharing one URL — `finding_id = sha256(url)`
+/// collides. A provider impossibility (a review's URL is its own
+/// permalink); `normalize()` must refuse rather than let the second
+/// finding's evidence-role classification decide whether the first's
+/// approval satisfies the independent-review policy.
+#[test]
+fn colliding_finding_ids_are_a_hard_refusal() {
+    let dir = fixture_dir("colliding-finding-ids");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("duplicate_finding_id"), "stderr: {stderr}");
+}
+
+/// S2 (positive control): a full, non-truncated `commits` capture (2 of 2
+/// commit nodes) normalizes cleanly. bob is a commit author, so he is an
+/// implementation actor and his `APPROVED` review at head classifies
+/// `self_review` — it must not satisfy `require_independent_review`. Pinned
+/// alongside `commits_truncation_is_a_hard_refusal` below: the two fixtures
+/// differ only in whether the `commits` capture is complete.
+#[test]
+fn commits_truncation_full_capture_succeeds_and_bob_is_self_review() {
+    let dir = fixture_dir("commits-truncation").join("full");
+    let manifest = dir.join("manifest.json");
+    let observed = observe(&manifest, &dir);
+    let independence = &observed["result"]["independence"];
+    assert_eq!(
+        independence["implementation_actor_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "both commit authors (pr-author and bob) must be implementation actors"
+    );
+    assert!(independence["independent_human_approvals"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+/// S2: the same review, but the `commits` capture is missing one of its two
+/// reported commit nodes (`totalCount: 2`, one node received). The
+/// implementation actor set is the independence trust root, and a
+/// truncated page can only shrink it — silently turning bob's self-review
+/// into an apparent independent approval. `normalize()` must refuse
+/// outright rather than declare this a loss with a footnote.
+#[test]
+fn commits_truncation_is_a_hard_refusal() {
+    let dir = fixture_dir("commits-truncation").join("truncated");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("commits_capture_truncated"),
+        "stderr: {stderr}"
+    );
+}
+
+/// S4: `manifest.issue_numbers` declares issue 42 twice against a single
+/// matching `issue` entry. Caller input must not be able to duplicate a
+/// tool-computed observation record this way.
+#[test]
+fn duplicate_issue_number_is_a_hard_refusal() {
+    let dir = fixture_dir("duplicate-issue-number");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("duplicate_issue_number"),
+        "stderr: {stderr}"
+    );
+}
+
+/// S9: a non-actionable review summary (review summaries are never
+/// actionable, `normalize.rs`) from an independent human candidate who did
+/// not approve. Must reach exactly one tier — Must Review, since it is an
+/// unresolved independent-human verdict nothing else in the projection
+/// addressed — and must be a blocking finding, never silently absent from
+/// every tier and every finding list.
+#[test]
+fn outside_human_commented_review_reaches_must_review() {
+    let dir = fixture_dir("outside-human-commented-review");
+    let manifest = dir.join("manifest.json");
+    let projected = project(&manifest, &dir, false);
+    let projection = &projected["result"]["projection"];
+
+    let independence = observe(&manifest, &dir)["result"]["independence"].clone();
+    let candidate_id = independence["classifications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["evidence_role"] == "independent_human_candidate")
+        .unwrap_or_else(|| panic!("no independent_human_candidate classification"))["subject_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    assert!(
+        projection["must_review"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["subject_ids"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|id| id == &candidate_id)),
+        "must_review: {:?}",
+        projection["must_review"]
+    );
+    assert!(
+        projection["blocking_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["finding_id"] == candidate_id),
+        "blocking_findings: {:?}",
+        projection["blocking_findings"]
+    );
+    assert!(!projection["should_review"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["subject_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == &candidate_id)),);
+    assert!(!projection["non_blocking_findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["finding_id"] == candidate_id));
+}
+
+/// S10: `comments.totalCount: 3`, zero comment nodes received, on file
+/// `b.rs`. The truncation must be visible in three places at once: the
+/// thread counted among `unresolved_threads` even though it produced no
+/// comment finding to derive that from, `b.rs` excluded from `can_skim`
+/// (never affirmatively called clean when findings were withheld, not
+/// absent), and the `threads_truncated` loss connected to `b.rs` by path,
+/// not only by an opaque thread id.
+#[test]
+fn truncated_thread_is_visible_in_unresolved_threads_can_skim_and_losses() {
+    let dir = fixture_dir("truncated-thread");
+    let manifest = dir.join("manifest.json");
+    let projected = project(&manifest, &dir, false);
+    let projection = &projected["result"]["projection"];
+
+    assert_eq!(
+        projection["unresolved_threads"],
+        serde_json::json!(["thread-truncated"])
+    );
+    assert!(
+        !projection["can_skim"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["path"] == "b.rs"),
+        "can_skim must not call b.rs clean when its thread's comments were withheld: {:?}",
+        projection["can_skim"]
+    );
+    let threads_loss = projection["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|loss| loss["loss_kind"] == "threads_truncated")
+        .unwrap_or_else(|| panic!("no threads_truncated loss: {:?}", projection["losses"]));
+    assert!(threads_loss["omitted_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r == "b.rs"));
+}
+
+/// S10: a review thread cannot exist without an initiating comment —
+/// `comments.totalCount: 0` is a provider impossibility, refused rather
+/// than silently invisible to `unresolved_threads`/`can_skim`.
+#[test]
+fn empty_unresolved_thread_is_a_hard_refusal() {
+    let dir = fixture_dir("empty-unresolved-thread");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("empty_review_thread"), "stderr: {stderr}");
+}
+
+/// S11: `collapse-actionable-e`/`-f` are byte-identical except for which of
+/// two duplicate thread comments' URL suffixes sorts first — the pre-fix
+/// `(authored_at, url)` collapse tie-break decided `actionable` by that URL
+/// order rather than by which occurrence was the thread's actual opener.
+/// Pins both to the same answer.
+#[test]
+fn collapse_tie_break_never_decides_actionable_by_url_order() {
+    let e_dir = fixture_dir("collapse-actionable-e");
+    let f_dir = fixture_dir("collapse-actionable-f");
+    let e = observe(&e_dir.join("manifest.json"), &e_dir);
+    let f = observe(&f_dir.join("manifest.json"), &f_dir);
+    let e_unresolved = &e["result"]["independence"]["unresolved_actionable_finding_ids"];
+    let f_unresolved = &f["result"]["independence"]["unresolved_actionable_finding_ids"];
+    assert_eq!(e_unresolved, f_unresolved);
+    assert_eq!(
+        e_unresolved.as_array().unwrap().len(),
+        1,
+        "the duplicate pair must still collapse into one actionable finding: {e_unresolved:?}"
+    );
+}
+
+/// S12: two `CheckRun`s named `build` with no `detailsUrl`, one `SUCCESS`
+/// and one `FAILURE` — `check_id` hashes the absent url identically for
+/// both, colliding despite differing `conclusion`. Refused rather than
+/// letting a passing check's id also resolve a failing one's record.
+#[test]
+fn colliding_check_ids_are_a_hard_refusal() {
+    let dir = fixture_dir("colliding-check-ids");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("duplicate_check_id"), "stderr: {stderr}");
+}
+
+/// S13: an empty provider `title` string passes the Rust owners untouched
+/// and produces a record breaching its own shipped schema's
+/// `minLength: 1` — refused instead.
+#[test]
+fn empty_pr_title_is_a_hard_refusal() {
+    let dir = fixture_dir("empty-pr-title");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("empty_required_string"), "stderr: {stderr}");
+}
+
+/// S13: the `files` artifact lists the same path twice — a provider
+/// impossibility, refused rather than doubling `can_skim`'s per-file claim.
+#[test]
+fn duplicate_file_path_is_a_hard_refusal() {
+    let dir = fixture_dir("duplicate-file-path");
+    let manifest = dir.join("manifest.json");
+    let output = observe_output(&manifest, &dir);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("duplicate_file_path"), "stderr: {stderr}");
+}
+
+/// S5: `--require-independent-review` is read only by `github project`'s
+/// `require_independent_review` field — `observe`/`refresh` have no field
+/// to carry it to. Before the fix `NativeOptions::consume_arg` had no `if`
+/// guard on this flag at all (unlike the `--strict` arm directly above it),
+/// so it parsed successfully on every command and was silently dropped;
+/// on `observe` that meant a caller who typed the flag got back a
+/// `pr_observation`/`independence` record with no policy field reflecting
+/// their demand at all — no error, no trace. Must now refuse with the
+/// generic usage error, the same disposition an unsupported flag gets
+/// anywhere else in this parser.
+#[test]
+fn require_independent_review_is_refused_on_observe_and_refresh() {
+    let manifest = manifest_path();
+    let dir = pilot_dir();
+
+    let observe_result = run(&[
+        "github",
+        "observe",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--capture-dir",
+        dir.to_str().unwrap(),
+        "--require-independent-review",
+        "--format",
+        "json",
+    ]);
+    assert!(!observe_result.status.success());
+    let observe_stderr = String::from_utf8_lossy(&observe_result.stderr);
+    assert!(
+        observe_stderr.contains("unsupported native argument")
+            && observe_stderr.contains("--require-independent-review"),
+        "stderr: {observe_stderr}"
+    );
+
+    let refresh_result = run(&[
+        "github",
+        "refresh",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--capture-dir",
+        dir.to_str().unwrap(),
+        "--previous-manifest",
+        manifest.to_str().unwrap(),
+        "--previous-capture-dir",
+        dir.to_str().unwrap(),
+        "--require-independent-review",
+        "--format",
+        "json",
+    ]);
+    assert!(!refresh_result.status.success());
+    let refresh_stderr = String::from_utf8_lossy(&refresh_result.stderr);
+    assert!(
+        refresh_stderr.contains("unsupported native argument")
+            && refresh_stderr.contains("--require-independent-review"),
+        "stderr: {refresh_stderr}"
+    );
+}
+
+/// S6: `--strict` is now accepted on all three `github` commands (it was
+/// accepted on none before), so a domain finding on any of them can map to
+/// exit 2 — the repo's one existing mechanism for a CI-checkable failure —
+/// rather than reading as success (exit 0) no matter what the JSON body
+/// says. `github project --require-independent-review` is the sharpest
+/// case: its entire purpose is to fail a check, and before this fix no
+/// combination of flags could make that check's own process exit non-zero.
+#[test]
+fn strict_is_accepted_on_every_github_command_and_maps_a_domain_finding_to_exit_2() {
+    let manifest = manifest_path();
+    let dir = pilot_dir();
+
+    let project_clean = run(&[
+        "github",
+        "project",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--capture-dir",
+        dir.to_str().unwrap(),
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        project_clean.status.success(),
+        "no domain finding on the pilot without --require-independent-review: {}",
+        String::from_utf8_lossy(&project_clean.stderr)
+    );
+
+    let project_unmet = run(&[
+        "github",
+        "project",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--capture-dir",
+        dir.to_str().unwrap(),
+        "--require-independent-review",
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        project_unmet.status.code(),
+        Some(2),
+        "an unmet --require-independent-review must exit 2 under --strict: stderr {}",
+        String::from_utf8_lossy(&project_unmet.stderr)
+    );
+
+    // `observe` can also carry a domain finding (a cross-repository
+    // exclusion) — `--strict` must reach it too, not only `project`.
+    let cross_repo_dir = fixture_dir("cross-repository-references");
+    let observe_domain_finding = run(&[
+        "github",
+        "observe",
+        "--manifest",
+        cross_repo_dir.join("manifest.json").to_str().unwrap(),
+        "--capture-dir",
+        cross_repo_dir.to_str().unwrap(),
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(
+        observe_domain_finding.status.code(),
+        Some(2),
+        "a cross-repository exclusion domain finding must exit 2 under --strict: stderr {}",
+        String::from_utf8_lossy(&observe_domain_finding.stderr)
+    );
+
+    // `refresh --strict` accepts the flag (it did not before) even though
+    // this particular pair produces no domain finding to exit 2 on.
+    let refresh_clean = run(&[
+        "github",
+        "refresh",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--capture-dir",
+        dir.to_str().unwrap(),
+        "--previous-manifest",
+        manifest.to_str().unwrap(),
+        "--previous-capture-dir",
+        dir.to_str().unwrap(),
+        "--strict",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        refresh_clean.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&refresh_clean.stderr)
+    );
 }
 
 /// Design §10.2 row 10: same head, an existing finding's body changes
@@ -1297,4 +1745,189 @@ fn an_unsupported_capture_manifest_schema_is_a_hard_refusal() {
         stderr.contains("unsupported capture manifest schema"),
         "stderr: {stderr}"
     );
+}
+
+// ---------------------------------------------------------------------
+// The structural fix a third review round asked for: nothing previously
+// validated a *produced* record against its own shipped schema —
+// `tests/experimental_schema_conformance.rs` only ever round-trips the
+// checked-in hand-written examples through the schema gate, never a record
+// `github observe|project|refresh` actually emitted from a capture. That
+// gap is exactly how a `uniqueItems`/`minLength` breach (a duplicate
+// `finding_id`, `check_id`, or `can_skim` path; an empty `title`/`login`)
+// could reach a caller wearing the same schema id as every other record,
+// with no test anywhere catching it. This walks every fixture manifest
+// under `tests/fixtures/github-evidence/` plus the pilot corpus, runs
+// `observe`/`project` (both with and without `--require-independent-review`)
+// against each, and validates every record actually produced — not just
+// one hand-picked example — against `schemas/experimental/` using the same
+// `--instances` mechanism `experimental_schema_conformance.rs` already
+// uses. A capture that hard-refuses (most of the adversarial fixtures now
+// do, by design — S1/S4/S10/S12/S13) contributes no instance and is simply
+// skipped; there is nothing to validate from a command that never emitted a
+// record.
+// ---------------------------------------------------------------------
+
+fn find_manifests(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            find_manifests(&path, out);
+        } else if matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("manifest.json") | Some("capture_manifest.v0.json")
+        ) {
+            out.push(path);
+        }
+    }
+}
+
+/// Routes by the record's own `schema` field — every typed record in this
+/// family carries one (`GITHUB_*_SCHEMA`, `model.rs`), and the experimental
+/// schema gate already proves each such constant is byte-identical to its
+/// shipped schema's own `$id` (`rust_constant_id_mismatch`,
+/// `scripts/experimental-schema-conformance.py::run_checks`, exercised by
+/// `inventory_examples_references_and_negative_fixtures_are_gated` in
+/// `tests/experimental_schema_conformance.rs`) — that same gate also proves
+/// the schema's declared `properties.schema.const` (if any) equals its own
+/// `$id`, which is why the wire field and the schema id are one fact, not
+/// two that could drift apart. Deliberately not a hardcoded per-field/per-
+/// command schema_id map: that map is exactly the thing that goes stale
+/// the day a new contract is added and nobody remembers to extend it here
+/// — reading the record's own declared identity means a new contract is
+/// validated automatically the first time this test produces one, not
+/// silently skipped.
+fn push_instance(instances: &mut Vec<Value>, instance: &Value) {
+    let schema_id = instance["schema"].as_str().unwrap_or_else(|| {
+        panic!("record has no \"schema\" field to route it to a shipped schema: {instance}")
+    });
+    instances.push(serde_json::json!({"schema_id": schema_id, "instance": instance}));
+}
+
+fn push_array_instances(instances: &mut Vec<Value>, array: &Value) {
+    for item in array.as_array().unwrap_or(&Vec::new()) {
+        push_instance(instances, item);
+    }
+}
+
+fn run_schema_conformance_gate(instances: &[Value]) {
+    let bundle = std::env::temp_dir().join(format!(
+        "casegraphen-github-evidence-schema-instances-{}.json",
+        std::process::id()
+    ));
+    fs::write(&bundle, serde_json::to_vec(instances).unwrap()).expect("write instance bundle");
+    let status = Command::new("python3")
+        .arg("scripts/experimental-schema-conformance.py")
+        .arg("--instances")
+        .arg(&bundle)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status()
+        .expect("run experimental schema conformance gate");
+    let _ = fs::remove_file(&bundle);
+    assert!(
+        status.success(),
+        "a record produced from a real capture failed to validate against its shipped schema"
+    );
+}
+
+#[test]
+fn every_produced_record_across_the_pilot_and_every_fixture_validates_against_its_shipped_schema() {
+    let mut manifests = vec![manifest_path()];
+    find_manifests(
+        &root().join("tests/fixtures/github-evidence"),
+        &mut manifests,
+    );
+    assert!(
+        manifests.len() > 15,
+        "sanity: expected to discover most of tests/fixtures/github-evidence's manifests, \
+         found {}",
+        manifests.len()
+    );
+
+    let mut instances: Vec<Value> = Vec::new();
+    for manifest in &manifests {
+        let capture_dir = manifest.parent().unwrap();
+
+        let observed = observe_output(manifest, capture_dir);
+        if observed.status.success() {
+            let value: Value = serde_json::from_slice(&observed.stdout).unwrap_or_else(|error| {
+                panic!("{}: observe stdout JSON: {error}", manifest.display())
+            });
+            let result = &value["result"];
+            push_instance(&mut instances, &result["pr_observation"]);
+            push_instance(&mut instances, &result["independence"]);
+            push_array_instances(&mut instances, &result["check_evidence"]);
+            push_array_instances(&mut instances, &result["review_findings"]);
+        }
+
+        for require_independent_review in [false, true] {
+            let projected = project_output(manifest, capture_dir, require_independent_review);
+            if !projected.status.success() {
+                continue;
+            }
+            let value: Value = serde_json::from_slice(&projected.stdout).unwrap_or_else(|error| {
+                panic!("{}: project stdout JSON: {error}", manifest.display())
+            });
+            let result = &value["result"];
+            push_instance(&mut instances, &result["projection"]);
+            push_instance(&mut instances, &result["independence"]);
+        }
+    }
+
+    // `refresh` needs a same-review-basis previous/current pair; walk the
+    // fixture directories that are shaped that way (a `previous`/`current`
+    // sibling pair, each with its own manifest) rather than every manifest
+    // above pairwise, which would mostly hit `stale_head` (no
+    // `refresh_result` fields beyond disposition to validate) or refuse on
+    // mismatched repositories/PR numbers.
+    let refresh_pairs = [
+        "disappearing-checks",
+        "edited-review-comments",
+        "single-check-changed",
+    ];
+    for case in refresh_pairs {
+        let base = fixture_dir(case);
+        let previous_dir = base.join("previous");
+        let current_dir = base.join("current");
+        let output = run(&[
+            "github",
+            "refresh",
+            "--manifest",
+            current_dir.join("manifest.json").to_str().unwrap(),
+            "--capture-dir",
+            current_dir.to_str().unwrap(),
+            "--previous-manifest",
+            previous_dir.join("manifest.json").to_str().unwrap(),
+            "--previous-capture-dir",
+            previous_dir.to_str().unwrap(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            output.status.success(),
+            "{case}: refresh stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).expect("refresh stdout JSON");
+        push_instance(&mut instances, &value["result"]["refresh_result"]);
+    }
+    // The pilot refreshed against itself (`head_unchanged`, the shape with
+    // the most populated fields of any disposition).
+    let pilot_refresh = refresh(
+        &manifest_path(),
+        &pilot_dir(),
+        &manifest_path(),
+        &pilot_dir(),
+    );
+    push_instance(&mut instances, &pilot_refresh["result"]["refresh_result"]);
+
+    assert!(
+        instances.len() > 30,
+        "sanity: expected a substantial number of produced-record instances, found {}",
+        instances.len()
+    );
+    run_schema_conformance_gate(&instances);
 }

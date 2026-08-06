@@ -215,6 +215,21 @@ impl NativeCliCommand {
     /// `parse_memory`: one `NativeOptions::parse` per operation, `--format
     /// json` required (no `--format text` — these are read-only reports,
     /// not `space reason`'s halt rendering), no `--store`.
+    ///
+    /// `--strict` is accepted on all three (S6): each can carry a domain
+    /// finding (`observe`'s cross-repository exclusions, `refresh`'s
+    /// `stale_head`, `project`'s blocking findings), and `--strict` is this
+    /// CLI's one existing mechanism for turning that into exit 2 rather
+    /// than an obstruction a caller must remember to check for in the JSON
+    /// body — the same convention `space reason --strict` already uses.
+    ///
+    /// `--require-independent-review` is accepted **only** on `project`
+    /// (S5) — it is the one operation that reads `options
+    /// .require_independent_review`; `observe`/`refresh` do not, so
+    /// `NativeOptions::parse_with_strict` (which refuses this flag) is used
+    /// for them instead of the combined parser, or the flag would parse
+    /// successfully on those two and then be silently dropped instead of
+    /// ever reaching `evaluate_independence`.
     fn parse_github(
         operation: OsString,
         args: impl IntoIterator<Item = OsString>,
@@ -222,11 +237,16 @@ impl NativeCliCommand {
         let operation = operation
             .to_str()
             .ok_or_else(|| NativeCliError::usage("github operation must be UTF-8"))?;
-        let options = NativeOptions::parse("github", args)?;
+        let options = if operation == "project" {
+            NativeOptions::parse_with_strict_and_require_independent_review("github", args)?
+        } else {
+            NativeOptions::parse_with_strict("github", args)?
+        };
         match operation {
             "observe" => Ok(Self::GithubObserve {
                 manifest: options.require_path("--manifest")?,
                 capture_dir: options.require_path("--capture-dir")?,
+                strict: options.strict,
                 output: options.output,
             }),
             "refresh" => Ok(Self::GithubRefresh {
@@ -235,12 +255,14 @@ impl NativeCliCommand {
                 previous_manifest: options.require_path("--previous-manifest")?,
                 previous_capture_dir: options.require_path("--previous-capture-dir")?,
                 previous_observation: options.previous_observation.clone(),
+                strict: options.strict,
                 output: options.output,
             }),
             "project" => Ok(Self::GithubProject {
                 manifest: options.require_path("--manifest")?,
                 capture_dir: options.require_path("--capture-dir")?,
                 require_independent_review: options.require_independent_review,
+                strict: options.strict,
                 output: options.output,
             }),
             _ => Err(NativeCliError::usage("unsupported github command")),

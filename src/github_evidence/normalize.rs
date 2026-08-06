@@ -71,16 +71,29 @@ pub struct NormalizedCapture {
     pub cross_repository_excluded: Vec<String>,
     /// Provider-reported `totalCount` versus the node count this capture
     /// actually received, retained so T4's `threads_truncated`/
-    /// `files_truncated` losses (design §8) can be derived from this output
-    /// alone — T4 must not re-parse the raw artifacts itself, or provider
-    /// parsing would exist in two places (CLAUDE.md: a decision rule has
-    /// exactly one implementation). Covers every category whose captured
-    /// GraphQL connection reports a `totalCount` alongside its `nodes`
-    /// (`reviews`, `review_threads`, and each thread's `comments`); the `pr`
-    /// artifact's `files` array carries no such count in the `gh --json`
-    /// shape this adapter reads, so file-level truncation is not detectable
-    /// from this capture family at all — not an omission here, a limit of
-    /// what `gh pr view --json files` reports.
+    /// `reviews_truncated`/`contexts_truncated` losses (design §8) can be
+    /// derived from this output alone — T4 must not re-parse the raw
+    /// artifacts itself, or provider parsing would exist in two places
+    /// (CLAUDE.md: a decision rule has exactly one implementation). Covers
+    /// `reviews`, `review_threads`, each thread's `comments`, and the
+    /// `checks` artifact's `contexts` connection (S2 fix: this used to be
+    /// silently discarded — `GraphQlContextsConnection` read only `nodes` —
+    /// even though the pilot corpus's own retained fixtures carry the
+    /// count, e.g. `pr-101-checks.json`'s `contexts.totalCount: 3`).
+    ///
+    /// The `commits` connection is deliberately *not* covered here: it is
+    /// the source of `implementation_actors`, the independence trust root
+    /// (§6), and a truncated commits page can only ever *shrink* that set —
+    /// which flips a real self-review into an apparent independent
+    /// approval, never the safe direction. A declared loss with a footnote
+    /// would still let a caller read `satisfied: true`; `normalize()`
+    /// refuses outright on a detected commits truncation instead, before
+    /// this struct is even built, so that never happens silently.
+    ///
+    /// The `pr` artifact's `files` array carries no total count at all in
+    /// the `gh --json` shape this adapter reads, so file-level truncation
+    /// is not detectable from this capture family — not an omission here, a
+    /// limit of what `gh pr view --json files` reports.
     pub capture_totals: CaptureTotals,
 }
 
@@ -91,13 +104,32 @@ pub struct CaptureTotals {
     pub review_threads_reported_total: u64,
     pub review_threads_received: u64,
     pub thread_comment_totals: Vec<ThreadCommentTotals>,
+    /// The checks artifact's `contexts` connection (design §3.3):
+    /// `reported_total == 0` when the head commit's rollup carries no
+    /// `contexts` field at all (`totalCount` absent from the capture), which
+    /// is indistinguishable from "genuinely zero checks" — both read as no
+    /// truncation, which is the correct, conservative reading: this adapter
+    /// declares a truncation only when it can actually see the provider
+    /// under-reported.
+    pub contexts_reported_total: u64,
+    pub contexts_received: u64,
 }
 
+/// One entry per thread the `review_threads` connection reported, kept
+/// independent of whether any comment finding survived (S10): a thread
+/// whose comments were not received still carries a path and a resolution
+/// state, and `projection.rs` needs both to (a) connect a `threads_truncated`
+/// loss to the file it is about, (b) count the thread among
+/// `unresolved_threads` even when it produced zero findings to derive that
+/// from, and (c) refuse to call that file's `can_skim` claim "no review
+/// findings recorded" when findings were in fact withheld, not absent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThreadCommentTotals {
     pub thread_id: String,
     pub reported_total: u64,
     pub received: u64,
+    pub path: Option<String>,
+    pub resolved: bool,
 }
 
 /// Normalizes one capture manifest against the artifact bytes under
@@ -146,6 +178,12 @@ pub fn normalize(
 
     let pr_read = one_of(&entries_read, CaptureCategory::Pr)?;
     let pr_mirror: GhPrMirror = parse_tolerant(&pr_read.bytes, "pr")?;
+    refuse_if_empty(&pr_mirror.title, "$.entries[category=pr].title")?;
+    refuse_if_empty(&pr_mirror.state, "$.entries[category=pr].state")?;
+    refuse_if_empty(
+        &pr_mirror.author.login,
+        "$.entries[category=pr].author.login",
+    )?;
     if pr_mirror.number != manifest.pr_number {
         return Err(refusal(
             "pr_number_mismatch",
@@ -188,9 +226,53 @@ pub fn normalize(
         })
         .collect();
     changed_files.sort_by(|left, right| left.path.cmp(&right.path));
+    // S13: a PR's changed-files list cannot legitimately name the same path
+    // twice — same injectivity invariant as S1/S4/S12. Left unrefused, a
+    // duplicate path yields two identical `can_skim` items for one file,
+    // silently doubling something the projection presents as a per-file
+    // fact.
+    for pair in changed_files.windows(2) {
+        if pair[0].path == pair[1].path {
+            return Err(refusal(
+                "duplicate_file_path",
+                "$.entries[category=files]",
+                &format!(
+                    "files artifact lists {} more than once — the capture is malformed or \
+                     forged",
+                    pair[0].path
+                ),
+            ));
+        }
+    }
 
     let commits_read = one_of(&entries_read, CaptureCategory::Commits)?;
     let commits_envelope: GraphQlCommitsEnvelope = parse_tolerant(&commits_read.bytes, "commits")?;
+    let commits_connection = &commits_envelope.data.repository.pull_request.commits;
+    // S2: `implementation_actors` is the independence trust root (§6), and
+    // it is built from this connection's `nodes` alone. The documented
+    // capture query is `commits(first:100)` — any PR with more than 100
+    // commits truncates for real, not only under an adversarial capture —
+    // and a truncated page can only ever *shrink* the actor set, which
+    // silently turns a real self-review into an apparent independent
+    // approval (`self_review` -> `independent_human_candidate`). A declared
+    // loss would still let `evaluate_independence` report `satisfied: true`
+    // with a footnote a caller can miss; this is instead a hard refusal,
+    // before `implementation_actors` is ever built, so a truncated trust
+    // root can never quietly become an answer.
+    if (commits_connection.nodes.len() as u64) < commits_connection.total_count {
+        return Err(refusal(
+            "commits_capture_truncated",
+            "$.entries[category=commits].commits",
+            &format!(
+                "commits connection reported totalCount {} but the capture received only {} \
+                 commit node(s); the implementation actor set is the independence trust root \
+                 and cannot be built from a truncated commits capture — re-capture with \
+                 pagination (commits(first:100, after: $cursor))",
+                commits_connection.total_count,
+                commits_connection.nodes.len()
+            ),
+        ));
+    }
     let mut actor_ids: BTreeSet<String> = BTreeSet::new();
     let mut actor_logins: BTreeSet<String> = BTreeSet::new();
     actor_ids.insert(pr_author_id.clone());
@@ -230,7 +312,11 @@ pub fn normalize(
         ));
     }
     let mut check_evidence = Vec::new();
+    let mut contexts_reported_total: u64 = 0;
+    let mut contexts_received: u64 = 0;
     if let Some(rollup) = &checks_commit.commit.status_check_rollup {
+        contexts_reported_total = rollup.contexts.total_count;
+        contexts_received = rollup.contexts.nodes.len() as u64;
         for context in &rollup.contexts.nodes {
             check_evidence.push(build_check_evidence(
                 context,
@@ -239,6 +325,16 @@ pub fn normalize(
             )?);
         }
     }
+    // S12: `check_id` is derived from `(head_sha, kind, name, sha256(url))`
+    // and the url half falls back to `sha256("")` when the provider's own
+    // `detailsUrl`/`targetUrl` is null — two same-named `CheckRun`s with no
+    // `detailsUrl` collide on `check_id` despite differing `conclusion`,
+    // which breaches `uniqueItems` on `failed_checks`/`full_trace.check_ids`/
+    // `must_review[].subject_ids` the instant one of them fails. Same
+    // invariant as S1/S4: a subject id must be injective over everything a
+    // downstream rule distinguishes; fail closed rather than silently
+    // letting a passing check's id also resolve a failing one's record.
+    check_no_duplicate_check_ids(&check_evidence)?;
     check_evidence.sort_by(|left, right| {
         (left.kind, &left.name, &left.completed_at, &left.details_url).cmp(&(
             right.kind,
@@ -286,6 +382,22 @@ pub fn normalize(
     let review_threads_received = threads_pr.review_threads.nodes.len() as u64;
     let mut thread_comment_totals = Vec::new();
     for thread in threads_pr.review_threads.nodes {
+        // S10: a review thread is created *by* an initiating comment, so
+        // `comments.totalCount == 0` is a provider impossibility, not a
+        // legitimate empty state — refuse rather than let a
+        // metadata-only thread with no comments and thus no finding become
+        // silently invisible to `unresolved_threads`/`can_skim` downstream.
+        if thread.comments.total_count == 0 {
+            return Err(refusal(
+                "empty_review_thread",
+                "$.entries[category=review_threads]",
+                &format!(
+                    "thread {} reports comments.totalCount 0; a review thread cannot exist \
+                     without an initiating comment",
+                    thread.id
+                ),
+            ));
+        }
         let resolved_by = match thread.resolved_by {
             Some(actor) => match actor.id {
                 Some(id) => Some(ResolvedBy {
@@ -307,6 +419,8 @@ pub fn normalize(
             thread_id: thread.id,
             reported_total: thread.comments.total_count,
             received: thread.comments.nodes.len() as u64,
+            path: thread.path.clone(),
+            resolved: thread.is_resolved,
         });
         for (index, comment) in thread.comments.nodes.into_iter().enumerate() {
             review_findings.push(thread_comment_finding(
@@ -325,6 +439,8 @@ pub fn normalize(
         review_threads_reported_total,
         review_threads_received,
         thread_comment_totals,
+        contexts_reported_total,
+        contexts_received,
     };
 
     // Cross-repository references (design §7): excluded and declared, never
@@ -355,6 +471,16 @@ pub fn normalize(
         })
         .collect();
     cross_repository_excluded.sort();
+    // `finding_id` is `sha256(url)` (`finding_id_for`, below) and nothing
+    // upstream guarantees a capture's URLs are distinct. Two findings
+    // sharing a URL is a provider impossibility — a review or a thread
+    // comment identifies its own permalink — so a capture with this shape
+    // is malformed or forged, never a case to silently pick a winner for
+    // (S1: a `finding_id` collision let one finding's evidence role decide
+    // whether a *different* finding's approval satisfied the independence
+    // policy). Checked before collapse: `collapse_duplicate_findings`'s key
+    // does not include `finding_id`/url, so it would not catch this itself.
+    check_no_duplicate_finding_ids(&review_findings)?;
     let review_findings = collapse_duplicate_findings(review_findings);
 
     let mut issues = Vec::with_capacity(manifest.issue_numbers.len());
@@ -373,6 +499,8 @@ pub fn normalize(
                 "issue artifact number does not match its manifest issue_number",
             ));
         }
+        refuse_if_empty(&mirror.title, "$.entries[category=issue].title")?;
+        refuse_if_empty(&mirror.state, "$.entries[category=issue].state")?;
         let mut closed_by_pr_numbers: BTreeSet<u64> = mirror
             .closed_by_pull_requests_references
             .into_iter()
@@ -486,6 +614,24 @@ fn validate_repository_format(repository: &str) -> Result<(), MemoryValidationFi
 /// entries must correspond one-to-one with `manifest.issue_numbers`, and
 /// `issue_number` must be present exactly on `issue` entries.
 fn validate_category_shape(manifest: &CaptureManifest) -> Result<(), MemoryValidationFinding> {
+    // S4: `manifest.issue_numbers` must itself be a set. The loop below that
+    // matches each declared number against an `issue` entry only checks
+    // that a matching entry *exists*, not that the number is asked for once
+    // — so `[42, 42]` against a single `issue_number: 42` entry passed that
+    // check and then had normalize()'s per-issue loop push the same issue
+    // twice, duplicating a tool-computed record from a caller-repeated
+    // input. Caller input should not be able to shape the record's
+    // cardinality this way.
+    let mut declared_issue_numbers = BTreeSet::new();
+    for number in &manifest.issue_numbers {
+        if !declared_issue_numbers.insert(*number) {
+            return Err(refusal(
+                "duplicate_issue_number",
+                "$.issue_numbers",
+                &format!("manifest.issue_numbers declares issue {number} more than once"),
+            ));
+        }
+    }
     for category in [
         CaptureCategory::Pr,
         CaptureCategory::Files,
@@ -577,6 +723,32 @@ fn read_entry(
 ) -> Result<EntryRead, MemoryValidationFinding> {
     let canonical_artifact =
         resolve_confined_artifact(canonical_capture_dir, &entry.artifact_path)?;
+    // S7 ruling (informational, no code change): this distinguishes
+    // `artifact_unreadable` — including the raw io error — from
+    // `resolve_confined_artifact`'s `artifact_path_escape`, whereas
+    // `native_cli/ops/mutations.rs::prepare_claim` deliberately folds the
+    // equivalent in-root-but-unreadable case into the single
+    // `CONFINEMENT_REFUSAL` (reasoning at that file's `prepare_claim` doc
+    // comment, ~:390-401). Left as-is on purpose, not an inconsistency to
+    // fix: the two callers sit on different sides of the trust boundary
+    // this contract already draws elsewhere (§6.1) between "declared basis
+    // the operator supplied" and "capture the operator's own tool wrote".
+    // `prepare_claim` folds because a *proposer* names an artifact inside a
+    // packet the operator did not necessarily create themselves — a
+    // missing-vs-directory distinction there is exactly the issue-#21
+    // existence oracle. Here, both halves of that oracle are already
+    // identical outside the capture root: `resolve_confined_artifact`
+    // returns the same `artifact_path_escape` with only the relative path
+    // as detail whether the target is missing entirely or an escaping
+    // symlink (verified: `artifact_path_escape_is_a_hard_refusal`, below).
+    // What differs is only *inside* an operator-supplied `--capture-dir` in
+    // this store-free, read-only command family — an operator who already
+    // owns the directory they just pointed `--capture-dir` at gains nothing
+    // from a name inside it being confined to "missing vs. unreadable" the
+    // way a claim inside a shared packet does. Folding here would trade a
+    // useful io error (e.g. "is a directory", a real permission failure)
+    // for no additional confinement, on a path that is not gated behind an
+    // operation gate.
     let bytes = fs::read(&canonical_artifact).map_err(|source| {
         refusal(
             "artifact_unreadable",
@@ -717,6 +889,25 @@ fn refusal(code: &str, location: &str, detail: &str) -> MemoryValidationFinding 
     }
 }
 
+/// S13: every record schema in this family declares its identity/title
+/// provider strings `minLength: 1` (`title`, `login`, `state`, …), but the
+/// Rust mirrors read them as plain `String` with no non-emptiness check —
+/// an empty provider string passed straight through and produced a record
+/// that failed its own shipped schema on five separate fields at once. One
+/// shared check at each site that reads such a field, rather than a
+/// bespoke `if foo.is_empty()` per call site (CLAUDE.md: a decision rule
+/// has exactly one implementation).
+fn refuse_if_empty(value: &str, location: &str) -> Result<(), MemoryValidationFinding> {
+    if value.is_empty() {
+        return Err(refusal(
+            "empty_required_string",
+            location,
+            &format!("{location} is empty; the provider field must be non-empty"),
+        ));
+    }
+    Ok(())
+}
+
 fn content_hash_of(text: &str) -> String {
     format!("sha256:{}", sha256_hex(text.as_bytes()))
 }
@@ -771,6 +962,10 @@ fn require_commit_actor(
             &format!("commit {role} user is missing its GitHub node id"),
         )
     })?;
+    refuse_if_empty(
+        &user.login,
+        &format!("$.entries[category=commits].commit.{role}.user.login"),
+    )?;
     Ok((id, user.login))
 }
 
@@ -868,6 +1063,28 @@ fn thread_comment_finding(
 /// reads it to decide something; a field that is purely descriptive (e.g.
 /// `thread.resolved_by`, `authorAssociation`) does not.
 ///
+/// `actionable` is deliberately **not** in this key, even though
+/// `evaluate_independence` reads it (`findings.iter().filter(|finding|
+/// finding.actionable)`), for the opposite reason a field usually earns a
+/// spot here: within one collapse group, `actionable` is not a fact about
+/// the *obligation* being observed, it is an artifact of which occurrence
+/// happened to be `index == 0` in the connection (`thread_comment_finding`'s
+/// `is_opener`) — the real "duplicate bot findings" case is two identical
+/// comments in one thread where exactly one of them is the opener, so
+/// keying on `actionable` would split every such duplicate into two
+/// findings instead of one and defeat the collapse entirely. (S11 fix,
+/// below the representative-selection loop: the representative's
+/// `actionable` is the logical OR across the whole group, not whichever the
+/// `(authored_at, url)` tie-break happens to select — the tie-break used to
+/// leave `actionable` at whatever the survivor's own value was, so on an
+/// `authored_at` tie, **lexicographic URL order** — `#discussion_r100` <
+/// `#discussion_r99`, not creation order — could silently pick the
+/// non-opener as representative and demote a genuinely unresolved
+/// actionable obligation to Should Review with no trace of the discarded
+/// `actionable: true` sibling anywhere in the record. OR-ing makes the
+/// representative's `actionable` a fact about the group, not about which
+/// member won a tie-break an adversarial capture can steer.)
+///
 /// A finding author without an id (`author.id.is_none()`) never collapses
 /// with anything regardless of the rest of the key, so its count is always
 /// conservatively preserved as separate findings. The tie-break (lowest
@@ -878,6 +1095,50 @@ fn thread_comment_finding(
 /// comments in one thread, one of them the opener) still collapses
 /// correctly under this key: same thread, same resolution state, same
 /// everything else, differing only in position.
+fn check_no_duplicate_finding_ids(
+    findings: &[ReviewFinding],
+) -> Result<(), MemoryValidationFinding> {
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for finding in findings {
+        if !seen.insert(finding.finding_id.as_str()) {
+            return Err(refusal(
+                "duplicate_finding_id",
+                "$.review_findings",
+                &format!(
+                    "two findings share finding_id {} (finding_id is sha256(url); a shared \
+                     URL is a provider impossibility) — the capture is malformed or forged",
+                    finding.finding_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// S12: `check_id` is not guaranteed injective (see the call site's
+/// comment) — two distinct checks can hash to the same id when the
+/// provider's own url field is null on both. Refuses rather than let
+/// `failed_checks`/`full_trace.check_ids`/`must_review[].subject_ids` carry
+/// a duplicate `uniqueItems`-breaching id that silently also names a
+/// different check's record.
+fn check_no_duplicate_check_ids(checks: &[CheckEvidence]) -> Result<(), MemoryValidationFinding> {
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for check in checks {
+        if !seen.insert(check.check_id.as_str()) {
+            return Err(refusal(
+                "duplicate_check_id",
+                "$.entries[category=checks]",
+                &format!(
+                    "two checks share check_id {} (name, kind, and url hash collide) — the \
+                     capture is malformed or forged",
+                    check.check_id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn collapse_duplicate_findings(findings: Vec<ReviewFinding>) -> Vec<ReviewFinding> {
     let mut groups: std::collections::BTreeMap<CollapseKey, Vec<ReviewFinding>> =
         std::collections::BTreeMap::new();
@@ -897,8 +1158,15 @@ fn collapse_duplicate_findings(findings: Vec<ReviewFinding>) -> Vec<ReviewFindin
             (&left.authored_at, &left.url).cmp(&(&right.authored_at, &right.url))
         });
         let duplicate_count = group.len() as u32;
+        // S11: `actionable` is a fact about the group (was *any* occurrence
+        // of this obligation the thread's opener?), computed before the
+        // representative is picked so the `(authored_at, url)` tie-break —
+        // which an adversarial capture can steer via URL — can never decide
+        // it by discarding the one occurrence that was `actionable: true`.
+        let any_actionable = group.iter().any(|finding| finding.actionable);
         let mut representative = group.remove(0);
         representative.duplicate_count = duplicate_count;
+        representative.actionable = any_actionable;
         collapsed.push(representative);
     }
     collapsed.extend(unattributed);
@@ -1263,8 +1531,14 @@ struct GraphQlCommitsPr {
     commits: GraphQlCommitsConnection,
 }
 
+/// `total_count` has no `#[serde(default)]`: the documented capture query
+/// always requests `totalCount` alongside `nodes` on this connection (S2),
+/// so a `commits` artifact missing it entirely is itself a malformed
+/// capture, not a value to silently default away.
 #[derive(Debug, Deserialize)]
 struct GraphQlCommitsConnection {
+    #[serde(rename = "totalCount")]
+    total_count: u64,
     nodes: Vec<GraphQlCommitConnectionNode>,
 }
 
@@ -1329,8 +1603,17 @@ struct GraphQlStatusCheckRollup {
 /// Heterogeneous `CheckRun`/`StatusContext` union — parsed generically and
 /// dispatched on `__typename` by `build_check_evidence` rather than an
 /// internally tagged enum, since the two variants share no field names.
+///
+/// `total_count` defaults to `0` when absent (unlike the `commits`
+/// connection's required `totalCount`, S2): `contexts` is not the
+/// independence trust root, so a capture that omits the count is a declared
+/// loss the caller can act on, not a hard refusal — and defaulting to `0`
+/// is the conservative reading (never wrongly claims a truncation the
+/// capture format cannot express).
 #[derive(Debug, Deserialize)]
 struct GraphQlContextsConnection {
+    #[serde(default, rename = "totalCount")]
+    total_count: u64,
     nodes: Vec<Value>,
 }
 
@@ -1451,7 +1734,7 @@ mod tests {
     fn commits_value() -> Value {
         json!({
             "data": {"repository": {"pullRequest": {
-                "commits": {"nodes": [
+                "commits": {"totalCount": 1, "nodes": [
                     {"commit": {
                         "author": {"user": {"__typename": "User", "login": "alice", "id": "actor:pr-author"}},
                         "committer": {"user": {"__typename": "User", "login": "alice", "id": "actor:pr-author"}}
@@ -1468,7 +1751,7 @@ mod tests {
                 "commits": {"nodes": [
                     {"commit": {
                         "oid": HEAD_SHA,
-                        "statusCheckRollup": {"contexts": {"nodes": [
+                        "statusCheckRollup": {"contexts": {"totalCount": 1, "nodes": [
                             {
                                 "__typename": "CheckRun",
                                 "name": "quality",
@@ -1593,7 +1876,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("create dir");
         let commits_without_id = json!({
             "data": {"repository": {"pullRequest": {
-                "commits": {"nodes": [
+                "commits": {"totalCount": 1, "nodes": [
                     {"commit": {
                         "author": {"user": {"login": "alice"}},
                         "committer": {"user": {"login": "alice"}}

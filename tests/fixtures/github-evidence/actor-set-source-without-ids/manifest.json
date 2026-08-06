@@ -33,13 +33,13 @@
     {
       "category": "commits",
       "artifact_path": "commits.json",
-      "content_hash": "sha256:2ceb8977f031c5aa7826865c819ae6867bd33352eee6e66f41d1d13da1e9ce63",
+      "content_hash": "sha256:aaf4c96a8973df99969b06a3b986941e722172c762bbd975f6bd4af8ca0c518f",
       "command_record": []
     },
     {
       "category": "checks",
       "artifact_path": "checks.json",
-      "content_hash": "sha256:7e7583fcec11fda28a220bd7a65536c6c8b2f0c5c75207ea38ac2bc7baa41af7",
+      "content_hash": "sha256:1cb7fe7cfd5c671863a61bd8d02b957a743a97613dbf23dd399cce958ad943ce",
       "command_record": []
     }
   ]

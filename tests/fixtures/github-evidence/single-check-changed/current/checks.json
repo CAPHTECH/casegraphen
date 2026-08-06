@@ -1,0 +1,63 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "statusCheckRollup": {
+                  "contexts": {
+                    "totalCount": 2,
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "stable-check",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "startedAt": "2026-01-01T04:00:00Z",
+                        "completedAt": "2026-01-01T04:10:00Z",
+                        "detailsUrl": "https://ci.example/stable",
+                        "checkSuite": {
+                          "app": {
+                            "slug": "github-actions"
+                          },
+                          "workflowRun": {
+                            "workflow": {
+                              "name": "Stable"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "__typename": "CheckRun",
+                        "name": "flipping-check",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "startedAt": "2026-01-01T04:00:00Z",
+                        "completedAt": "2026-01-01T04:20:00Z",
+                        "detailsUrl": "https://ci.example/flip",
+                        "checkSuite": {
+                          "app": {
+                            "slug": "github-actions"
+                          },
+                          "workflowRun": {
+                            "workflow": {
+                              "name": "Flip"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

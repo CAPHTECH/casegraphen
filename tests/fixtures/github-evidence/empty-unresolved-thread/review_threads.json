@@ -1,0 +1,27 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 7,
+        "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewThreads": {
+          "totalCount": 1,
+          "nodes": [
+            {
+              "id": "thread-ghost",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "a.rs",
+              "resolvedBy": null,
+              "comments": {
+                "totalCount": 0,
+                "nodes": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

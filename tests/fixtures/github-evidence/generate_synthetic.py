@@ -86,7 +86,7 @@ def base_commits(author_id=PR_AUTHOR_ID, author_login=PR_AUTHOR_LOGIN,
         if has_id:
             u["id"] = id_
         return u
-    return {"data": {"repository": {"pullRequest": {"commits": {"nodes": [
+    return {"data": {"repository": {"pullRequest": {"commits": {"totalCount": 1, "nodes": [
         {"commit": {
             "author": {"user": user(author_id, author_login, author_has_id)},
             "committer": {"user": user(committer_id, committer_login, committer_has_id)},
@@ -94,7 +94,23 @@ def base_commits(author_id=PR_AUTHOR_ID, author_login=PR_AUTHOR_LOGIN,
     ]}}}}}
 
 
-def base_checks(head_sha=HEAD_SHA, contexts=None):
+def commits_value(nodes, total_count=None):
+    """A `commits` capture with an explicit node list — used by the S2
+    truncated-commits fixture, where `total_count` must be able to disagree
+    with `len(nodes)`."""
+    if total_count is None:
+        total_count = len(nodes)
+    return {"data": {"repository": {"pullRequest": {
+        "commits": {"totalCount": total_count, "nodes": nodes},
+    }}}}
+
+
+def commit_node(actor_id, login):
+    user = {"__typename": "User", "login": login, "id": actor_id}
+    return {"commit": {"author": {"user": user}, "committer": {"user": user}}}
+
+
+def base_checks(head_sha=HEAD_SHA, contexts=None, contexts_total_count=None):
     contexts = contexts if contexts is not None else [{
         "__typename": "CheckRun", "name": "quality", "status": "COMPLETED",
         "conclusion": "SUCCESS", "startedAt": "2026-01-01T03:00:00Z",
@@ -103,17 +119,20 @@ def base_checks(head_sha=HEAD_SHA, contexts=None):
         "checkSuite": {"app": {"slug": "github-actions"},
                         "workflowRun": {"workflow": {"name": "Quality"}}},
     }]
+    if contexts_total_count is None:
+        contexts_total_count = len(contexts)
     return {"data": {"repository": {"pullRequest": {
         "headRefOid": head_sha,
         "commits": {"nodes": [{"commit": {
             "oid": head_sha,
-            "statusCheckRollup": {"contexts": {"nodes": contexts}},
+            "statusCheckRollup": {"contexts": {"totalCount": contexts_total_count, "nodes": contexts}},
         }}]},
     }}}}
 
 
 def write_capture(fixture_dir, pr, files, reviews, threads, commits, checks,
-                   repo=REPO, pr_number=PR_NUMBER, issue_numbers=None):
+                   repo=REPO, pr_number=PR_NUMBER, issue_numbers=None,
+                   issue=None, issue_number=None):
     issue_numbers = issue_numbers or []
     entries_spec = [
         ("pr", "pr.json", pr),
@@ -129,6 +148,14 @@ def write_capture(fixture_dir, pr, files, reviews, threads, commits, checks,
         data = write_json(path, value)
         entries.append({
             "category": category, "artifact_path": filename,
+            "content_hash": f"sha256:{sha256_hex(data)}", "command_record": [],
+        })
+    if issue is not None:
+        path = os.path.join(fixture_dir, "issue.json")
+        data = write_json(path, issue)
+        entries.append({
+            "category": "issue", "issue_number": issue_number,
+            "artifact_path": "issue.json",
             "content_hash": f"sha256:{sha256_hex(data)}", "command_record": [],
         })
     manifest = {
@@ -171,11 +198,13 @@ def thread_comment_node(comment_id, author, body="please fix",
 
 
 def thread_node(thread_id, comments, resolved=True, outdated=False, path="a.rs",
-                 resolved_by=None):
+                 resolved_by=None, comments_total_count=None):
+    if comments_total_count is None:
+        comments_total_count = len(comments)
     return {
         "id": thread_id, "isResolved": resolved, "isOutdated": outdated,
         "path": path, "resolvedBy": resolved_by,
-        "comments": {"totalCount": len(comments), "nodes": comments},
+        "comments": {"totalCount": comments_total_count, "nodes": comments},
     }
 
 
@@ -346,6 +375,264 @@ def build_edited_review_comments():
     )
 
 
+# ---------------------------------------------------------------------
+# colliding finding ids (S1): two review nodes share one URL, so
+# `finding_id = sha256(url)` collides — a self-review APPROVED-at-head
+# review and an outside COMMENTED review under the same finding_id. A
+# provider impossibility (a review's URL is its own permalink); the capture
+# must be refused, never normalized by picking a winner.
+# ---------------------------------------------------------------------
+def build_colliding_finding_ids():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "colliding-finding-ids")
+    self_reviewer = actor_object("User", PR_AUTHOR_LOGIN, PR_AUTHOR_ID)
+    outsider = actor_object("User", "carol", "actor:outside")
+    reviews = base_reviews([
+        review_node("pullrequestreview-1", "APPROVED", self_reviewer,
+                     body="shipping my own work", association="MEMBER"),
+        review_node("pullrequestreview-1", "COMMENTED", outsider,
+                     body="drive-by note from an outsider", association="NONE",
+                     submitted_at="2026-01-01T03:00:00Z"),
+    ])
+    write_capture(
+        fixture_dir, base_pr(), base_files(), reviews, base_threads(),
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# commits truncation (S2): a `full` capture (totalCount 2, 2 commit nodes —
+# pr-author and bob) and a `truncated` capture with the identical
+# totalCount but only the pr-author node. Same outside-shaped APPROVED
+# review from bob in both, to pin the boundary: `full` classifies bob as
+# self_review (he is an implementation actor) and does not satisfy the
+# independent-review policy; `truncated` must refuse outright rather than
+# silently let bob's shrunk-out-of-the-actor-set review look independent.
+# ---------------------------------------------------------------------
+def build_commits_truncation():
+    base_dir = os.path.join(FIXTURES_ROOT, "commits-truncation")
+    full_dir = os.path.join(base_dir, "full")
+    truncated_dir = os.path.join(base_dir, "truncated")
+    bob = actor_object("User", "bob", "actor:bob")
+    reviews = base_reviews([review_node("pullrequestreview-1", "APPROVED", bob)])
+    nodes = [
+        commit_node(PR_AUTHOR_ID, PR_AUTHOR_LOGIN),
+        commit_node("actor:bob", "bob"),
+    ]
+    write_capture(
+        full_dir, base_pr(), base_files(), reviews, base_threads(),
+        commits_value(nodes, total_count=2), base_checks(),
+    )
+    write_capture(
+        truncated_dir, base_pr(), base_files(), reviews, base_threads(),
+        commits_value(nodes[:1], total_count=2), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# single check changed (S3): same head, two checks in both captures —
+# `stable-check`'s conclusion never changes, `flipping-check`'s does
+# (SUCCESS -> FAILURE). Because both checks come from the same checks.json
+# file, the byte change to `flipping-check` renames every check's
+# `source_record_id` (derived from the whole-file hash) even though
+# `stable-check` did not change — the refresh must report only
+# `flipping-check`, never `stable-check`.
+# ---------------------------------------------------------------------
+def build_single_check_changed():
+    base_dir = os.path.join(FIXTURES_ROOT, "single-check-changed")
+    previous_dir = os.path.join(base_dir, "previous")
+    current_dir = os.path.join(base_dir, "current")
+
+    def contexts(flip_conclusion):
+        return [
+            {"__typename": "CheckRun", "name": "stable-check", "status": "COMPLETED",
+             "conclusion": "SUCCESS", "startedAt": "2026-01-01T04:00:00Z",
+             "completedAt": "2026-01-01T04:10:00Z", "detailsUrl": "https://ci.example/stable",
+             "checkSuite": {"app": {"slug": "github-actions"},
+                             "workflowRun": {"workflow": {"name": "Stable"}}}},
+            {"__typename": "CheckRun", "name": "flipping-check", "status": "COMPLETED",
+             "conclusion": flip_conclusion, "startedAt": "2026-01-01T04:00:00Z",
+             "completedAt": "2026-01-01T04:20:00Z", "detailsUrl": "https://ci.example/flip",
+             "checkSuite": {"app": {"slug": "github-actions"},
+                             "workflowRun": {"workflow": {"name": "Flip"}}}},
+        ]
+
+    write_capture(
+        previous_dir, base_pr(), base_files(), base_reviews(), base_threads(),
+        base_commits(), base_checks(contexts=contexts("SUCCESS")),
+    )
+    write_capture(
+        current_dir, base_pr(), base_files(), base_reviews(), base_threads(),
+        base_commits(), base_checks(contexts=contexts("FAILURE")),
+    )
+
+
+# ---------------------------------------------------------------------
+# duplicate issue number (S4): `manifest.issue_numbers` declares issue 42
+# twice against a single matching `issue` entry. Caller input must not be
+# able to shape a tool-computed record's cardinality this way.
+# ---------------------------------------------------------------------
+def build_duplicate_issue_number():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "duplicate-issue-number")
+    issue = {
+        "number": 42, "title": "Some issue", "state": "OPEN",
+        "url": f"https://github.com/{REPO}/issues/42",
+        "createdAt": "2026-01-01T00:00:00Z", "body": "issue body",
+    }
+    write_capture(
+        fixture_dir, base_pr(), base_files(), base_reviews(), base_threads(),
+        base_commits(), base_checks(),
+        issue_numbers=[42, 42], issue=issue, issue_number=42,
+    )
+
+
+# ---------------------------------------------------------------------
+# outside human commented review (S9): a non-actionable review summary
+# (review summaries are never actionable, `normalize.rs`) from an
+# independent human candidate who did not approve. Before the fix this
+# reached no tier and no finding list at all.
+# ---------------------------------------------------------------------
+def build_outside_human_commented_review():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "outside-human-commented-review")
+    outsider = actor_object("User", "carol", "actor:outside")
+    reviews = base_reviews([review_node(
+        "pullrequestreview-1", "COMMENTED", outsider,
+        body="I am not convinced the gate actually holds; please justify before merging.",
+        association="NONE",
+    )])
+    write_capture(
+        fixture_dir, base_pr(), base_files(), reviews, base_threads(),
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# truncated thread (S10): `comments.totalCount: 3`, zero comment nodes
+# received, on file `b.rs`. `unresolved_threads`/`can_skim`/the
+# `threads_truncated` loss must all still account for it.
+# ---------------------------------------------------------------------
+def build_truncated_thread():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "truncated-thread")
+    threads = base_threads(nodes=[
+        thread_node("thread-truncated", [], resolved=False, path="b.rs", comments_total_count=3)
+    ])
+    write_capture(
+        fixture_dir, base_pr(), base_files(), base_reviews(), threads,
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# empty unresolved thread (S10): `comments.totalCount: 0` — a review
+# thread with no initiating comment is a provider impossibility. Hard
+# refusal, not a silently invisible thread.
+# ---------------------------------------------------------------------
+def build_empty_unresolved_thread():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "empty-unresolved-thread")
+    threads = base_threads(nodes=[
+        thread_node("thread-ghost", [], resolved=False, path="a.rs", comments_total_count=0)
+    ])
+    write_capture(
+        fixture_dir, base_pr(), base_files(), base_reviews(), threads,
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# collapse loses actionable (S11): a byte-identical pair (`-e`/`-f`)
+# differing only in which of two duplicate thread comments' URL suffixes
+# sorts first. Before the fix, the `(authored_at, url)` collapse tie-break
+# on an `authored_at` tie decided `actionable` by URL order rather than by
+# which occurrence was the thread's actual opener.
+# ---------------------------------------------------------------------
+def build_collapse_actionable_pair():
+    bot = actor_object("Bot", "reviewbot", "actor:bot-1")
+    same_created_at = "2026-01-01T02:30:00Z"
+
+    def comments(opener_suffix, reply_suffix):
+        return [
+            thread_comment_node(opener_suffix, bot, body="dup", created_at=same_created_at),
+            thread_comment_node(reply_suffix, bot, body="dup", created_at=same_created_at),
+        ]
+
+    # E: the opener's URL suffix (`discussion_r99`) sorts *after* the
+    # reply's (`discussion_r100`) — `"discussion_r100" < "discussion_r99"`
+    # lexicographically (`'1' < '9'` at the first differing digit) — so the
+    # pre-fix tie-break survivor was the reply, not the opener.
+    write_capture(
+        os.path.join(FIXTURES_ROOT, "collapse-actionable-e"),
+        base_pr(), base_files(), base_reviews(),
+        base_threads(nodes=[
+            thread_node("thread-1", comments("discussion_r99", "discussion_r100"), resolved=False)
+        ]),
+        base_commits(), base_checks(),
+    )
+    # F (control): identical in every other respect; only the two URL
+    # suffixes are swapped, so the same pre-fix tie-break happens to survive
+    # on the opener instead.
+    write_capture(
+        os.path.join(FIXTURES_ROOT, "collapse-actionable-f"),
+        base_pr(), base_files(), base_reviews(),
+        base_threads(nodes=[
+            thread_node("thread-1", comments("discussion_r100", "discussion_r99"), resolved=False)
+        ]),
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# colliding check ids (S12): two `CheckRun`s named `build` with no
+# `detailsUrl`, one `SUCCESS` and one `FAILURE` — `check_id` hashes the
+# absent url as `sha256("")` for both, colliding despite differing
+# `conclusion`.
+# ---------------------------------------------------------------------
+def build_colliding_check_ids():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "colliding-check-ids")
+    contexts = [
+        {"__typename": "CheckRun", "name": "build", "status": "COMPLETED",
+         "conclusion": "SUCCESS", "startedAt": "2026-01-01T03:00:00Z",
+         "completedAt": "2026-01-01T03:05:00Z"},
+        {"__typename": "CheckRun", "name": "build", "status": "COMPLETED",
+         "conclusion": "FAILURE", "startedAt": "2026-01-01T03:10:00Z",
+         "completedAt": "2026-01-01T03:15:00Z"},
+    ]
+    write_capture(
+        fixture_dir, base_pr(), base_files(), base_reviews(), base_threads(),
+        base_commits(), base_checks(contexts=contexts),
+    )
+
+
+# ---------------------------------------------------------------------
+# empty pr title (S13): an empty provider `title` string passes the Rust
+# owners untouched and produces a record breaching its shipped schema's
+# `minLength: 1`.
+# ---------------------------------------------------------------------
+def build_empty_pr_title():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "empty-pr-title")
+    pr = base_pr()
+    pr["title"] = ""
+    write_capture(
+        fixture_dir, pr, base_files(), base_reviews(), base_threads(),
+        base_commits(), base_checks(),
+    )
+
+
+# ---------------------------------------------------------------------
+# duplicate file path (S13): the `files` artifact lists the same path
+# twice — a provider impossibility (`changeType` is a fact about one path,
+# not two), left unrefused it doubles `can_skim`'s per-file claim.
+# ---------------------------------------------------------------------
+def build_duplicate_file_path():
+    fixture_dir = os.path.join(FIXTURES_ROOT, "duplicate-file-path")
+    files = {"files": [
+        {"path": "a.rs", "additions": 1, "deletions": 0, "changeType": "ADDED"},
+        {"path": "a.rs", "additions": 2, "deletions": 1, "changeType": "MODIFIED"},
+    ]}
+    write_capture(
+        fixture_dir, base_pr(), files, base_reviews(), base_threads(),
+        base_commits(), base_checks(),
+    )
+
+
 if __name__ == "__main__":
     build_actor_substitution()
     build_association_not_independence()
@@ -355,4 +642,15 @@ if __name__ == "__main__":
     build_cross_repository_references()
     build_disappearing_checks()
     build_edited_review_comments()
+    build_colliding_finding_ids()
+    build_commits_truncation()
+    build_single_check_changed()
+    build_duplicate_issue_number()
+    build_outside_human_commented_review()
+    build_truncated_thread()
+    build_empty_unresolved_thread()
+    build_collapse_actionable_pair()
+    build_colliding_check_ids()
+    build_empty_pr_title()
+    build_duplicate_file_path()
     print("done")

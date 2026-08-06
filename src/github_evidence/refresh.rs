@@ -146,6 +146,27 @@ fn liveness_changes(previous: &PrObservation, current: &PrObservation) -> Vec<Ob
     }]
 }
 
+/// Whether two observations of the *same* `check_id` (checked by the caller
+/// via the `BTreeMap` join below) differ in a way that matters for refresh
+/// drift — status/conclusion/state, exactly what the `"status/conclusion
+/// changed"` detail message asserts. Deliberately **not** a whole-struct
+/// `!=` (S3): `CheckEvidence.source_record_id` is derived from the hash of
+/// the entire `checks.json` capture (`normalize.rs`'s `read_entry`), so any
+/// byte change anywhere in that file — even to a *different* check, or to a
+/// check that disappeared, which already gets its own `Removed` entry —
+/// renames every surviving check's `source_record_id` and made the whole
+/// struct compare unequal, reporting every unrelated check as `changed` too.
+/// `source_record_id` and the check's own identity fields (`check_id`,
+/// `head_sha`, `name`, …) are properties of the *artifact*, not outcomes a
+/// refresh should be diffing; comparing only the fields the detail message
+/// actually claims changed keeps that message true of what was compared.
+fn check_result_changed(previous: &CheckEvidence, current: &CheckEvidence) -> bool {
+    previous.kind != current.kind
+        || previous.status != current.status
+        || previous.conclusion != current.conclusion
+        || previous.state != current.state
+}
+
 fn check_changes(previous: &[CheckEvidence], current: &[CheckEvidence]) -> Vec<ObservationChange> {
     let mut changes = Vec::new();
     let previous_by_id: BTreeMap<&str, &CheckEvidence> = previous
@@ -168,12 +189,14 @@ fn check_changes(previous: &[CheckEvidence], current: &[CheckEvidence]) -> Vec<O
                     check.name
                 ),
             }),
-            Some(current_check) if current_check != check => changes.push(ObservationChange {
-                category: "checks".to_owned(),
-                change: ObservationChangeKind::Changed,
-                subject_id: (*check_id).to_owned(),
-                detail: format!("check {} status/conclusion changed", check.name),
-            }),
+            Some(current_check) if check_result_changed(check, current_check) => {
+                changes.push(ObservationChange {
+                    category: "checks".to_owned(),
+                    change: ObservationChangeKind::Changed,
+                    subject_id: (*check_id).to_owned(),
+                    detail: format!("check {} status/conclusion changed", check.name),
+                })
+            }
             Some(_) => {}
         }
     }
@@ -312,6 +335,8 @@ mod tests {
             review_threads_reported_total: 0,
             review_threads_received: 0,
             thread_comment_totals: Vec::new(),
+            contexts_reported_total: 0,
+            contexts_received: 0,
         }
     }
 
@@ -442,6 +467,71 @@ mod tests {
                 detail: "check quality present in the previous observation is absent now"
                     .to_owned(),
             }]
+        );
+    }
+
+    /// S3 regression: `CheckEvidence.source_record_id` is derived from the
+    /// hash of the *entire* `checks.json` capture (`normalize.rs`), so any
+    /// byte change anywhere in that file renames every check's
+    /// `source_record_id` even when a given check's own status/conclusion
+    /// did not change. A whole-struct `!=` comparison then reports that
+    /// check as `changed`, which is untrue — `check_changes` must compare
+    /// only the fields the `"status/conclusion changed"` detail asserts.
+    #[test]
+    fn a_provenance_only_field_change_is_not_reported_as_a_result_change() {
+        let previous = observation(HEAD_SHA);
+        let mut previous_check = check("check:stable", "SUCCESS");
+        previous_check.source_record_id = "github-source:checks:sha256-before".to_owned();
+        let previous_checks = vec![previous_check.clone()];
+
+        let mut current_check = previous_check.clone();
+        current_check.source_record_id = "github-source:checks:sha256-after".to_owned();
+        let current = capture(observation(HEAD_SHA), vec![current_check], Vec::new());
+
+        let result =
+            classify_refresh(&previous, &previous_checks, &[], &current).expect("classify_refresh");
+        assert!(
+            result.observation_changes.is_empty(),
+            "a provenance-only field change must not be reported as a result change: {:?}",
+            result.observation_changes
+        );
+    }
+
+    /// Same shape as above, but a *sibling* check's conclusion also flips —
+    /// the reproduction that matters: one check's real drift must not bury
+    /// itself among false positives for every other check whose bytes moved
+    /// only because they share one `checks.json` capture.
+    #[test]
+    fn only_the_check_whose_result_changed_is_reported() {
+        let previous = observation(HEAD_SHA);
+        let mut previous_stable = check("check:stable", "SUCCESS");
+        previous_stable.source_record_id = "github-source:checks:sha256-before".to_owned();
+        let mut previous_flipping = check("check:flip", "SUCCESS");
+        previous_flipping.source_record_id = "github-source:checks:sha256-before".to_owned();
+        let previous_checks = vec![previous_stable.clone(), previous_flipping.clone()];
+
+        let mut current_stable = previous_stable.clone();
+        current_stable.source_record_id = "github-source:checks:sha256-after".to_owned();
+        let mut current_flipping = previous_flipping.clone();
+        current_flipping.source_record_id = "github-source:checks:sha256-after".to_owned();
+        current_flipping.conclusion = Some("FAILURE".to_owned());
+        let current = capture(
+            observation(HEAD_SHA),
+            vec![current_stable, current_flipping],
+            Vec::new(),
+        );
+
+        let result =
+            classify_refresh(&previous, &previous_checks, &[], &current).expect("classify_refresh");
+        assert_eq!(
+            result.observation_changes,
+            vec![ObservationChange {
+                category: "checks".to_owned(),
+                change: ObservationChangeKind::Changed,
+                subject_id: "check:flip".to_owned(),
+                detail: "check quality status/conclusion changed".to_owned(),
+            }],
+            "check:stable's own result did not change and must not appear"
         );
     }
 

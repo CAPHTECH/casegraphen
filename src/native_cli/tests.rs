@@ -608,6 +608,41 @@ fn run_and_operate_since_revision_is_still_refused() {
     }
 }
 
+/// S5: `--require-independent-review` used to have no `if` guard at all in
+/// `consume_arg` (unlike the `--strict` arm directly above it, gated on
+/// `strict_allowed`), so every `NativeOptions::parse*` call site accepted
+/// it — including `space inspect`, which has no field to carry it to and
+/// silently dropped it. Same regression class `run_and_operate_since_
+/// revision_is_still_refused` above guards for `--since-revision`: a flag
+/// must refuse with the generic "unsupported native argument" error
+/// wherever nothing reads it, not parse successfully and vanish.
+#[test]
+fn require_independent_review_is_refused_outside_github_project() {
+    let error = NativeCliCommand::parse(
+        "space",
+        args(&[
+            "inspect",
+            "--store",
+            "store",
+            "--case-space-id",
+            "case_space:demo",
+            "--require-independent-review",
+            "--format",
+            "json",
+        ]),
+    )
+    .expect_err("space inspect must refuse --require-independent-review");
+    assert!(
+        matches!(
+            &error,
+            NativeCliError::Usage(message)
+                if message.contains("unsupported native argument")
+                    && message.contains("--require-independent-review")
+        ),
+        "space inspect --require-independent-review produced an unexpected error: {error:?}"
+    );
+}
+
 /// Issue #35: `run --step`/`run --frontier`/`operate` accept `--format
 /// text` now that they parse with `NativeOptions::parse_reason`, and the
 /// command carries that format through to `.format()` for `run_rendered`

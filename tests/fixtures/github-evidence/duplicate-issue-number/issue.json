@@ -1,0 +1,8 @@
+{
+  "number": 42,
+  "title": "Some issue",
+  "state": "OPEN",
+  "url": "https://github.com/OWNER/repo/issues/42",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "body": "issue body"
+}
