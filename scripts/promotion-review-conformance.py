@@ -169,18 +169,18 @@ def main() -> int:
     if decision != {"contract": "experimental-v0", "promotion_recommended": False, "accepted": False}:
         failures.append("promotion inventory must retain experimental-v0 and reject promotion")
 
-    product = load(ROOT / "docs/product-surface.v0.json")
-    contracts = load(ROOT / "schemas/experimental/contracts.v0.json")
-    pilot = load(ROOT / "docs/pilots/issue-76/pilot-report.json")
+    # The inventory used to also store `workflow_count`, `runtime_family_count`
+    # and `experimental_contract_count`, each checked here against the length of
+    # a list this script loaded three lines above. Because the check forced
+    # equality with the current tree, a stored count could never differ from its
+    # source, so it could not record what a reviewer saw at review time either —
+    # it was a copy, not an attestation, and it conflicted on every parallel
+    # branch that added a contract. The counts are derived from
+    # `product-surface.v0.json`, `pilot-report.json` and `contracts.v0.json`
+    # directly; do not store them here again.
     surface = inventory.get("surface", {})
-    if surface.get("workflow_count") != len(product.get("workflows", [])):
-        failures.append("promotion workflow count is stale")
-    if surface.get("runtime_family_count") != len(pilot.get("adapters", [])):
-        failures.append("promotion runtime-family count is stale")
     if surface.get("experimental_contract_version") != 0:
         failures.append("promotion contract version must describe experimental v0")
-    if surface.get("experimental_contract_count") != len(contracts.get("contracts", [])):
-        failures.append("promotion experimental-contract count is stale")
 
     facts: dict[str, dict[str, Any]] = {}
     for fact in inventory.get("evidence_facts", []):
