@@ -610,3 +610,125 @@ fn sequence_and_chunk_identity_collisions_are_not_hidden_by_deduplication() {
     }
     assert!(result.stage_release_proposals.is_empty());
 }
+
+fn root() -> &'static std::path::Path {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn schema_path() -> std::path::PathBuf {
+    root().join("schemas/experimental/streaming.reconciliation.v0.schema.json")
+}
+
+/// ADR 0034 / #117 pattern: validate a real result against the shipped
+/// contract rather than asserting about the schema in the abstract.
+fn validates_against_streaming_schema(instance: &serde_json::Value) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-streaming-reconciliation-{}-{nonce}.json",
+        std::process::id()
+    ));
+    std::fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = std::process::Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(schema_path())
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = std::fs::remove_file(&file);
+    status.success()
+}
+
+/// The exact scenario `a_slow_sibling_allows_safe_progress_without_hiding_incompleteness`
+/// exercises: one node terminal, one sibling still pending, one safe early
+/// release. Reused here so the schema is validated against a real,
+/// non-trivial `reconcile_stream` output rather than a hand-typed instance.
+fn a_real_reconcile_stream_result() -> casegraphen::streaming_reconciliation::StreamingReconciliation
+{
+    let (topology, expectation) = setup();
+    let resources = resources(&topology, &expectation, "node:reduce");
+    let mut chunk = event(&expectation, "event:chunk", 0, 0);
+    let artifact_id = match &mut chunk.payload {
+        StreamEventPayload::ArtifactChunk {
+            artifact_id,
+            final_chunk,
+            ..
+        } => {
+            *final_chunk = true;
+            artifact_id.clone()
+        }
+        _ => unreachable!(),
+    };
+    let mut terminal = report(&expectation, "node:review-a", "schema:findings");
+    terminal.attempt_id = "attempt:a".into();
+    terminal.report_id = "report:attempt:a".into();
+    terminal.output_artifact_ids = vec![artifact_id.clone()];
+    let artifact = observed(&artifact_id, b"event:chunk");
+    reconcile_stream(StreamingReconciliationInput {
+        topology: &topology,
+        expectation: &expectation,
+        events: &[chunk],
+        terminal_reports: &[terminal],
+        observed_artifacts: &[artifact],
+        expected_case_revision_id: REVISION,
+        resource_permits: Some(&resources),
+        acceptance: None,
+        run_closed: false,
+    })
+}
+
+#[test]
+fn the_real_reconcile_stream_result_validates_against_its_shipped_schema() {
+    let instance = serde_json::to_value(a_real_reconcile_stream_result()).unwrap();
+    assert!(
+        !instance["stage_release_proposals"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "sanity: this scenario must produce at least one stage release proposal"
+    );
+    assert!(
+        validates_against_streaming_schema(&instance),
+        "a real StreamingReconciliation failed to validate against \
+         streaming.reconciliation.v0: {instance}"
+    );
+
+    let shipped_example: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("schemas/experimental/streaming.reconciliation.v0.example.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        instance, shipped_example,
+        "the shipped example must be this exact real output, not a hand-typed instance"
+    );
+}
+
+#[test]
+fn a_forged_or_omitted_stage_release_acceptance_claim_fails_schema_validation() {
+    let instance = serde_json::to_value(a_real_reconcile_stream_result()).unwrap();
+    assert!(
+        validates_against_streaming_schema(&instance),
+        "sanity: the unmodified real result must validate before forging it"
+    );
+
+    let mut forged = instance.clone();
+    forged["stage_release_proposals"][0]["accepted"] = serde_json::json!(true);
+    assert!(
+        !validates_against_streaming_schema(&forged),
+        "a stage_release_proposals[0].accepted: true forgery must fail schema validation"
+    );
+
+    let mut omitted = instance;
+    omitted["stage_release_proposals"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("accepted");
+    assert!(
+        !validates_against_streaming_schema(&omitted),
+        "omitting stage_release_proposals[0].accepted must also fail schema validation \
+         (const alone is evadable by omission)"
+    );
+}

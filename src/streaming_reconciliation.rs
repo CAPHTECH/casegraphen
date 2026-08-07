@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STREAM_EVENT_SCHEMA: &str = "casegraphen.experimental.runtime.stream_event.v0";
+/// ADR 0034: contracts the whole `reconcile_stream` result, pinning
+/// `stage_release_proposals[*].accepted` `const:false` + `required`.
+pub const STREAMING_RECONCILIATION_SCHEMA: &str =
+    "casegraphen.experimental.streaming.reconciliation.v0";
 
 /// The only release semantics implemented by v0. Despite the compatibility
 /// term `streaming`, no chunk can release a consumer while its producer is
@@ -258,6 +262,7 @@ pub fn derive_streaming_resource_permits(
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StreamingReconciliation {
+    pub schema: String,
     pub release_semantics: StageReleaseSemantics,
     pub status: StreamRunStatus,
     pub logical_events: Vec<RuntimeStreamEvent>,
@@ -642,6 +647,7 @@ pub fn reconcile_stream(input: StreamingReconciliationInput<'_>) -> StreamingRec
     findings
         .sort_by(|a, b| (&a.code, &a.event_id, &a.detail).cmp(&(&b.code, &b.event_id, &b.detail)));
     StreamingReconciliation {
+        schema: STREAMING_RECONCILIATION_SCHEMA.to_owned(),
         release_semantics: StageReleaseSemantics::TerminalArtifactStagePipeliningV0,
         status,
         logical_events,

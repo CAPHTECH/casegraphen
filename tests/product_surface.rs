@@ -73,6 +73,13 @@ fn cli_and_operational_mcp_share_the_exact_lint_report_boundary() {
     assert_eq!(result["lint"], cli_report);
     assert_eq!(result["accepted"], false);
     assert_eq!(result["review_status"], "unreviewed");
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live lint_execution_topology response failed to validate \
+         against control_plane.response.v0"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -114,6 +121,10 @@ fn unsupported_acceptance_mutation_fails_closed_at_the_host() {
         "unsupported_operational_host_tool"
     );
     assert_eq!(responses[1]["result"]["isError"], true);
+    assert!(
+        validates_against_control_plane_response_schema(response),
+        "a real, live refusal response failed to validate against control_plane.response.v0"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -163,6 +174,13 @@ fn operational_simulation_equals_the_canonical_library_report() {
         canonical
     );
     assert_eq!(canonical["routing_proposal"]["review_status"], "unreviewed");
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live simulate_execution_topology response failed to validate \
+         against control_plane.response.v0"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -347,6 +365,33 @@ fn operational_memory_tools_are_read_only_or_unreviewed_proposals() {
         "invalid_payload"
     );
 
+    // ADR 0034 / issue #120, T6: live envelope validation for memory_query
+    // and memory_propose_claim, plus T4's memory.claim_proposal.v0 contract
+    // validated against the nested `claim_proposal` a real MCP
+    // memory_propose_claim response actually emits.
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live memory_query response failed to validate against control_plane.response.v0"
+    );
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[2]["result"]["structuredContent"]
+        ),
+        "a real, live memory_propose_claim response failed to validate \
+         against control_plane.response.v0"
+    );
+    assert!(
+        validates_against_schema(
+            &proposal_result["claim_proposal"],
+            "memory.claim_proposal.v0.schema.json"
+        ),
+        "a real, live MCP memory_propose_claim claim_proposal failed to validate \
+         against memory.claim_proposal.v0: {}",
+        proposal_result["claim_proposal"]
+    );
+
     let replay = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
         .args([
             "space",
@@ -366,6 +411,205 @@ fn operational_memory_tools_are_read_only_or_unreviewed_proposals() {
         replay["result"]["replay"]["current_revision_id"],
         "revision:memory-mcp"
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Finding 2 of the adversarial-execution-reviewer's pass on ADR 0034:
+/// `relation_proposal` crosses the wire nested inside `memory_propose_supersession`
+/// / `memory_propose_retraction` results and had no payload contract — found
+/// by the original #120 audit, then dropped from the ADR's Decision and
+/// deferral accounting. `memory.relation_proposal.v0` closes that, pinning
+/// `accepted` and `review_status` `const` + `required` (#117's pattern).
+/// Proven against the real, live host, not a hand-typed instance: the target
+/// claim is a real evidence cell lifted into the store precisely so
+/// `memory_propose_supersession` has something legitimate to name.
+#[test]
+fn operational_memory_relation_proposal_is_unreviewed_and_contracted() {
+    let directory = temp("memory-relation");
+    let store = directory.join("store");
+    fs::create_dir_all(&store).unwrap();
+
+    let mut fixture: Value = serde_json::from_str(include_str!(
+        "../schemas/casegraphen/native.case.space.example.json"
+    ))
+    .unwrap();
+    let case_space_id = fixture["case_space_id"].as_str().unwrap().to_owned();
+    let space_id = fixture["space_id"].as_str().unwrap().to_owned();
+    let target_cell_id = "evidence:memory-claim-to-supersede";
+    fixture["case_cells"].as_array_mut().unwrap().push(json!({
+        "id": target_cell_id,
+        "cell_type": "evidence",
+        "space_id": space_id,
+        "title": "Memory claim: existing runtime-boundary constraint",
+        "lifecycle": "accepted",
+        "source_ids": [],
+        "structure_ids": [],
+        "provenance": {"source": {"kind": "document"}, "confidence": 1.0, "review_status": "accepted"},
+        "metadata": {"memory_claim": {"claim_id": "memory:existing-runtime-boundary"}}
+    }));
+    let fixture_path = directory.join("fixture.json");
+    fs::write(&fixture_path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+
+    let revision_id = "revision:memory-relation-e2e";
+    let lift = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "lift",
+            "native",
+            "--store",
+            store.to_str().unwrap(),
+            "--input",
+            fixture_path.to_str().unwrap(),
+            "--revision-id",
+            revision_id,
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        lift.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lift.stderr)
+    );
+
+    let artifacts = directory.join("artifacts");
+    fs::create_dir_all(artifacts.join("memory-sources")).unwrap();
+    let source_bytes = b"CaseGraphen supersedes stale memory with a reviewed replacement.\n";
+    fs::write(artifacts.join("memory-sources/adr-0002.txt"), source_bytes).unwrap();
+    let digest = casegraphen::memory::content_hash(source_bytes);
+    let policy = json!({
+        "schema":"casegraphen.experimental.memory.policy.v0",
+        "policy_id":"memory-policy:relation-e2e",
+        "project_id":"casegraphen",
+        "actor_grants":[{
+            "actor_id":"actor:coding-agent",
+            "allowed_audiences":["ai_agent"],
+            "allowed_purposes":["code_change"],
+            "project_ids":["casegraphen"],
+            "max_sensitivity":"internal",
+            "max_authority":"project_constraint"
+        }],
+        "valid_time_required_kinds":["preference","goal","commitment"],
+        "hard_conflict_relation_types":["contradicts"],
+        "exact_source_escalation":true
+    });
+    let source_record = json!({
+        "schema":"casegraphen.experimental.memory.source_record.v0",
+        "source_record_id":"memory-source:relation-e2e",
+        "source_kind":"document",
+        "content_hash":format!("sha256:{digest}"),
+        "captured_at":"2026-08-06T00:00:00Z",
+        "origin_actor_id":"actor:architecture-reviewer",
+        "source_boundary_id":"source_boundary:repository",
+        "authority_origin":"reviewer",
+        "sensitivity":"internal",
+        "artifact_ref":"docs/adr/0002-graph-engineering-positioning.md"
+    });
+    let claim = json!({
+        "schema":"casegraphen.experimental.memory.claim.v0",
+        "claim_id":"memory:runtime-boundary-relation-e2e",
+        "memory_kind":"constraint",
+        "subject_refs":["repo:CAPHTECH/casegraphen"],
+        "statement":{"predicate":"must_not_depend_on","object":"agent-runtime"},
+        "scope":{"case_space_id":case_space_id,"project_id":"casegraphen","actor_ids":[]},
+        "valid_time":{"valid_from":"2026-07-30T00:00:00Z"},
+        "source_refs":[format!("artifact:sha256-{digest}")],
+        "derivation_actor_id":"actor:memory-proposer",
+        "derivation_method":"extraction",
+        "model_assertions_are_untrusted":true,
+        "provenance_role":"reviewed_architecture_decision",
+        "authority_ceiling":"project_constraint",
+        "sensitivity":"internal"
+    });
+    let proposal = json!({
+        "case_space_id":case_space_id,
+        "source_record":source_record,
+        "claim":claim,
+        "policy":policy,
+        "artifact_path":"memory-sources/adr-0002.txt",
+        "target_claim_id":target_cell_id
+    });
+    let responses = run_host(
+        &directory,
+        &[
+            rpc(1, "initialize", json!({"protocolVersion":"2025-06-18"})),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+            rpc(
+                2,
+                "tools/call",
+                json!({
+                    "authorization":"token:surface",
+                    "name":"memory_propose_supersession",
+                    "arguments":{
+                        "request_id":"request:memory-relation-e2e",
+                        "idempotency_key":"idempotency:memory-relation-e2e",
+                        "base_revision_id":revision_id,
+                        "payload":{"memory_proposal":proposal}
+                    }
+                }),
+            ),
+        ],
+    );
+    assert_eq!(responses[1]["result"]["isError"], false, "{responses:?}");
+    let result = &responses[1]["result"]["structuredContent"]["result"];
+    let relation_proposal = &result["relation_proposal"];
+    assert_eq!(relation_proposal["relation_type"], "supersedes");
+    assert_eq!(relation_proposal["accepted"], false);
+    assert_eq!(relation_proposal["review_status"], "unreviewed");
+    assert_eq!(relation_proposal["to_id"], target_cell_id);
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live memory_propose_supersession response failed to validate \
+         against control_plane.response.v0"
+    );
+    assert!(
+        validates_against_schema(relation_proposal, "memory.relation_proposal.v0.schema.json"),
+        "a real, live MemoryRelationProposal failed to validate against \
+         memory.relation_proposal.v0: {relation_proposal}"
+    );
+
+    let shipped_example: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root().join("schemas/experimental/memory.relation_proposal.v0.example.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        relation_proposal, &shipped_example,
+        "the shipped example must be this exact real output, not a hand-typed instance"
+    );
+
+    let mut forged_accepted = relation_proposal.clone();
+    forged_accepted["accepted"] = json!(true);
+    assert!(
+        !validates_against_schema(&forged_accepted, "memory.relation_proposal.v0.schema.json"),
+        "an accepted: true forgery must fail schema validation"
+    );
+    let mut forged_status = relation_proposal.clone();
+    forged_status["review_status"] = json!("accepted");
+    assert!(
+        !validates_against_schema(&forged_status, "memory.relation_proposal.v0.schema.json"),
+        "a review_status: \"accepted\" forgery must fail schema validation"
+    );
+    let mut omitted_accepted = relation_proposal.clone();
+    omitted_accepted.as_object_mut().unwrap().remove("accepted");
+    assert!(
+        !validates_against_schema(&omitted_accepted, "memory.relation_proposal.v0.schema.json"),
+        "omitting accepted must also fail schema validation (const alone is evadable by omission)"
+    );
+    let mut omitted_status = relation_proposal.clone();
+    omitted_status
+        .as_object_mut()
+        .unwrap()
+        .remove("review_status");
+    assert!(
+        !validates_against_schema(&omitted_status, "memory.relation_proposal.v0.schema.json"),
+        "omitting review_status must also fail schema validation"
+    );
+
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -476,6 +720,30 @@ fn snapshot_directory(directory: &Path) -> Vec<(PathBuf, u64, std::time::SystemT
 
 fn rpc(id: u64, method: &str, params: Value) -> String {
     json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}).to_string()
+}
+
+/// ADR 0034 / #117 pattern: validate a real, live response against the
+/// shipped contract rather than asserting about the schema in the abstract.
+fn validates_against_schema(instance: &Value, schema_file: &str) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-product-surface-schema-check-{}-{nonce}.json",
+        std::process::id()
+    ));
+    fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(root().join(format!("schemas/experimental/{schema_file}")))
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&file);
+    status.success()
+}
+
+fn validates_against_control_plane_response_schema(instance: &Value) -> bool {
+    validates_against_schema(instance, "control_plane.response.v0.schema.json")
 }
 
 fn temp(label: &str) -> PathBuf {

@@ -372,6 +372,165 @@ fn durable_restart_never_duplicates_an_ambiguous_delegated_effect() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+struct FixedResultDelegate {
+    result: Value,
+    calls: usize,
+}
+
+impl DecisionDelegate for FixedResultDelegate {
+    fn invoke(&mut self, _request: &ControlPlaneRequest) -> Result<Value, ControlPlaneRefusal> {
+        self.calls += 1;
+        Ok(self.result.clone())
+    }
+}
+
+#[test]
+fn a_delegate_claiming_a_forbidden_wire_value_is_refused_not_journaled_as_a_result() {
+    for (key, forbidden) in [
+        ("accepted", json!(true)),
+        ("mutation_performed", json!(true)),
+        ("read_only", json!(false)),
+        ("accepted_runtime_output", json!(true)),
+        ("proofs_serialized", json!(true)),
+        ("review_status", json!("accepted")),
+        ("generated_plan_review_status", json!("accepted")),
+    ] {
+        let mut state = ControlPlaneState::new();
+        let mut delegate = FixedResultDelegate {
+            result: json!({key: forbidden}),
+            calls: 0,
+        };
+        let response = state.execute(
+            &request(
+                ControlPlaneTool::AttachRuntimeReport,
+                &format!("request:wire-claim-{key}"),
+            ),
+            &mut delegate,
+        );
+        assert_eq!(delegate.calls, 1);
+        assert!(response.result.is_none(), "key {key}");
+        let refusal = response.refusal.expect("refusal");
+        assert_eq!(refusal.code, "noncanonical_wire_claim", "key {key}");
+        assert!(
+            refusal.detail.contains(key),
+            "key {key}: {}",
+            refusal.detail
+        );
+    }
+}
+
+#[test]
+fn a_non_object_top_level_result_is_refused_because_it_fails_the_envelopes_own_scope() {
+    // Reproduces the adversarial-execution-reviewer's harness: a delegate
+    // returning a top-level array, string, or `Value::Null` from its `Ok(..)`
+    // path must be refused. `wire_claim_violation` used to return `None` for
+    // any non-object shape, including `Value::Null`; that let a delegate
+    // returning `Ok(Value::Null)` produce a response with `result: null` AND
+    // `refusal: null` (`Option<Value>`'s `Some(Value::Null)` and `None`
+    // serialize identically), which is exactly the state the envelope's
+    // result/refusal exclusivity `oneOf` forbids. Every non-object shape a
+    // delegate's `Ok(..)` could return must now be refused, not just
+    // key-level forgeries inside an object.
+    for (case, value) in [
+        ("top_level_array", json!([{"accepted": true}])),
+        ("top_level_string", json!("accepted:true")),
+        ("null_result", Value::Null),
+        ("top_level_number", json!(1)),
+        ("top_level_bool", json!(true)),
+    ] {
+        let mut state = ControlPlaneState::new();
+        let mut delegate = FixedResultDelegate {
+            result: value.clone(),
+            calls: 0,
+        };
+        let response = state.execute(
+            &request(
+                ControlPlaneTool::AttachRuntimeReport,
+                &format!("request:non-object-result-{case}"),
+            ),
+            &mut delegate,
+        );
+        assert_eq!(delegate.calls, 1, "case {case}");
+        assert!(response.result.is_none(), "case {case}: {value}");
+        let refusal = response.refusal.as_ref().unwrap_or_else(|| {
+            panic!("case {case} must be refused, not journaled as a result: {value}")
+        });
+        assert_eq!(refusal.code, "noncanonical_wire_claim", "case {case}");
+    }
+}
+
+#[test]
+fn a_nested_claim_below_the_top_level_is_not_refused_because_reads_truthfully_echo_ledger_state() {
+    let mut state = ControlPlaneState::new();
+    let mut delegate = FixedResultDelegate {
+        result: json!({
+            "accepted": false,
+            "items": [{"accepted": true}]
+        }),
+        calls: 0,
+    };
+    let response = state.execute(
+        &request(
+            ControlPlaneTool::AttachRuntimeReport,
+            "request:nested-claim",
+        ),
+        &mut delegate,
+    );
+    assert_eq!(delegate.calls, 1);
+    assert!(response.refusal.is_none());
+    assert_eq!(
+        response.result.unwrap(),
+        json!({"accepted": false, "items": [{"accepted": true}]})
+    );
+}
+
+#[test]
+fn a_compliant_result_passes_through_unchanged() {
+    let mut state = ControlPlaneState::new();
+    let mut delegate = FixedResultDelegate {
+        result: json!({"accepted": false, "review_status": "unreviewed"}),
+        calls: 0,
+    };
+    let response = state.execute(
+        &request(ControlPlaneTool::AttachRuntimeReport, "request:compliant"),
+        &mut delegate,
+    );
+    assert!(response.refusal.is_none());
+    assert_eq!(
+        response.result.unwrap(),
+        json!({"accepted": false, "review_status": "unreviewed"})
+    );
+}
+
+#[test]
+fn replaying_a_wire_claim_violation_replays_the_refusal_never_the_false_claim() {
+    let mut state = ControlPlaneState::new();
+    let mut delegate = FixedResultDelegate {
+        result: json!({"accepted": true}),
+        calls: 0,
+    };
+    let violating = request(
+        ControlPlaneTool::AttachRuntimeReport,
+        "request:replay-refusal",
+    );
+    let first = state.execute(&violating, &mut delegate);
+    let replayed = state.execute(&violating, &mut delegate);
+    assert_eq!(
+        delegate.calls, 1,
+        "the delegate is not invoked a second time"
+    );
+    assert!(!first.replayed);
+    assert!(replayed.replayed);
+    assert_eq!(
+        replayed
+            .refusal
+            .as_ref()
+            .map(|refusal| refusal.code.as_str()),
+        Some("noncanonical_wire_claim")
+    );
+    assert!(replayed.result.is_none());
+}
+
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }

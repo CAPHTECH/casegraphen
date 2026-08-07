@@ -472,7 +472,10 @@ impl ControlPlaneState {
 
         self.next_sequence += 1;
         let (result, refusal) = match delegate.invoke(request) {
-            Ok(value) => (Some(value), None),
+            Ok(value) => match wire_claim_violation(&value) {
+                None => (Some(value), None),
+                Some(detail) => (None, Some(wire_claim_refusal(&detail))),
+            },
             Err(refusal) => (None, Some(refusal)),
         };
         let response = ControlPlaneResponse {
@@ -594,6 +597,97 @@ fn local_refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
         supplied_base_revision_id: None,
         current_revision_id: None,
         suggested_next_operation: "correct_request_and_retry".to_owned(),
+    }
+}
+
+/// Layer 2 of ADR 0034: the same seven-key claim vocabulary the response
+/// schema pins at layer 1, checked against a delegate's raw result before it
+/// is journaled, at the result's top level only. A delegate is per-tool data
+/// (`json!` literals at construction sites), not a typed struct field, so
+/// this is the one Rust-side place the rule is stated — do not restate it at
+/// a call site. Nested occurrences (depth >= 1) are payload semantics a
+/// payload's own contract governs, exactly as at layer 1: reads truthfully
+/// echo accepted ledger state below the top level, so this check must not
+/// see into `result`'s nested structure. Returns a description of the first
+/// offending key/value pair found, or `None` if the result carries no
+/// forbidden claim.
+///
+/// This function is only ever called with a delegate's `Ok(value)` payload
+/// (see `execute`, immediately below), never with the `Err(refusal)` branch.
+/// `control_plane.response.v0`'s top-level `result`/`refusal` exclusivity pin
+/// admits `result: null` only paired with a non-null `refusal` — the shape
+/// `execute` produces from the `Err` branch, which never reaches this
+/// function. A delegate returning `Ok(Value::Null)` is therefore never that
+/// legitimate shape: it would make `result` and `refusal` both serialize to
+/// `null` (`Option<Value>`'s `Some(Value::Null)` and `None` are
+/// indistinguishable on the wire), which is exactly the state the envelope's
+/// `oneOf` forbids. So `Value::Null` here is a violation like any other
+/// non-object shape, not an exemption from one — the only value that ever
+/// makes it past this check is `Value::Object`.
+fn wire_claim_violation(result: &Value) -> Option<String> {
+    let object = match result {
+        Value::Object(object) => object,
+        other => {
+            let kind = match other {
+                Value::Null => "null",
+                Value::Bool(_) => "a boolean",
+                Value::Number(_) => "a number",
+                Value::String(_) => "a string",
+                Value::Array(_) => "an array",
+                Value::Object(_) => unreachable!("matched above"),
+            };
+            return Some(format!(
+                "result is {kind}, but a successful delegate result must be an object \
+                 (the envelope's null result belongs only to a refusal, and this call \
+                 returned no refusal)"
+            ));
+        }
+    };
+    let pinned_values: &[(&str, Value)] = &[
+        ("accepted", Value::Bool(false)),
+        ("mutation_performed", Value::Bool(false)),
+        ("read_only", Value::Bool(true)),
+        ("accepted_runtime_output", Value::Bool(false)),
+        ("proofs_serialized", Value::Bool(false)),
+        ("review_status", Value::String("unreviewed".to_owned())),
+        (
+            "generated_plan_review_status",
+            Value::String("unreviewed".to_owned()),
+        ),
+    ];
+    for (key, pinned) in pinned_values {
+        if let Some(actual) = object.get(*key) {
+            if actual != pinned {
+                return Some(format!(
+                    "result.{key} = {actual}, but only {pinned} is truthful"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Layer 2's refusal for a claim `wire_claim_violation` catches. This
+/// deliberately diverges from `publish_notification` forcing
+/// `authorizes_action = false`: a notification is a record this protocol
+/// layer constructs and owns outright, but a tool result has an author — the
+/// delegate — and rewriting its claim to the truthful value would silently
+/// launder the exact condition this check exists to surface, and would let a
+/// defective or compromised delegate keep operating behind a protocol layer
+/// that cleans up after it. Refusing turns the event into something the
+/// caller and the journal both see, and a replay of the same request replays
+/// this refusal, never the false claim.
+fn wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
+    ControlPlaneRefusal {
+        code: "noncanonical_wire_claim".to_owned(),
+        detail: format!("delegate result carried a forbidden top-level wire claim: {detail}"),
+        supplied_base_revision_id: None,
+        current_revision_id: None,
+        // Not `correct_request_and_retry`: the caller did nothing wrong, and
+        // retrying will not change the delegate's defect. This is a
+        // host-side defect surface (ADR 0034), so the suggested operation
+        // says so instead of implying the caller can fix its own input.
+        suggested_next_operation: "report_host_defect".to_owned(),
     }
 }
 

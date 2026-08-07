@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.relation_proposal.v0",
+  "description": "A proposed supersession/retraction relation between two memory claims (MemoryRelationProposal, src/memory/model.rs), crossing the wire nested in the memory_propose_supersession / memory_propose_retraction results as `relation_proposal`. Found uncontracted by the adversarial-execution-reviewer's pass on ADR 0034: layers 1 and 2 are top-level-only by design, so a nested claim like this one needs its own payload contract, exactly as MemoryClaimProposal's siblings already have. accepted and review_status are pinned const and required (#117's pattern — const alone is evadable by omitting the field): this record can never truthfully claim acceptance or a reviewed status, because only the canonical review morphism accepts anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "relation_id", "relation_type", "relation_strength", "from_id", "to_id", "review_status", "accepted"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.relation_proposal.v0"},
+    "relation_id": {"type": "string", "pattern": "^memory-relation:[0-9a-f]{64}$"},
+    "relation_type": {"enum": ["supersedes", "retracts"]},
+    "relation_strength": {"enum": ["hard", "soft", "diagnostic"]},
+    "from_id": {"type": "string", "minLength": 1},
+    "to_id": {"type": "string", "minLength": 1},
+    "review_status": {"const": "unreviewed"},
+    "accepted": {"const": false}
+  }
+}

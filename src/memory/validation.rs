@@ -3,8 +3,8 @@ use super::{
     temporal::{validate_timestamp, validate_valid_time},
     MemoryClaim, MemoryClaimProposal, MemoryKind, MemoryPolicy, MemoryProjection, MemoryQuery,
     MemorySourceKind, MemoryUseReport, MemoryValidationFinding, ProvenanceRole, SourceRecord,
-    MEMORY_CLAIM_SCHEMA, MEMORY_POLICY_SCHEMA, MEMORY_QUERY_SCHEMA, MEMORY_SOURCE_RECORD_SCHEMA,
-    MEMORY_USE_REPORT_SCHEMA,
+    MEMORY_CLAIM_PROPOSAL_SCHEMA, MEMORY_CLAIM_SCHEMA, MEMORY_POLICY_SCHEMA, MEMORY_QUERY_SCHEMA,
+    MEMORY_SOURCE_RECORD_SCHEMA, MEMORY_USE_REPORT_SCHEMA,
 };
 use crate::{
     evidence_trust::EvidenceTrustBoundary,
@@ -263,6 +263,7 @@ pub fn build_claim_proposal(
         ),
     ]);
     Ok(MemoryClaimProposal {
+        schema: MEMORY_CLAIM_PROPOSAL_SCHEMA.to_owned(),
         claim_cell: CaseCell {
             id: claim_id,
             cell_type: CaseCellType::Evidence,

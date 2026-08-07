@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "casegraphen.experimental.control_plane.response.v0",
+  "description": "Wire response for every MCP control-plane tool (ADR 0034). The host performs no acceptance itself — acceptance exists only behind the canonical review morphisms and operation gates this surface does not drive — so `result`'s top level pins the seven keys that could otherwise claim it: whenever one of them is present, it is constrained to the only value a host result can truthfully carry. This is the envelope's altitude only. A nested `accepted` (or any of the other six keys) at depth one or below inside `result` is payload semantics, not an envelope-level assertion: reads truthfully echo accepted ledger state — the `reviews` resource returns reviewed cells, memory projections carry claim statuses — and a recursive pin would make those reads schema-invalid. A consumer that needs a nested claim governed validates the payload against that payload's own contract. `result` and `refusal` are mutually exclusive and jointly exhaustive: exactly one is non-null.",
   "type": "object", "additionalProperties": false,
   "required": ["schema", "sequence", "request_id", "idempotency_key", "replayed", "authority_facts", "result", "refusal"],
   "properties": {
@@ -17,7 +18,37 @@
         "canonical_casegraphen_authorization": {"const": "not_evaluated"}
       }
     },
-    "result": {},
+    "result": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "properties": {
+            "accepted": {"const": false},
+            "mutation_performed": {"const": false},
+            "read_only": {"const": true},
+            "accepted_runtime_output": {"const": false},
+            "proofs_serialized": {"const": false},
+            "review_status": {"const": "unreviewed"},
+            "generated_plan_review_status": {"const": "unreviewed"}
+          }
+        }
+      ]
+    },
     "refusal": {"type": ["object", "null"]}
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "result": {"type": "null"},
+        "refusal": {"type": "object"}
+      }
+    },
+    {
+      "properties": {
+        "result": {"type": "object"},
+        "refusal": {"type": "null"}
+      }
+    }
+  ]
 }

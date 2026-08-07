@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.streaming.reconciliation.v0",
+  "description": "Result of reconcile_stream (StreamingReconciliation, src/streaming_reconciliation.rs). accepted is pinned const:false and required on every stage_release_proposal: an early release across an edge is always a proposal that behaves exactly like the terminal runtime-report path, never a self-granted acceptance (ADR 0034). const alone is evadable by omitting the field, so both are pinned together (#117's pattern).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "release_semantics",
+    "status",
+    "logical_events",
+    "duplicate_event_count",
+    "stage_release_proposals",
+    "unfinished_node_ids",
+    "final_completeness",
+    "findings"
+  ],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.streaming.reconciliation.v0"},
+    "release_semantics": {"const": "terminal_artifact_stage_pipelining_v0"},
+    "status": {
+      "enum": ["collecting", "partially_progressing", "complete", "incomplete_terminal"]
+    },
+    "logical_events": {
+      "type": "array",
+      "items": {"type": "object"}
+    },
+    "duplicate_event_count": {"type": "integer", "minimum": 0},
+    "stage_release_proposals": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/stage_release_proposal"}
+    },
+    "unfinished_node_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "final_completeness": {"type": "object"},
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    }
+  },
+  "$defs": {
+    "stage_release_proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_semantics",
+        "edge_id",
+        "from_node_id",
+        "to_node_id",
+        "artifact_id",
+        "target_attempt_id",
+        "topology_content_hash",
+        "case_revision_id",
+        "resource_reconciliation_hash",
+        "source_event_id",
+        "accepted"
+      ],
+      "properties": {
+        "release_semantics": {"const": "terminal_artifact_stage_pipelining_v0"},
+        "edge_id": {"type": "string", "minLength": 1},
+        "from_node_id": {"type": "string", "minLength": 1},
+        "to_node_id": {"type": "string", "minLength": 1},
+        "artifact_id": {"type": "string", "minLength": 1},
+        "target_attempt_id": {"type": "string", "minLength": 1},
+        "topology_content_hash": {"type": "string", "minLength": 1},
+        "case_revision_id": {"type": "string", "minLength": 1},
+        "resource_reconciliation_hash": {"type": "string", "minLength": 1},
+        "source_event_id": {"type": "string", "minLength": 1},
+        "accepted": {"const": false}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "event_id", "detail"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "event_id": {"type": ["string", "null"]},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

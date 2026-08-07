@@ -22,6 +22,50 @@ PROTOCOL_VERSION = "2025-06-18"
 BASE_REVISION = "revision:independent-client-observed"
 TRUST_BOUNDARY = "runtime_reported_untrusted_until_independently_validated_and_reviewed"
 
+# ADR 0034 (issue #120): the seven-key claim vocabulary control_plane.response.v0
+# pins at the top level of `result`, restated here by hand because this client
+# is deliberately Python-stdlib-only (see module docstring) and cannot import
+# the `jsonschema` package to validate against the shipped schema file
+# directly. This is the independent half of layer 1: a consumer checking what
+# it actually received, without trusting the host to have enforced anything.
+WIRE_CLAIM_VOCABULARY: dict[str, Any] = {
+    "accepted": False,
+    "mutation_performed": False,
+    "read_only": True,
+    "accepted_runtime_output": False,
+    "proofs_serialized": False,
+    "review_status": "unreviewed",
+    "generated_plan_review_status": "unreviewed",
+}
+
+
+def forbidden_wire_claim(result: Any) -> str | None:
+    """Returns a description of the first top-level key that carries a value
+    the wire vocabulary forbids, or None if `result` carries no such claim.
+    Top-level only, matching the envelope's declared scope: a nested claim
+    below this depth is payload semantics this independent client does not
+    govern.
+
+    Mirrors `src/control_plane.rs::wire_claim_violation`: a `dict` is the
+    only legitimate successful `result`. Anything else — including `None` —
+    is itself a violation here, not an exemption. `call()` already raises on
+    any non-null `refusal` before this runs, so a `None` result reaching
+    this function would mean both `result` and `refusal` are null on the
+    wire, which the envelope's result/refusal exclusivity forbids. An
+    earlier version special-cased `None` as "no violation" and, separately,
+    checked `key in result` without an `isinstance` guard first — for a list
+    `result`, Python's `in` tests membership over elements rather than keys,
+    so a forged list result silently reported no violation. Both were the
+    same blind spot: trusting `result`'s top-level shape instead of checking
+    it."""
+    if not isinstance(result, dict):
+        kind = "null" if result is None else type(result).__name__
+        return f"result is {kind}, but a successful call's result must be an object"
+    for key, truthful in WIRE_CLAIM_VOCABULARY.items():
+        if key in result and result[key] != truthful:
+            return f"result.{key} = {result[key]!r}, but only {truthful!r} is truthful"
+    return None
+
 
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -103,6 +147,9 @@ class StdioMcpClient:
         structured = envelope["structuredContent"]
         if structured.get("refusal") is not None:
             raise RuntimeError(f"{tool} refused: {structured['refusal']}")
+        claim = forbidden_wire_claim(structured["result"])
+        if claim is not None:
+            raise RuntimeError(f"{tool} response carried a forbidden wire claim: {claim}")
         return structured["result"]
 
     def close(self) -> None:
@@ -286,6 +333,15 @@ def run(host: Path, topology_path: Path) -> dict[str, Any]:
         },
     }
     assert_review_seam(result)
+
+    # ADR 0034 / issue #120: prove forbidden_wire_claim is load-bearing
+    # against a real, live response this run just received, not merely
+    # reasoned about. `compiled` is untouched above; mutate a copy of it.
+    assert forbidden_wire_claim(compiled) is None, "sanity: the real response must be clean first"
+    forged = dict(compiled, accepted=True)
+    forged_claim = forbidden_wire_claim(forged)
+    assert forged_claim is not None, "a mutated copy claiming accepted: True must be caught"
+
     return result
 
 

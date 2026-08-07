@@ -545,6 +545,52 @@ fn real_cli_queries_a_replayed_case_without_mutating_it() {
     );
     assert_eq!(proposal["result"]["mutation_performed"], json!(false));
 
+    let claim_proposal = &proposal["result"];
+    assert!(
+        validates_against_claim_proposal_schema(claim_proposal),
+        "a real MemoryClaimProposal (via `casegraphen memory propose`) failed to validate \
+         against memory.claim_proposal.v0: {claim_proposal}"
+    );
+    let shipped_example: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root().join("schemas/experimental/memory.claim_proposal.v0.example.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        claim_proposal, &shipped_example,
+        "the shipped example must be this exact real output, not a hand-typed instance"
+    );
+
+    let mut forged_accepted = claim_proposal.clone();
+    forged_accepted["accepted"] = json!(true);
+    assert!(
+        !validates_against_claim_proposal_schema(&forged_accepted),
+        "an accepted: true forgery must fail schema validation"
+    );
+    let mut forged_mutation = claim_proposal.clone();
+    forged_mutation["mutation_performed"] = json!(true);
+    assert!(
+        !validates_against_claim_proposal_schema(&forged_mutation),
+        "a mutation_performed: true forgery must fail schema validation"
+    );
+    let mut omitted_accepted = claim_proposal.clone();
+    omitted_accepted.as_object_mut().unwrap().remove("accepted");
+    assert!(
+        !validates_against_claim_proposal_schema(&omitted_accepted),
+        "omitting accepted must also fail schema validation (const alone is evadable by omission)"
+    );
+    let mut omitted_mutation = claim_proposal.clone();
+    omitted_mutation
+        .as_object_mut()
+        .unwrap()
+        .remove("mutation_performed");
+    assert!(
+        !validates_against_claim_proposal_schema(&omitted_mutation),
+        "omitting mutation_performed must also fail schema validation"
+    );
+
     proposed_claim.scope.case_space_id = Some("case_space:other".to_owned());
     fs::write(&claim_path, serde_json::to_vec(&proposed_claim).unwrap())
         .expect("write mismatched claim");
@@ -1047,4 +1093,28 @@ fn id(value: &str) -> Id {
 fn sha256(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// ADR 0034 / #117 pattern: validate a real result against the shipped
+/// contract rather than asserting about the schema in the abstract.
+fn validates_against_claim_proposal_schema(instance: &Value) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-memory-claim-proposal-{}-{nonce}.json",
+        std::process::id()
+    ));
+    fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(root().join("schemas/experimental/memory.claim_proposal.v0.schema.json"))
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&file);
+    status.success()
 }

@@ -582,6 +582,43 @@ fn real_cli_run_and_review_derive_live_opaque_lineage_proofs() {
         "the live MCP host's VerificationPolicyResult failed to validate against \
          verification.policy_result.v0"
     );
+
+    // ADR 0034 / issue #120, T6: the envelope this live reconcile_verification_lineage
+    // response, and its refusal siblings, carry validate against the tightened
+    // control_plane.response.v0.
+    for (label, response) in [
+        ("success", &responses[1]["result"]["structuredContent"]),
+        (
+            "duplicate-review-refusal",
+            &responses[2]["result"]["structuredContent"],
+        ),
+        (
+            "producer-derivation-refusal",
+            &responses[3]["result"]["structuredContent"],
+        ),
+    ] {
+        let instance = std::env::temp_dir().join(format!(
+            "casegraphen-lineage-e2e-envelope-{label}-{}.json",
+            std::process::id()
+        ));
+        fs::write(&instance, serde_json::to_vec(response).unwrap())
+            .expect("write envelope instance");
+        let envelope_schema = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schemas/experimental/control_plane.response.v0.schema.json");
+        let envelope_status = Command::new("python3")
+            .args(["-m", "jsonschema", "-i"])
+            .arg(&instance)
+            .arg(&envelope_schema)
+            .status()
+            .expect("run python3 -m jsonschema");
+        let _ = fs::remove_file(&instance);
+        assert!(
+            envelope_status.success(),
+            "a real, live reconcile_verification_lineage {label} response failed to validate \
+             against control_plane.response.v0"
+        );
+    }
+
     assert_eq!(
         responses[2]["result"]["structuredContent"]["refusal"]["code"],
         "duplicate_or_empty_review_morphism_id"
