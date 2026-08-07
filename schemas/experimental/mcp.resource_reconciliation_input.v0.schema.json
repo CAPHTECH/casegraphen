@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.resource_reconciliation_input.v0",
+  "title": "CaseGraphen MCP host: reconcile_resources payload",
+  "description": "The literal `payload.resource_reconciliation` an MCP client sends for the `reconcile_resources` tool. This is a request; the tool answers with casegraphen.experimental.resource.reconciliation.v0, a differently shaped findings report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["declaration", "reservation", "allocations"],
+  "properties": {
+    "declaration": {"$ref": "casegraphen.experimental.resource.declaration.v0"},
+    "reservation": {"$ref": "casegraphen.experimental.resource.reservation.v0"},
+    "allocations": {"type": "array", "items": {"$ref": "casegraphen.experimental.runtime.resource_allocation.v0"}}
+  }
+}

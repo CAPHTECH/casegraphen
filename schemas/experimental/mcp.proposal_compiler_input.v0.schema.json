@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.proposal_compiler_input.v0",
+  "title": "CaseGraphen MCP host: compile_deployment_bundle payload",
+  "description": "The literal `payload.compiler_request` an MCP client sends for the `compile_deployment_bundle` tool. It is the wire request, not the retained record the compiler later writes into the deployment bundle (casegraphen.experimental.graph_compiler.inputs.v1) — that record adds compiler identity, contract versions, and a mode discriminant this payload does not carry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "base_revision_id", "plan_id", "node_plan_mappings"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "base_revision_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "node_plan_mappings": {"$ref": "compiler.inputs.v0.schema.json#/properties/node_plan_mappings"},
+    "verification_policies": {"type": "object"},
+    "budget_policies": {"type": "object"},
+    "expansion_policies": {"type": "object"}
+  }
+}

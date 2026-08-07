@@ -1,0 +1,66 @@
+{
+  "policy": {
+    "schema": "casegraphen.experimental.expansion.policy.v0",
+    "schema_version": 0,
+    "expansion_policy_id": "expansion:bug-discovery",
+    "candidate_schema_id": "schema:bug-candidate",
+    "dedupe_key": ["file", "symbol", "failure_signature"],
+    "dedupe_scope": "all_seen",
+    "dry_rounds_required": 2,
+    "max_iterations": 8,
+    "max_spawned_nodes": 200,
+    "max_cost": 50.0,
+    "cost_currency": "USD",
+    "max_latency_ms": 300000,
+    "candidate_disposition": "unreviewed_morphism_proposal",
+    "provenance": {"source": "issue:54", "created_by": "actor:designer"}
+  },
+  "attempt_id": "attempt:bug-discovery:1",
+  "rounds": [
+    {
+      "candidates": [
+        {
+          "candidate_schema_id": "schema:bug-candidate",
+          "dedupe_values": {"file": "src/a.rs", "symbol": "foo", "failure_signature": "panic:index-oob"},
+          "requested_disposition": "accept_for_proposal",
+          "topology_patch": {
+            "schema": "casegraphen.experimental.topology.patch.v0",
+            "schema_version": 0,
+            "added_nodes": [
+              {
+                "node_id": "node:review-c",
+                "work_cell_id": "work:review-c",
+                "purpose": "Review source file C",
+                "inputs": [{"name": "source", "schema_id": "schema:source-file", "artifact_selector": "src/c.rs"}],
+                "outputs": [{"name": "findings", "schema_id": "schema:findings"}],
+                "side_effects": "none",
+                "resource_claims": [{
+                  "resource": "file:src/c.rs",
+                  "mode": "read",
+                  "rate_limit_group": null,
+                  "workspace_strategy": "shared",
+                  "network_scope": [],
+                  "secret_scope": []
+                }],
+                "executor_class": "llm-reviewer",
+                "verification_policy_id": "verification:independent",
+                "budget_policy_id": "budget:small",
+                "idempotency_key": "review-c:<source-hash>",
+                "delivery": "streaming",
+                "expansion_policy_id": null,
+                "estimated_duration_ms": 1000,
+                "provenance": {"source": "expansion:fixture", "created_by": "actor:designer"}
+              }
+            ],
+            "removed_node_ids": [],
+            "updated_nodes": [],
+            "added_edges": [],
+            "removed_edge_ids": []
+          }
+        }
+      ],
+      "accounted_round_cost": 1.5,
+      "accounted_round_latency_ms": 4000
+    }
+  ]
+}

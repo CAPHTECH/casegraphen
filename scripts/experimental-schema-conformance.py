@@ -31,6 +31,44 @@ CONST_DECL_RE = re.compile(
 )
 EXPERIMENTAL_PREFIX = "casegraphen.experimental."
 
+# Issue #118: an MCP host input type is a struct/enum deserialized straight
+# out of a `tools/call` payload — the two call sites below are the only ways
+# that happens (`payload_value` and `serde_json::from_value` on
+# `request.payload`). This gates the payload entry points; nested shapes
+# (a field of one of these types, never independently deserialized) are
+# covered by their parent's `additionalProperties: false` and by example
+# validation instead, so a new enum variant on an existing nested type still
+# needs its schema `$defs` updated by hand — this regex will not see it.
+MCP_PAYLOAD_TYPE_RE = re.compile(
+    r"let\s+(?:mut\s+)?\w+\s*:\s*([A-Z][A-Za-z0-9]*)\s*=\s*(?:payload_value|serde_json::from_value)\(",
+)
+# A type *defined* in the same file, as opposed to imported from the library
+# (`use casegraphen::{...}`). Library types such as GraphSimulationRequest or
+# ResourceExpectationBundle are also deserialized straight from a payload here,
+# but they already carry their own contract, owned where they are defined —
+# this gate is only for types this binary itself introduces, which is exactly
+# the gap issue #118 found (sixteen types defined in, and never leaving,
+# `src/bin/casegraphen-mcp-host.rs`).
+RUST_TYPE_DECL_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Z]\w*)", re.MULTILINE)
+
+
+def camel_to_screaming_snake(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+
+
+def mcp_host_payload_types(root: pathlib.Path) -> dict[str, str]:
+    """`{TypeName: relative_source_file}` for every type an MCP host binary
+    both defines and deserializes directly from a `tools/call` payload."""
+    found: dict[str, str] = {}
+    for source in sorted((root / "src/bin").glob("*.rs")):
+        text = source.read_text()
+        relative = source.relative_to(root).as_posix()
+        defined = set(RUST_TYPE_DECL_RE.findall(text))
+        for type_name in MCP_PAYLOAD_TYPE_RE.findall(text):
+            if type_name in defined:
+                found[type_name] = relative
+    return found
+
 
 def problem(code: str, detail: str) -> tuple[str, str]:
     return code, detail
@@ -185,6 +223,16 @@ def run_checks(root: pathlib.Path) -> list[tuple[str, str]]:
         elif owner not in constants:
             problems.append(problem("unknown_rust_owner", owner))
 
+    for type_name, source_file in mcp_host_payload_types(root).items():
+        expected_owner = f"{source_file}::{camel_to_screaming_snake(type_name)}_SCHEMA"
+        if expected_owner not in constants:
+            problems.append(problem(
+                "mcp_input_type_without_contract",
+                f"{source_file}: {type_name} is deserialized from a tools/call payload "
+                f"but declares no {expected_owner} constant; add one and register it in "
+                f"{INVENTORY}",
+            ))
+
     for schema_id, schema in schema_by_id.items():
         properties = schema.get("properties", {})
         declared_schema = properties.get("schema", {}).get("const") if isinstance(properties, dict) else None
@@ -267,6 +315,17 @@ def mutate_fixture(root: pathlib.Path, mutation: str) -> None:
     elif mutation == "nonliteral_constant":
         path = root / "src/control_plane.rs"
         path.write_text(path.read_text() + '\npub const NEGATIVE_SCHEMA: &str = concat!("casegraphen.experimental.", "negative.v0");\n')
+    elif mutation == "mcp_input_without_contract":
+        path = root / "src/bin/casegraphen-negative-mcp-host.rs"
+        path.write_text(
+            'struct NegativeMcpInput {\n'
+            '    field: String,\n'
+            '}\n'
+            'fn handle(payload: &serde_json::Value) -> Result<(), ()> {\n'
+            '    let input: NegativeMcpInput = payload_value(payload, "negative")?;\n'
+            '    Ok(())\n'
+            '}\n'
+        )
     else:
         raise ValueError(f"unknown negative fixture mutation: {mutation}")
 

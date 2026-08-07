@@ -1,0 +1,49 @@
+{
+  "case_space_id": "case_space:example",
+  "source_record": {
+    "schema": "casegraphen.experimental.memory.source_record.v0",
+    "source_record_id": "memory-source:adr-0002",
+    "source_kind": "document",
+    "content_hash": "sha256:2b405eb740a7b49fd3252e1d406dcaa22ccac8f2cb7e550c92350a71766ea1a9",
+    "captured_at": "2026-08-06T00:00:00Z",
+    "origin_actor_id": "actor:architecture-reviewer",
+    "source_boundary_id": "source_boundary:repository",
+    "authority_origin": "reviewer",
+    "sensitivity": "internal",
+    "artifact_ref": "docs/adr/0002-graph-engineering-positioning.md"
+  },
+  "claim": {
+    "schema": "casegraphen.experimental.memory.claim.v0",
+    "claim_id": "memory:runtime-boundary",
+    "memory_kind": "constraint",
+    "subject_refs": ["repo:CAPHTECH/casegraphen"],
+    "statement": {"predicate": "must_not_depend_on", "object": "agent-runtime"},
+    "scope": {"case_space_id": "case_space:example", "project_id": "casegraphen", "actor_ids": []},
+    "valid_time": {"valid_from": "2026-07-30T00:00:00Z"},
+    "source_refs": ["artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    "derivation_actor_id": "actor:memory-proposer",
+    "derivation_method": "extraction",
+    "model_assertions_are_untrusted": true,
+    "provenance_role": "reviewed_architecture_decision",
+    "authority_ceiling": "project_constraint",
+    "sensitivity": "internal"
+  },
+  "policy": {
+    "schema": "casegraphen.experimental.memory.policy.v0",
+    "policy_id": "memory-policy:casegraphen-coding-agent",
+    "project_id": "casegraphen",
+    "actor_grants": [{
+      "actor_id": "actor:coding-agent",
+      "allowed_audiences": ["ai_agent"],
+      "allowed_purposes": ["code_change"],
+      "project_ids": ["casegraphen"],
+      "max_sensitivity": "internal",
+      "max_authority": "project_constraint"
+    }],
+    "valid_time_required_kinds": ["preference", "goal", "commitment"],
+    "hard_conflict_relation_types": ["contradicts"],
+    "exact_source_escalation": true
+  },
+  "artifact_path": "docs/adr/0002-graph-engineering-positioning.md",
+  "target_claim_id": null
+}

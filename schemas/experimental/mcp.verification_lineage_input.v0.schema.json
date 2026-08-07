@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.verification_lineage_input.v0",
+  "title": "CaseGraphen MCP host: reconcile_verification_lineage payload",
+  "description": "The literal `payload.verification_lineage` an MCP client sends for the `reconcile_verification_lineage` tool. Each `anchors[]` entry's `anchor_id` is caller-chosen and must be unique and non-empty within the request; `policy.required_anchors` lists the anchor_id values the lineage must supply, matched by id, not by kind. `kind` instead selects how the host independently re-derives that anchor's proof rather than trusting the caller's assertion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "claim_cell_id", "policy", "producer_files", "review_morphism_ids"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "claim_cell_id": {"type": "string", "minLength": 1},
+    "policy": {"$ref": "casegraphen.experimental.verification_policy.v0"},
+    "producer_files": {"$ref": "#/$defs/retained_lineage_files"},
+    "review_morphism_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "anchors": {"type": "array", "items": {"$ref": "#/$defs/verification_anchor_input"}}
+  },
+  "$defs": {
+    "retained_lineage_files": {
+      "description": "Local paths to the retained producer artifacts the host reads to independently re-derive the lineage proof. Not reused elsewhere in the codebase; carried only as `producer_files`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worker_report_path", "execution_trace_path", "stdout_path", "stderr_path"],
+      "properties": {
+        "worker_report_path": {"type": "string", "minLength": 1},
+        "execution_trace_path": {"type": "string", "minLength": 1},
+        "stdout_path": {"type": "string", "minLength": 1},
+        "stderr_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "verification_anchor_input": {
+      "description": "Not reused elsewhere in the codebase; carried only as an item of `anchors`. `kind` selects which independent proof the host derives — the caller's other fields identify what to check, not what the check found.",
+      "type": "object",
+      "required": ["kind", "anchor_id"],
+      "properties": {
+        "kind": {"enum": ["execution_trace", "case_artifact"]},
+        "anchor_id": {"type": "string", "minLength": 1},
+        "artifact_id": {
+          "description": "Required, and only accepted, when kind is case_artifact. Must equal artifact:sha256-<hash of artifact_path's bytes>; see this anchor's case_artifact branch below for the full check.",
+          "type": "string", "minLength": 1, "pattern": "^artifact:sha256-[0-9a-f]{64}$"
+        },
+        "artifact_path": {
+          "description": "Required, and only accepted, when kind is case_artifact.",
+          "type": "string", "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "execution_trace"}}, "required": ["kind"]},
+          "then": {
+            "description": "The host derives this anchor's proof from the execution trace named in producer_files.execution_trace_path; no further fields are accepted.",
+            "additionalProperties": false,
+            "properties": {"kind": true, "anchor_id": true}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "case_artifact"}}, "required": ["kind"]},
+          "then": {
+            "description": "The host derives this anchor's proof by simultaneously checking three things against artifact_path's bytes: (1) artifact_id equals artifact:sha256-<hash> of those bytes; (2) a case cell with id artifact_id exists in the ledger, is of custom type \"artifact\", is in lifecycle Resolved or Accepted, and carries metadata.content_hash equal to the same hash; (3) the case space itself evaluates as canonically valid. Any mismatch across those three refuses the anchor — it is not three independent optional checks.",
+            "required": ["artifact_id", "artifact_path"],
+            "additionalProperties": false,
+            "properties": {"kind": true, "anchor_id": true, "artifact_id": true, "artifact_path": true}
+          }
+        }
+      ]
+    }
+  }
+}

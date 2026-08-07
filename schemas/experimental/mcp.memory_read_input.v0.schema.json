@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.memory_read_input.v0",
+  "title": "CaseGraphen MCP host: memory_query / memory_explain / memory_history / memory_conflicts / memory_sources payload",
+  "description": "The literal `payload.memory_request` an MCP client sends for the read-only memory tools: memory_query, memory_explain, memory_history, memory_conflicts, memory_sources. The host refuses at runtime (invalid_payload) if `claim_id` is absent for memory_explain, memory_history, or memory_sources; it is unused by memory_query and memory_conflicts. That per-tool requirement is not expressible in this schema, since one contract serves five tools.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "query", "policy"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "query": {"$ref": "casegraphen.experimental.memory.query.v0"},
+    "policy": {"$ref": "casegraphen.experimental.memory.policy.v0"},
+    "claim_id": {"type": ["string", "null"], "minLength": 1}
+  }
+}

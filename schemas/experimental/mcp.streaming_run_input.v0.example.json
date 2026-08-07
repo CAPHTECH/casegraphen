@@ -1,0 +1,89 @@
+{
+  "case_space_id": "case_space:example",
+  "expectation": {
+    "schema": "casegraphen.experimental.runtime.graph_expectation.v0",
+    "schema_version": 0,
+    "runtime_graph_id": "topology:file-review",
+    "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "nodes": [
+      {"node_id": "node:review-a", "expected_output_schema_id": "schema:findings", "expected_parent_node_ids": []}
+    ],
+    "edges": []
+  },
+  "events": [
+    {
+      "schema": "casegraphen.experimental.runtime.stream_event.v0",
+      "event_id": "event:review-a:0",
+      "runtime_graph_id": "topology:file-review",
+      "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "node_id": "node:review-a",
+      "attempt_id": "attempt:review-a:1",
+      "sequence": 0,
+      "logical_order": 10,
+      "observed_at": "2026-08-03T00:00:00Z",
+      "kind": "node_terminal",
+      "status": "succeeded"
+    }
+  ],
+  "terminal_reports": [
+    {
+      "schema": "casegraphen.experimental.runtime.node_report.v0",
+      "schema_version": 0,
+      "report_id": "runtime_report:review-a:attempt-1",
+      "runtime_graph_id": "topology:file-review",
+      "runtime_graph_content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "node_id": "node:review-a",
+      "attempt_id": "attempt:review-a:1",
+      "retry_of_attempt_id": null,
+      "round_id": "round:1",
+      "parent_node_ids": [],
+      "input_artifact_ids": [],
+      "output_artifact_ids": ["artifact:findings-a"],
+      "expected_output_schema_id": "schema:findings",
+      "actual_output_schema_id": "schema:findings",
+      "started_at": "2026-08-03T00:00:00Z",
+      "finished_at": "2026-08-03T00:00:12Z",
+      "status": "succeeded",
+      "failure_kind": null,
+      "runtime_identity": {
+        "runtime_name": "example-runtime",
+        "runtime_version": "1.0.0",
+        "adapter_name": "generic-jsonl",
+        "adapter_version": "0.1.0"
+      },
+      "reported_model": null,
+      "reported_context_id": null,
+      "token_usage": null,
+      "cost": null,
+      "resource_allocations": [],
+      "worktree_id": null,
+      "commit_sha": null,
+      "verifier_report_ids": [],
+      "trust_boundary": "runtime_reported_untrusted_until_independently_validated_and_reviewed"
+    }
+  ],
+  "resource_expectations": [
+    {
+      "declaration": {
+        "schema": "casegraphen.experimental.resource.declaration.v0",
+        "schema_version": 0,
+        "declaration_id": "declaration:refactor-a",
+        "runtime_graph_id": "runtime_graph:refactor",
+        "runtime_graph_content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "node_id": "node:refactor-a",
+        "claims": []
+      },
+      "reservation": {
+        "schema": "casegraphen.experimental.resource.reservation.v0",
+        "schema_version": 0,
+        "reservation_id": "reservation:refactor-a:attempt-1",
+        "declaration_id": "declaration:refactor-a",
+        "attempt_id": "attempt:refactor-a:1",
+        "granted_at": "2026-08-03T01:00:00Z",
+        "grants": []
+      }
+    }
+  ],
+  "runtime_jsonl": "{\"schema\":\"casegraphen.experimental.runtime.node_report.v0\"}\n",
+  "run_closed": true
+}

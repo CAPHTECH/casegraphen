@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.memory_proposal_input.v0",
+  "title": "CaseGraphen MCP host: memory_propose_claim / memory_propose_supersession / memory_propose_retraction / memory_propose_procedure payload",
+  "description": "The literal `payload.memory_proposal` an MCP client sends for the memory proposal tools. The host refuses at runtime (invalid_payload) if `target_claim_id` is absent for memory_propose_supersession or memory_propose_retraction; it is unused by memory_propose_claim and memory_propose_procedure. memory_propose_procedure additionally refuses (memory_kind_mismatch) unless `claim.memory_kind` is \"procedure\". Neither per-tool requirement is expressible in this schema, since one contract serves four tools.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "source_record", "claim", "policy", "artifact_path"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "source_record": {"$ref": "casegraphen.experimental.memory.source_record.v0"},
+    "claim": {"$ref": "casegraphen.experimental.memory.claim.v0"},
+    "policy": {"$ref": "casegraphen.experimental.memory.policy.v0"},
+    "artifact_path": {"type": "string", "minLength": 1},
+    "target_claim_id": {"type": ["string", "null"], "minLength": 1}
+  }
+}

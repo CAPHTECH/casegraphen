@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.resource_reservation_input.v0",
+  "title": "CaseGraphen MCP host: reserve_resources payload",
+  "description": "The literal `payload.resource_request` an MCP client sends for the `reserve_resources` tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["deployment_authority", "declaration", "reservation"],
+  "properties": {
+    "deployment_authority": {"$ref": "#/$defs/reviewed_deployment_reference"},
+    "declaration": {"$ref": "casegraphen.experimental.resource.declaration.v0"},
+    "reservation": {"$ref": "casegraphen.experimental.resource.reservation.v0"}
+  },
+  "$defs": {
+    "reviewed_deployment_reference": {
+      "description": "Names the accepted review that authorizes this reservation. Not reused elsewhere in the codebase; carried only as this field.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_space_id", "claim_cell_id", "deployment_bundle_hash"],
+      "properties": {
+        "case_space_id": {"type": "string", "minLength": 1},
+        "claim_cell_id": {"type": "string", "minLength": 1},
+        "deployment_bundle_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

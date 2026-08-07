@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.reviewed_compiler_input.v0",
+  "title": "CaseGraphen MCP host: compile_reviewed_deployment_bundle payload",
+  "description": "The literal `payload.compiler_request` an MCP client sends for the `compile_reviewed_deployment_bundle` tool. Distinct from mcp.proposal_compiler_input.v0: it names an accepted review's claim_cell_id instead of a base_revision_id, because a reviewed compilation is authorized by the review morphism, not by the caller's observed revision alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "claim_cell_id", "plan_id", "node_plan_mappings"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "claim_cell_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1},
+    "node_plan_mappings": {"$ref": "compiler.inputs.v0.schema.json#/properties/node_plan_mappings"},
+    "verification_policies": {"type": "object"},
+    "budget_policies": {"type": "object"},
+    "expansion_policies": {"type": "object"}
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.expansion_evaluation_input.v0",
+  "title": "CaseGraphen MCP host: evaluate_expansion_round payload",
+  "description": "The literal `payload.expansion_round` an MCP client sends for the `evaluate_expansion_round` tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policy", "attempt_id", "rounds"],
+  "properties": {
+    "policy": {"$ref": "casegraphen.experimental.expansion.policy.v0"},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "rounds": {"type": "array", "items": {"$ref": "#/$defs/expansion_round_step"}}
+  },
+  "$defs": {
+    "expansion_round_step": {
+      "description": "Not reused elsewhere in the codebase; carried only as an item of `rounds`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates", "accounted_round_cost", "accounted_round_latency_ms"],
+      "properties": {
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/expansion_candidate"}},
+        "accounted_round_cost": {"type": "number"},
+        "accounted_round_latency_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "expansion_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_schema_id", "dedupe_values", "requested_disposition", "topology_patch"],
+      "properties": {
+        "candidate_schema_id": {"type": "string", "minLength": 1},
+        "dedupe_values": {"type": "object", "additionalProperties": {"type": "string"}},
+        "requested_disposition": {"enum": ["accept_for_proposal", "reject", "defer"]},
+        "topology_patch": {"$ref": "casegraphen.experimental.topology.patch.v0"}
+      }
+    }
+  }
+}
