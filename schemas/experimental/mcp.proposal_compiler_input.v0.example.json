@@ -1,0 +1,9 @@
+{
+  "case_space_id": "case_space:example",
+  "base_revision_id": "revision:example",
+  "plan_id": "plan:example",
+  "node_plan_mappings": [{"node_id":"node:review","worker_binding_id":"binding:review","success_evidence_requirement_ids":[],"allowed_transition_classes":[]}],
+  "verification_policies": {},
+  "budget_policies": {},
+  "expansion_policies": {}
+}

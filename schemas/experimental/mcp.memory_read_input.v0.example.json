@@ -1,0 +1,36 @@
+{
+  "case_space_id": "case_space:example",
+  "query": {
+    "schema": "casegraphen.experimental.memory.query.v0",
+    "query_id": "memory-query:add-runtime-integration",
+    "base_revision_id": "revision:accepted-casegraphen",
+    "requesting_actor_id": "actor:coding-agent",
+    "audience": "ai_agent",
+    "purpose": "code_change",
+    "risk_class": "normal",
+    "as_of": "2026-08-06T00:00:00Z",
+    "scope": {"case_space_id": "case_space:example", "project_id": "casegraphen", "actor_ids": []},
+    "memory_kinds": ["constraint", "decision", "procedure", "failure_pattern"],
+    "budget": {"max_items": 30, "max_tokens": 6000},
+    "query_text": "Add a new runtime integration",
+    "include_historical": false,
+    "include_contested": false
+  },
+  "policy": {
+    "schema": "casegraphen.experimental.memory.policy.v0",
+    "policy_id": "memory-policy:casegraphen-coding-agent",
+    "project_id": "casegraphen",
+    "actor_grants": [{
+      "actor_id": "actor:coding-agent",
+      "allowed_audiences": ["ai_agent"],
+      "allowed_purposes": ["code_change"],
+      "project_ids": ["casegraphen"],
+      "max_sensitivity": "internal",
+      "max_authority": "project_constraint"
+    }],
+    "valid_time_required_kinds": ["preference", "goal", "commitment"],
+    "hard_conflict_relation_types": ["contradicts"],
+    "exact_source_escalation": true
+  },
+  "claim_id": "memory:runtime-boundary"
+}

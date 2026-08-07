@@ -1,0 +1,40 @@
+{
+  "deployment_authority": {
+    "case_space_id": "case_space:example",
+    "claim_cell_id": "cell:review-accepted",
+    "deployment_bundle_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "declaration": {
+    "schema": "casegraphen.experimental.resource.declaration.v0",
+    "schema_version": 0,
+    "declaration_id": "declaration:refactor-a",
+    "runtime_graph_id": "runtime_graph:refactor",
+    "runtime_graph_content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "node_id": "node:refactor-a",
+    "claims": [{
+      "resource": "git-branch:main",
+      "mode": "exclusive",
+      "rate_limit_group": "rate-limit:git-host",
+      "workspace_strategy": "isolated_worktree",
+      "network_scope": ["network:git-host"],
+      "secret_scope": ["secret:git-write"]
+    }]
+  },
+  "reservation": {
+    "schema": "casegraphen.experimental.resource.reservation.v0",
+    "schema_version": 0,
+    "reservation_id": "reservation:refactor-a:attempt-1",
+    "declaration_id": "declaration:refactor-a",
+    "attempt_id": "attempt:refactor-a:1",
+    "granted_at": "2026-08-03T01:00:00Z",
+    "grants": [{
+      "resource_id": "git-branch:main",
+      "mode": "exclusive",
+      "rate_limit_group": "rate-limit:git-host",
+      "rate_limit_units": 1,
+      "workspace_strategy": "isolated_worktree",
+      "network_scope": ["network:git-host"],
+      "secret_scope": ["secret:git-write"]
+    }]
+  }
+}

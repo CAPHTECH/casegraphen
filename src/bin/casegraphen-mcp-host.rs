@@ -48,7 +48,7 @@ use casegraphen::{
     },
 };
 use higher_graphen_core::Id;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -113,7 +113,50 @@ impl OperationalDelegate {
     }
 }
 
-#[derive(Deserialize)]
+// Issue #118: every type below is deserialized directly out of a
+// `tools/call` payload (see the `payload_value`/`serde_json::from_value`
+// call sites that name it) and therefore has a published contract under
+// `schemas/experimental/mcp.*.v0.schema.json`. `Serialize` is derived only
+// so `tests/experimental_schema_conformance.rs` can round-trip a shipped
+// example through the Rust type and re-validate it against that schema; the
+// host itself never serializes these. `scripts/experimental-schema-conformance.py
+// --check` fails closed if a type here has no matching entry in
+// `schemas/experimental/contracts.v0.json`.
+/// Contract for [`ProposalCompilerInput`], the `compile_deployment_bundle` payload.
+pub const PROPOSAL_COMPILER_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.proposal_compiler_input.v0";
+/// Contract for [`ReviewedCompilerInput`], the `compile_reviewed_deployment_bundle` payload.
+pub const REVIEWED_COMPILER_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.reviewed_compiler_input.v0";
+/// Contract for [`ResourceReservationInput`], the `reserve_resources` payload.
+pub const RESOURCE_RESERVATION_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.resource_reservation_input.v0";
+/// Contract for [`ResourceDispositionInput`], the `release_resources` payload.
+pub const RESOURCE_DISPOSITION_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.resource_disposition_input.v0";
+/// Contract for [`ResourceReconciliationInput`], the `reconcile_resources` payload.
+pub const RESOURCE_RECONCILIATION_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.resource_reconciliation_input.v0";
+/// Contract for [`ExpansionEvaluationInput`], the `evaluate_expansion_round` payload.
+pub const EXPANSION_EVALUATION_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.expansion_evaluation_input.v0";
+/// Contract for [`StreamingRunInput`], the `reconcile_streaming_run` payload.
+pub const STREAMING_RUN_INPUT_SCHEMA: &str = "casegraphen.experimental.mcp.streaming_run_input.v0";
+/// Contract for [`VerificationLineageInput`], the `reconcile_verification_lineage` payload.
+pub const VERIFICATION_LINEAGE_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.verification_lineage_input.v0";
+/// Contract for [`MemoryReadInput`], the `memory_query`/`memory_explain`/
+/// `memory_history`/`memory_conflicts`/`memory_sources` payload.
+pub const MEMORY_READ_INPUT_SCHEMA: &str = "casegraphen.experimental.mcp.memory_read_input.v0";
+/// Contract for [`MemoryProposalInput`], the `memory_propose_claim`/
+/// `memory_propose_supersession`/`memory_propose_retraction`/
+/// `memory_propose_procedure` payload.
+pub const MEMORY_PROPOSAL_INPUT_SCHEMA: &str =
+    "casegraphen.experimental.mcp.memory_proposal_input.v0";
+
+/// External input for the `compile_deployment_bundle` tool.
+/// Contract: [`PROPOSAL_COMPILER_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProposalCompilerInput {
     case_space_id: String,
@@ -128,7 +171,9 @@ struct ProposalCompilerInput {
     expansion_policies: std::collections::BTreeMap<String, Value>,
 }
 
-#[derive(Deserialize)]
+/// External input for the `compile_reviewed_deployment_bundle` tool.
+/// Contract: [`REVIEWED_COMPILER_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReviewedCompilerInput {
     case_space_id: String,
@@ -143,7 +188,9 @@ struct ReviewedCompilerInput {
     expansion_policies: std::collections::BTreeMap<String, Value>,
 }
 
-#[derive(Deserialize)]
+/// External input for the `reserve_resources` tool.
+/// Contract: [`RESOURCE_RESERVATION_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ResourceReservationInput {
     deployment_authority: ReviewedDeploymentReference,
@@ -151,7 +198,10 @@ struct ResourceReservationInput {
     reservation: ResourceReservation,
 }
 
-#[derive(Deserialize)]
+/// Nested only in [`ResourceReservationInput::deployment_authority`]; not an
+/// independent contract (see `mcp.resource_reservation_input.v0.schema.json`'s
+/// `$defs.reviewed_deployment_reference`).
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReviewedDeploymentReference {
     case_space_id: String,
@@ -159,13 +209,17 @@ struct ReviewedDeploymentReference {
     deployment_bundle_hash: String,
 }
 
-#[derive(Deserialize)]
+/// External input for the `release_resources` tool.
+/// Contract: [`RESOURCE_DISPOSITION_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ResourceDispositionInput {
     assertion: ReservationDispositionAssertion,
 }
 
-#[derive(Deserialize)]
+/// External input for the `reconcile_resources` tool.
+/// Contract: [`RESOURCE_RECONCILIATION_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ResourceReconciliationInput {
     declaration: ResourceDeclaration,
@@ -173,7 +227,9 @@ struct ResourceReconciliationInput {
     allocations: Vec<RuntimeResourceAllocation>,
 }
 
-#[derive(Deserialize)]
+/// External input for the `evaluate_expansion_round` tool.
+/// Contract: [`EXPANSION_EVALUATION_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExpansionEvaluationInput {
     policy: ExpansionPolicy,
@@ -181,7 +237,10 @@ struct ExpansionEvaluationInput {
     rounds: Vec<ExpansionRoundStep>,
 }
 
-#[derive(Deserialize)]
+/// Nested only in [`ExpansionEvaluationInput::rounds`]; not an independent
+/// contract (see `mcp.expansion_evaluation_input.v0.schema.json`'s
+/// `$defs.expansion_round_step`).
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExpansionRoundStep {
     candidates: Vec<ExpansionCandidate>,
@@ -189,7 +248,9 @@ struct ExpansionRoundStep {
     accounted_round_latency_ms: u64,
 }
 
-#[derive(Deserialize)]
+/// External input for the `reconcile_streaming_run` tool.
+/// Contract: [`STREAMING_RUN_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StreamingRunInput {
     case_space_id: String,
@@ -204,7 +265,9 @@ struct StreamingRunInput {
     run_closed: bool,
 }
 
-#[derive(Deserialize)]
+/// External input for the `reconcile_verification_lineage` tool.
+/// Contract: [`VERIFICATION_LINEAGE_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct VerificationLineageInput {
     case_space_id: String,
@@ -216,7 +279,10 @@ struct VerificationLineageInput {
     anchors: Vec<VerificationAnchorInput>,
 }
 
-#[derive(Deserialize)]
+/// Nested only in [`VerificationLineageInput::producer_files`]; not an
+/// independent contract (see `mcp.verification_lineage_input.v0.schema.json`'s
+/// `$defs.retained_lineage_files`).
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RetainedLineageFiles {
     worker_report_path: String,
@@ -225,7 +291,13 @@ struct RetainedLineageFiles {
     stderr_path: String,
 }
 
-#[derive(Deserialize)]
+/// Nested only in [`VerificationLineageInput::anchors`]; not an independent
+/// contract (see `mcp.verification_lineage_input.v0.schema.json`'s
+/// `$defs.verification_anchor_input`). `CaseArtifact`'s meaning — what it
+/// simultaneously checks against the ledger, the artifact id, and the hash
+/// of the real bytes at `artifact_path` — lives in that `$defs` entry's
+/// description, not only in `verification_policy::observe_case_artifact`.
+#[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum VerificationAnchorInput {
     ExecutionTrace {
@@ -238,7 +310,10 @@ enum VerificationAnchorInput {
     },
 }
 
-#[derive(Deserialize)]
+/// External input for the `memory_query`/`memory_explain`/`memory_history`/
+/// `memory_conflicts`/`memory_sources` tools.
+/// Contract: [`MEMORY_READ_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct MemoryReadInput {
     case_space_id: String,
@@ -248,7 +323,10 @@ struct MemoryReadInput {
     claim_id: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// External input for the `memory_propose_claim`/`memory_propose_supersession`/
+/// `memory_propose_retraction`/`memory_propose_procedure` tools.
+/// Contract: [`MEMORY_PROPOSAL_INPUT_SCHEMA`].
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct MemoryProposalInput {
     case_space_id: String,
@@ -1461,4 +1539,64 @@ fn main() -> io::Result<()> {
         configuration.authorization_token,
     )?;
     serve_stdio(&mut server, io::stdin().lock(), io::stdout().lock())
+}
+
+/// Issue #118: proves every external MCP input type still round-trips
+/// through, and validates against, its shipped `schemas/experimental/mcp.*`
+/// contract. These types live in this binary crate, not the `casegraphen`
+/// library, so they cannot be reached from `tests/experimental_schema_conformance.rs`
+/// the way every other Rust-owned experimental contract is proven; this
+/// module is the equivalent gate for this crate target. The shared
+/// inventory/reference/gate checks (does every type here have a registered
+/// contract at all) still live in `scripts/experimental-schema-conformance.py
+/// --check`, run from `tests/experimental_schema_conformance.rs`.
+#[cfg(test)]
+mod mcp_input_contract_tests {
+    use super::*;
+    use std::{path::Path, process::Command};
+
+    fn roundtrip<T: serde::de::DeserializeOwned + Serialize>(example_file: &str) -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schemas/experimental")
+            .join(example_file);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let typed: T = serde_json::from_str(&source).unwrap_or_else(|error| {
+            panic!("deserialize {} into Rust owner: {error}", path.display())
+        });
+        serde_json::to_value(&typed).expect("Rust owner serializes")
+    }
+
+    #[test]
+    fn every_external_mcp_input_type_round_trips_against_its_shipped_schema() {
+        let instances = vec![
+            json!({"schema_id": PROPOSAL_COMPILER_INPUT_SCHEMA, "instance": roundtrip::<ProposalCompilerInput>("mcp.proposal_compiler_input.v0.example.json")}),
+            json!({"schema_id": REVIEWED_COMPILER_INPUT_SCHEMA, "instance": roundtrip::<ReviewedCompilerInput>("mcp.reviewed_compiler_input.v0.example.json")}),
+            json!({"schema_id": RESOURCE_RESERVATION_INPUT_SCHEMA, "instance": roundtrip::<ResourceReservationInput>("mcp.resource_reservation_input.v0.example.json")}),
+            json!({"schema_id": RESOURCE_DISPOSITION_INPUT_SCHEMA, "instance": roundtrip::<ResourceDispositionInput>("mcp.resource_disposition_input.v0.example.json")}),
+            json!({"schema_id": RESOURCE_RECONCILIATION_INPUT_SCHEMA, "instance": roundtrip::<ResourceReconciliationInput>("mcp.resource_reconciliation_input.v0.example.json")}),
+            json!({"schema_id": EXPANSION_EVALUATION_INPUT_SCHEMA, "instance": roundtrip::<ExpansionEvaluationInput>("mcp.expansion_evaluation_input.v0.example.json")}),
+            json!({"schema_id": STREAMING_RUN_INPUT_SCHEMA, "instance": roundtrip::<StreamingRunInput>("mcp.streaming_run_input.v0.example.json")}),
+            json!({"schema_id": VERIFICATION_LINEAGE_INPUT_SCHEMA, "instance": roundtrip::<VerificationLineageInput>("mcp.verification_lineage_input.v0.example.json")}),
+            json!({"schema_id": MEMORY_READ_INPUT_SCHEMA, "instance": roundtrip::<MemoryReadInput>("mcp.memory_read_input.v0.example.json")}),
+            json!({"schema_id": MEMORY_PROPOSAL_INPUT_SCHEMA, "instance": roundtrip::<MemoryProposalInput>("mcp.memory_proposal_input.v0.example.json")}),
+        ];
+        let bundle = std::env::temp_dir().join(format!(
+            "casegraphen-mcp-host-schema-instances-{}.json",
+            std::process::id()
+        ));
+        fs::write(&bundle, serde_json::to_vec(&instances).unwrap()).expect("write instance bundle");
+        let status = Command::new("python3")
+            .arg("scripts/experimental-schema-conformance.py")
+            .arg("--instances")
+            .arg(&bundle)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("validate Rust serialization against JSON Schema");
+        let _ = fs::remove_file(&bundle);
+        assert!(
+            status.success(),
+            "Rust serialization did not match shipped JSON Schema"
+        );
+    }
 }

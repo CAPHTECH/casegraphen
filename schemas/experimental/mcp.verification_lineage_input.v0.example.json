@@ -1,0 +1,32 @@
+{
+  "case_space_id": "case_space:example",
+  "claim_cell_id": "cell:review-accepted",
+  "policy": {
+    "schema": "casegraphen.experimental.verification_policy.v0",
+    "verification_policy_id": "verification:security-finding",
+    "producer_constraints": {"capability_ids": ["capability:research"]},
+    "verifier_constraints": {"capability_ids": ["capability:review"]},
+    "actor_must_differ": true,
+    "lenses": ["correctness", "source-validity", "recency"],
+    "quorum": {"minimum_accepts": 2, "total_verifiers": 3},
+    "required_anchors": ["anchor:source"],
+    "allowed_runtime_attestations": ["separate_session"],
+    "provenance": {"source": "issue:51", "created_by": "actor:designer"}
+  },
+  "producer_files": {
+    "worker_report_path": "reports/worker-report.json",
+    "execution_trace_path": "reports/execution-trace.json",
+    "stdout_path": "logs/stdout.log",
+    "stderr_path": "logs/stderr.log"
+  },
+  "review_morphism_ids": ["morphism:review-accept-1"],
+  "anchors": [
+    {"kind": "execution_trace", "anchor_id": "anchor:trace"},
+    {
+      "kind": "case_artifact",
+      "anchor_id": "anchor:source",
+      "artifact_id": "artifact:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifact_path": "artifacts/source.rs"
+    }
+  ]
+}

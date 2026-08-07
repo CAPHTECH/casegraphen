@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.streaming_run_input.v0",
+  "title": "CaseGraphen MCP host: reconcile_streaming_run payload",
+  "description": "The literal `payload.streaming_run` an MCP client sends for the `reconcile_streaming_run` tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_space_id", "expectation", "runtime_jsonl", "run_closed"],
+  "properties": {
+    "case_space_id": {"type": "string", "minLength": 1},
+    "expectation": {"$ref": "casegraphen.experimental.runtime.graph_expectation.v0"},
+    "events": {"type": "array", "items": {"$ref": "casegraphen.experimental.runtime.stream_event.v0"}},
+    "terminal_reports": {"type": "array", "items": {"$ref": "casegraphen.experimental.runtime.node_report.v0"}},
+    "resource_expectations": {"type": "array", "items": {"$ref": "#/$defs/runtime_resource_expectation"}},
+    "runtime_jsonl": {"type": "string"},
+    "run_closed": {"type": "boolean"}
+  },
+  "$defs": {
+    "runtime_resource_expectation": {
+      "description": "Not reused elsewhere in the codebase; carried only as an item of `resource_expectations`. Distinct from casegraphen.experimental.runtime.resource_expectation_bundle.v0's expectation entries, which additionally carry node_id, attempt_id, allocations, and disposition_evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declaration", "reservation"],
+      "properties": {
+        "declaration": {"$ref": "casegraphen.experimental.resource.declaration.v0"},
+        "reservation": {"$ref": "casegraphen.experimental.resource.reservation.v0"}
+      }
+    }
+  }
+}

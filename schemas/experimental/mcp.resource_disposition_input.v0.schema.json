@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.mcp.resource_disposition_input.v0",
+  "title": "CaseGraphen MCP host: release_resources payload",
+  "description": "The literal `payload.resource_disposition` an MCP client sends for the `release_resources` tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assertion"],
+  "properties": {
+    "assertion": {"$ref": "casegraphen.experimental.resource.reservation_disposition.v0"}
+  }
+}
