@@ -23,7 +23,7 @@ use crate::{
         check_native_close_with_finding, check_operation_gate, declared_source_boundary_id,
         NativeCloseCheckRequest, NativeOperationGate,
     },
-    native_store::NativeCaseStore,
+    native_store::{require_ids_exist, NativeCaseStore, NativeStoreError},
     topology::TopologyReportOptions,
 };
 use higher_graphen_core::{Id, Provenance, ReviewStatus, SourceKind};
@@ -479,7 +479,7 @@ pub(super) fn morphism_propose(
         morphism.added_ids = derive_added_ids(&payload);
     }
     validate_generic_morphism_metadata(&morphism)?;
-    validate_candidate_morphism(&replay.case_space, &morphism)?;
+    validate_candidate_morphism(store, &replay.case_space, &morphism)?;
     let proposal = proposal_value(case_space_id, &morphism);
     let path = proposal_path(store, case_space_id, &morphism.morphism_id)?;
     write_json(&path, &proposal)?;
@@ -502,7 +502,7 @@ pub(super) fn morphism_check(
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
     let morphism = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&morphism)?;
-    validate_candidate_morphism(&replay.case_space, &morphism)?;
+    validate_candidate_morphism(store, &replay.case_space, &morphism)?;
     let core_extensions = native_morphism_check_extensions(&replay.case_space, &morphism);
     let mathematical_diagnostics =
         native_morphism_temporal_diagnostics(&replay.case_space, &morphism)?;
@@ -525,7 +525,7 @@ pub(super) fn morphism_apply(
     require_current_revision(&replay.current_revision_id, base_revision_id)?;
     let mut morphism = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&morphism)?;
-    validate_candidate_morphism(&replay.case_space, &morphism)?;
+    validate_candidate_morphism(store, &replay.case_space, &morphism)?;
     let operation_gate =
         validated_mutation_gate(&replay.case_space, gate_options, "morphism-apply")?;
     morphism.review_status = ReviewStatus::Accepted;
@@ -568,7 +568,7 @@ pub(super) fn morphism_reject(
     let replay = store_api.replay_current_case_space(case_space_id)?;
     let proposal = read_proposal(store, case_space_id, morphism_id)?;
     validate_generic_morphism_metadata(&proposal)?;
-    validate_candidate_morphism(&replay.case_space, &proposal)?;
+    validate_candidate_morphism(store, &replay.case_space, &proposal)?;
     let mut review = review_morphism(
         &replay.case_space.revision.revision_id,
         revision_id,
@@ -861,6 +861,7 @@ fn retarget_latest_revision(
 }
 
 fn validate_candidate_morphism(
+    store: &Path,
     case_space: &CaseSpace,
     morphism: &CaseMorphism,
 ) -> Result<(), NativeCliError> {
@@ -908,6 +909,31 @@ fn validate_candidate_morphism(
                 "unknown referenced id {id}"
             )));
         }
+    }
+    // The append path answers a broader referenced-id question than the loop
+    // above: a relation's own `evidence_ids`, and every projection's
+    // represented/omitted cell and relation ids, not only this morphism's
+    // top-level `preserved_ids`/`evidence_ids`. `require_ids_exist`
+    // (`native_store.rs`) is that check, exposed `pub(crate)` so it can run
+    // here, against the same candidate, instead of a second implementation of
+    // it living in `native_cli` (#155). It is still run again at append time
+    // — `NativeCaseStore::append_morphism` is `pub`, so a caller that never
+    // goes through `propose`/`check` can still reach the store directly, the
+    // same reasoning that kept #157's append-time backstop in place.
+    //
+    // `require_ids_exist` classifies its own refusal `store_integrity` — the
+    // right call for the append path it was written for, where the store
+    // really may be corrupt. Called from here, on a document that has not
+    // been written anywhere yet, the same wording tells an operator to
+    // inspect a healthy store instead of fixing their input. Unwrap the
+    // reason and re-classify it `invalid` rather than let `?` inherit the
+    // store's code; do not reimplement the check to avoid this, map its
+    // result instead.
+    if let Err(error) = require_ids_exist(store, &candidate) {
+        return Err(match error {
+            NativeStoreError::InvalidMorphism { reason, .. } => NativeCliError::invalid(reason),
+            other => NativeCliError::from(other),
+        });
     }
     Ok(())
 }
@@ -1005,7 +1031,7 @@ fn append_validated_morphism(
     actor_id: Option<Id>,
     command: &str,
 ) -> Result<Value, NativeCliError> {
-    validate_candidate_morphism(case_space, &morphism)?;
+    validate_candidate_morphism(&store.root, case_space, &morphism)?;
     let mut entry = entry_for_morphism(case_space, morphism, actor_id)?;
     entry.replay_checksum = checksum_after_append(case_space, &entry)?;
     let record = if crate::native_store::is_execution_trace_anchor(&entry.morphism.morphism_type) {

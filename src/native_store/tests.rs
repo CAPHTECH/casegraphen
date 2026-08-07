@@ -1367,6 +1367,73 @@ fn append_rejects_payload_and_added_id_mismatch() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Issue #155: `native_cli::ops::validate_candidate_morphism` now calls this
+/// crate's `require_ids_exist` directly against the candidate it builds, so
+/// `morphism propose`/`check`/`apply` all refuse a relation whose own
+/// `evidence_ids` names a nonexistent id before any gated call. That guard
+/// lives in `native_cli`, though, and `NativeCaseStore::append_morphism` is
+/// `pub` — a library caller that never goes through the CLI can still reach
+/// this append path directly with a hand-built entry, the same reasoning
+/// #157's test above this one already established for relation retirement.
+/// This constructs exactly that: a relation added by morphism, with a bogus
+/// `evidence_ids` entry, appended straight through the store.
+#[test]
+fn append_still_rejects_a_relation_whose_evidence_id_does_not_exist() {
+    let root = temp_root("append-bogus-evidence");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+
+    let mut entry = metadata_entry(&case_space);
+    entry.entry_id = id("morphism_log_entry:issue155-bogus-evidence");
+    entry.morphism_id = id("morphism:issue155-bogus-evidence");
+    entry.target_revision_id = id("revision:issue155-bogus-evidence");
+    entry.morphism.morphism_id = entry.morphism_id.clone();
+    entry.morphism.morphism_type = CaseMorphismType::Relate;
+    entry.morphism.target_revision_id = entry.target_revision_id.clone();
+    entry.morphism.added_ids = vec![id("relation:issue155-bogus-evidence")];
+    entry.morphism.metadata.insert(
+        "payload".to_owned(),
+        serde_json::json!({"added_relations": [{
+            "id": "relation:issue155-bogus-evidence",
+            "relation_type": "covers",
+            "relation_strength": "soft",
+            "from_id": "case:native-contract-example",
+            "to_id": "goal:native-case-contract",
+            "evidence_ids": ["evidence:does-not-exist"],
+            "source_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }]}),
+    );
+    // The reducer itself does not check a relation's own `evidence_ids` (only
+    // `from_id`/`to_id`), so `apply_morphism` accepts this candidate — the
+    // checksum below is real, and the refusal this test expects comes from
+    // `require_ids_exist`, run after the reducer, not from a mismatched hash.
+    let mut expected = case_space.clone();
+    apply_morphism(&mut expected, &entry.morphism).expect("reducer accepts the relation");
+    expected.morphism_log.push(entry.clone());
+    expected.revision = revision_from_entry(&expected.case_space_id, &entry);
+    entry.replay_checksum = case_space_checksum(&expected).expect("checksum");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, entry)
+        .expect_err("a relation's own evidence_ids must resolve too");
+    assert!(matches!(
+        error,
+        NativeStoreError::InvalidMorphism { ref reason, .. }
+            if reason.contains("unknown referenced id evidence:does-not-exist")
+    ));
+
+    let _ = fs::remove_dir_all(root);
+}
+
 /// Issue #156/#159: the append path every durable mutation reaches used to
 /// Debug-dump the evaluator's violation list into the refusal message,
 /// leaving `NativeStoreError::NotEvaluable`'s structured `violations` field
