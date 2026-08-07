@@ -236,3 +236,43 @@ fn get_by_id_serves_a_schema_that_validates_standalone_with_no_base_uri() {
         String::from_utf8_lossy(&validation.stderr)
     );
 }
+
+/// `morphism.metadata` stays a fully open object — other reserved keys
+/// (`operation_gate`, `native_review_schema_version`, ...) must remain
+/// admissible — but `metadata.payload`, when present, is now closed to the
+/// `MorphismPayload` shape the CLI actually parses. Before this, an invented
+/// key such as `retired_cells` validated clean against the schema and was
+/// only caught at propose time by the CLI's own refusal; the schema
+/// documented nothing about it because `metadata` was `{"type": "object"}`
+/// end to end.
+#[test]
+fn served_schema_closes_metadata_payload_but_not_metadata_itself() {
+    let schema = get_content("--id", "highergraphen.case.morphism_propose_input.v1");
+    let mut example = get_content("--file", "native.morphism-propose-input.example.json");
+
+    // An invented payload key is refused.
+    let mut invented_payload_key = example.clone();
+    invented_payload_key["metadata"]["payload"]["retired_cells"] = serde_json::json!(["work:x"]);
+    let rejected = validate_with_bare_jsonschema(&schema, &invented_payload_key, "bad-payload-key");
+    assert!(
+        !rejected.status.success(),
+        "metadata.payload.retired_cells should fail schema validation \
+         (retired_cells has never been a MorphismPayload field — retirement is retired_ids)"
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("retired_cells"),
+        "the refusal should name the invented key: {}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+
+    // A reserved metadata key that is not `payload` stays admissible —
+    // `metadata` itself must not have become closed.
+    example["metadata"]["operation_gate"] = serde_json::json!({"unrelated": "to payload"});
+    let still_open = validate_with_bare_jsonschema(&schema, &example, "open-metadata-key");
+    assert!(
+        still_open.status.success(),
+        "an unrelated metadata key should still validate\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&still_open.stdout),
+        String::from_utf8_lossy(&still_open.stderr)
+    );
+}
