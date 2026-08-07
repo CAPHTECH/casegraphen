@@ -16,7 +16,7 @@ next_revision() {
 
 | Change | Command |
 |---|---|
-| Add, update, or retire cells and relations | `morphism propose` → `check` → `apply` |
+| Add or update cells and relations; retire cells | `morphism propose` → `check` → `apply` |
 | Record new evidence, with or without the file it is about | `evidence attach` |
 | Drive attach → review pause → transition from one file | `packet apply`, then `packet resume` |
 | Promote evidence, or accept/reject/reopen/waive a target | `review accept|reject|reopen|waive` |
@@ -74,7 +74,10 @@ REV="$(next_revision "$APPLY_REPORT")"
 ```
 
 `check` reports `applicable` plus diagnostics and mutates nothing. Run it: it
-catches payload/id mismatches before the gated call.
+catches payload/id mismatches before the gated call. It does not evaluate the
+append-time contract, so `applicable: true` is not a guarantee that `apply`
+will succeed (open: #155) — the relation-retirement case below is one where
+`check` says `applicable: true` and `apply` refuses anyway.
 
 What the reducer refuses, at propose time:
 
@@ -85,8 +88,12 @@ What the reducer refuses, at propose time:
 - an illegal lifecycle transition (table below)
 - leaving a relation whose `from_id` or `to_id` cell does not exist
 
-Retiring a **cell** sets `lifecycle: retired` and keeps it as a tombstone;
-retiring a **relation** removes it. Cells are never deleted.
+Retiring a **cell** sets `lifecycle: retired` and keeps it as a tombstone.
+Retiring a **relation** is refused: `morphism check` reports `applicable: true`
+for it, but `morphism apply` refuses with `store_integrity` /
+`DanglingReference`, because retirement would remove the relation from the
+graph outright — it gets no tombstone — while the morphism that originally
+added it still names it in `added_ids` (open: #157). Cells are never deleted.
 
 ## Legal lifecycle transitions
 
