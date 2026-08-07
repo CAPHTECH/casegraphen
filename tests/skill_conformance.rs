@@ -108,6 +108,32 @@ fn removed_flag_fixture_fails_with_a_location_and_mismatch() {
     );
 }
 
+/// Issue #111 acceptance criterion: a gate fails when skill text names a
+/// contract identifier or schema filename the installation does not
+/// provide. This fixture is the deliberate failure that proves the guard
+/// added in `scripts/skill-conformance.py::available_schema_identity`
+/// actually refuses, not merely that it happens to pass on real skill text.
+#[test]
+fn missing_schema_fixture_fails_with_a_location_and_identity() {
+    let output = checker("tests/fixtures/skill-conformance/missing-schema.md");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "missing-schema.md:3: schema id 'highergraphen.case.does_not_exist.v1' is not \
+             provided by `casegraphen schema get`"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "missing-schema.md:4: schema file 'nonexistent.schema.json' is not provided by \
+             `casegraphen schema get`"
+        ),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn stale_status_and_halt_fixture_fail_with_locations() {
     let output = checker("tests/fixtures/skill-conformance/stale-vocabulary.md");

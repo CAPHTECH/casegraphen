@@ -199,6 +199,7 @@ and `graph lint` supports JSON or text without creating a second decision rule.
 casegraphen lift native|workflow|case-graph      # native and graph lifts
 casegraphen lift github-issues                   # bounded GitHub issue snapshot lift
 casegraphen graph lint                           # experimental topology analysis; json|text
+casegraphen schema list|get                      # embedded schema/example catalog; get needs --id or --file
 casegraphen memory query|explain|history|conflicts|candidates|sources
 casegraphen memory source attach|inspect         # proposal/read-only; no accepted write
 casegraphen memory check|propose                  # propose is always unreviewed
@@ -325,9 +326,10 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0029: Memory Plane stable-promotion decision](docs/adr/0029-memory-plane-stable-promotion.md)
 - [ADR 0030: Separate direct task skills from process orchestration](docs/adr/0030-task-skills-and-process-orchestration.md)
 - [ADR 0031: GitHub issue-to-PR evidence is bounded, replayable observation](docs/adr/0031-github-evidence-observation-boundary.md)
+- [ADR 0033: schema distribution through the binary, not per-skill copies](docs/adr/0033-schema-distribution-through-the-binary.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0033**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0034**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

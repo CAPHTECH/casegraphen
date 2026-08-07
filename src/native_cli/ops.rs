@@ -40,6 +40,7 @@ mod mutations;
 mod packet;
 mod plan;
 mod run;
+mod schema;
 mod topology_review;
 mod workflow_lift;
 pub(super) use binding::binding_register;
@@ -61,6 +62,7 @@ pub(super) use plan::{plan_check, plan_propose, plan_review};
 pub(super) use run::{
     operate, operate_text, run_frontier, run_frontier_text, run_step, run_step_text,
 };
+pub(super) use schema::{schema_get, schema_list};
 pub(super) use topology_review::{topology_review_apply, topology_review_inspect};
 
 pub(super) struct NativeReviewApplyOptions<'a> {

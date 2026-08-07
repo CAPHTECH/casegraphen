@@ -57,23 +57,14 @@ install_skills_into() {
 
     cp -R "$(dirname "$skill")" "$target/$name"
     if [ "$name" = casegraphen-design ]; then
-      cp "$source_dir/schemas/experimental/execution.topology.v0.schema.json" \
-        "$target/$name/references/execution.topology.v0.schema.json"
+      # Issue #111: no schema copy here. `casegraphen schema get --id
+      # casegraphen.experimental.execution.topology.v0` now serves the same
+      # schema straight from the installed binary, so there is nothing left
+      # to drift out of sync with the copy this used to write. The contract
+      # rationale doc still has no binary-served counterpart, so it still
+      # ships as a copy.
       cp "$source_dir/docs/design/execution-topology-contract.md" \
         "$target/$name/references/execution-topology-contract.md"
-    fi
-    if [ "$name" = casegraphen-audit ]; then
-      cp "$source_dir/schemas/experimental/runtime.node_report.schema.json" \
-        "$target/$name/references/runtime.node_report.schema.json"
-    fi
-    if [ "$name" = casegraphen-orchestrate ]; then
-      # The process Skill consumes the canonical handoff contract. Copying it
-      # at install time prevents the bundled reference from drifting from the
-      # schema inventoried and validated by this source tree.
-      cp "$source_dir/schemas/experimental/skill.orchestration_handoff.v0.schema.json" \
-        "$target/$name/references/skill.orchestration_handoff.v0.schema.json"
-      cp "$source_dir/schemas/experimental/skill.orchestration_handoff.v0.example.json" \
-        "$target/$name/references/skill.orchestration_handoff.v0.example.json"
     fi
     printf 'installed %s\n' "$name"
     installed=$((installed + 1))

@@ -31,11 +31,12 @@ use ops::{
     memory_index, memory_propose, memory_read, memory_source, morphism_apply, morphism_check,
     morphism_propose, morphism_reject, operate, operate_text, packet_apply, packet_apply_text,
     packet_resume, packet_resume_text, plan_check, plan_propose, plan_review, projection_apply,
-    review_apply, run_frontier, run_frontier_text, run_step, run_step_text, topology_review_apply,
-    topology_review_inspect, MemoryIndexMode, MemoryReadMode, MemorySourceMode,
-    NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions, NativePlanGateOptions,
-    NativePlanReviewOptions, NativeReviewApplyOptions, NativeRunFrontierOptions,
-    NativeRunGateOptions, NativeRunStepOptions, NativeTopologyReviewOptions,
+    review_apply, run_frontier, run_frontier_text, run_step, run_step_text, schema_get,
+    schema_list, topology_review_apply, topology_review_inspect, MemoryIndexMode, MemoryReadMode,
+    MemorySourceMode, NativeCloseGateOptions, NativeMutationGateOptions, NativeOperateOptions,
+    NativePlanGateOptions, NativePlanReviewOptions, NativeReviewApplyOptions,
+    NativeRunFrontierOptions, NativeRunGateOptions, NativeRunStepOptions,
+    NativeTopologyReviewOptions,
 };
 use reporting::report;
 
@@ -93,6 +94,20 @@ pub(crate) enum NativeCliCommand {
     GraphLint {
         input: PathBuf,
         format: NativeOutputFormat,
+        output: Option<PathBuf>,
+    },
+    /// Issue #111: emits the catalog of every schema and example this crate
+    /// embeds (`schema_catalog.rs`), tagged stable or experimental, so a
+    /// consumer can discover what `schema get` can return without cloning
+    /// this repository.
+    SchemaList { output: Option<PathBuf> },
+    /// Emits one embedded schema or example by its declared `id` (a
+    /// `*.schema.json`'s `$id`) or by its exact `file` name — the two ways
+    /// skill prose already names a contract. Exactly one of `id`/`file` is
+    /// set; the parser refuses both-or-neither.
+    SchemaGet {
+        id: Option<String>,
+        file: Option<String>,
         output: Option<PathBuf>,
     },
     CaseNew {
@@ -449,6 +464,8 @@ impl NativeCliCommand {
     pub fn output(&self) -> Option<&PathBuf> {
         match self {
             Self::GraphLint { output, .. }
+            | Self::SchemaList { output, .. }
+            | Self::SchemaGet { output, .. }
             | Self::CaseNew { output, .. }
             | Self::CaseImport { output, .. }
             | Self::LiftStructuredSource { output, .. }
@@ -680,6 +697,11 @@ impl NativeCliCommand {
                     domain_finding,
                 ))
             }
+            Self::SchemaList { .. } => Ok(NativeCommandResult::success(schema_list())),
+            Self::SchemaGet { id, file, .. } => Ok(NativeCommandResult::success(schema_get(
+                id.as_deref(),
+                file.as_deref(),
+            )?)),
             Self::MemoryRead { .. }
             | Self::MemorySource { .. }
             | Self::MemoryCheck { .. }

@@ -81,16 +81,20 @@ for runtime in .claude .codex; do
       exit 1
     fi
   done
+  # Issue #111: `install.sh` no longer copies per-skill schema files —
+  # `casegraphen schema get` serves them from the installed binary instead,
+  # covered by `tests/schema_command.rs` against the real binary. This
+  # smoke test's fake `cargo` never produces a real binary (see the top of
+  # this script), so it only asserts the file-copy behavior install.sh
+  # still owns.
   audit_reference="$test_dir/home/$runtime/skills/casegraphen-audit/references/run-audit.md"
   audit_agent="$test_dir/home/$runtime/skills/casegraphen-audit/agents/openai.yaml"
-  audit_schema="$test_dir/home/$runtime/skills/casegraphen-audit/references/runtime.node_report.schema.json"
-  for installed_asset in "$audit_reference" "$audit_agent" "$audit_schema"; do
+  for installed_asset in "$audit_reference" "$audit_agent"; do
     if [ ! -f "$installed_asset" ]; then
       printf 'missing installed skill asset: %s\n' "$installed_asset" >&2
       exit 1
     fi
   done
-  cmp "$repository_dir/schemas/experimental/runtime.node_report.schema.json" "$audit_schema"
   integrate_reference="$test_dir/home/$runtime/skills/casegraphen-integrate/references/generic-jsonl.md"
   integrate_agent="$test_dir/home/$runtime/skills/casegraphen-integrate/agents/openai.yaml"
   for installed_asset in "$integrate_reference" "$integrate_agent"; do
@@ -101,28 +105,30 @@ for runtime in .claude .codex; do
   done
   design_reference="$test_dir/home/$runtime/skills/casegraphen-design/references/contracts-and-outputs.md"
   design_agent="$test_dir/home/$runtime/skills/casegraphen-design/agents/openai.yaml"
-  design_schema="$test_dir/home/$runtime/skills/casegraphen-design/references/execution.topology.v0.schema.json"
   design_contract="$test_dir/home/$runtime/skills/casegraphen-design/references/execution-topology-contract.md"
-  for installed_asset in "$design_reference" "$design_agent" "$design_schema" "$design_contract"; do
+  for installed_asset in "$design_reference" "$design_agent" "$design_contract"; do
     if [ ! -f "$installed_asset" ]; then
       printf 'missing installed skill asset: %s\n' "$installed_asset" >&2
       exit 1
     fi
   done
-  cmp "$repository_dir/schemas/experimental/execution.topology.v0.schema.json" "$design_schema"
   cmp "$repository_dir/docs/design/execution-topology-contract.md" "$design_contract"
+  if [ -e "$test_dir/home/$runtime/skills/casegraphen-design/references/execution.topology.v0.schema.json" ]; then
+    printf 'installer still wrote a schema copy issue #111 removed\n' >&2
+    exit 1
+  fi
   orchestrate_reference="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/routing.md"
   orchestrate_handoff="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/handoff.md"
-  orchestrate_schema="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/skill.orchestration_handoff.v0.schema.json"
-  orchestrate_example="$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/skill.orchestration_handoff.v0.example.json"
-  for installed_asset in "$orchestrate_reference" "$orchestrate_handoff" "$orchestrate_schema" "$orchestrate_example"; do
+  for installed_asset in "$orchestrate_reference" "$orchestrate_handoff"; do
     if [ ! -f "$installed_asset" ]; then
       printf 'missing installed process skill asset: %s\n' "$installed_asset" >&2
       exit 1
     fi
   done
-  cmp "$repository_dir/schemas/experimental/skill.orchestration_handoff.v0.schema.json" "$orchestrate_schema"
-  cmp "$repository_dir/schemas/experimental/skill.orchestration_handoff.v0.example.json" "$orchestrate_example"
+  if [ -e "$test_dir/home/$runtime/skills/casegraphen-orchestrate/references/skill.orchestration_handoff.v0.schema.json" ]; then
+    printf 'installer still wrote a schema copy issue #111 removed\n' >&2
+    exit 1
+  fi
 done
 
 if [ -e "$test_dir/project/.claude" ]; then

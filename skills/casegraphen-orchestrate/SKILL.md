@@ -19,7 +19,8 @@ a route and [handoff.md](references/handoff.md) before crossing a phase boundary
 - Automatic continuation is allowed only between read-only or proposal-only
   phases when the handoff is complete and no review or authority seam is open.
 - Every boundary emits `skill.orchestration_handoff.v0`, validated against
-  [skill.orchestration_handoff.v0.schema.json](references/skill.orchestration_handoff.v0.schema.json).
+  the schema `casegraphen schema get --id casegraphen.experimental.skill.orchestration_handoff.v0 --format json`
+  returns.
 - The handoff records facts observed from tools separately from unresolved
   evidence and runtime-declared claims. It never turns either into accepted state.
 
@@ -34,8 +35,9 @@ a route and [handoff.md](references/handoff.md) before crossing a phase boundary
    the phase and which responsibilities remain outside it.
 4. Run or hand off to that skill. Preserve its outputs as artifacts; do not
    reinterpret a proposal, report, or runtime declaration as accepted evidence.
-5. Emit a strict handoff using the example in
-   [skill.orchestration_handoff.v0.example.json](references/skill.orchestration_handoff.v0.example.json).
+5. Emit a strict handoff using the example
+   `casegraphen schema get --file skill.orchestration_handoff.v0.example.json --format json`
+   returns.
 6. If `return_required` is true, return to the named human/policy/authority seam.
    Otherwise continue only when `next_action.kind` is `invoke_task_skill`.
 7. Finish only after the selected task skill reports its own completion and the

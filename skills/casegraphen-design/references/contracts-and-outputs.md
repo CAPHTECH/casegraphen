@@ -17,12 +17,18 @@ Read this before writing proposal artifacts.
 
 In a repository checkout, the authoritative v0 field definitions live in
 `schemas/experimental/execution.topology.v0.schema.json`, and the contract
-rationale lives in `docs/design/execution-topology-contract.md`. A user-level
-installation includes byte-for-byte copies at
-`references/execution.topology.v0.schema.json` and
-`references/execution-topology-contract.md`. Read the applicable installed or
-checkout files directly; do not manually copy their enums or validation rules
-into instructions.
+rationale lives in `docs/design/execution-topology-contract.md`. Without a
+checkout, get the same schema straight from the installed binary:
+
+```sh
+casegraphen schema get --id casegraphen.experimental.execution.topology.v0 --format json
+```
+
+A user-level installation still includes a byte-for-byte copy of the contract
+rationale at `references/execution-topology-contract.md` (there is no
+`schema get` command for prose). Read the applicable installed or checkout
+file directly; do not manually copy enums or validation rules into
+instructions.
 
 ## Mapping proposal content
 

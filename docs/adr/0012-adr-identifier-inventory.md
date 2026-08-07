@@ -37,7 +37,11 @@ their identifiers.
 - Renames and references must be updated atomically.
 - A deleted decision must remain as a status-bearing ADR record rather than
   creating a number gap.
-- The next available identifier is 0032.
+- The next available identifier lives in exactly one place — `README.md`,
+  which `scripts/adr-conformance.py --index README.md` enforces — so this
+  ADR does not restate the number itself; a restated copy here would be
+  exactly the kind of duplicate this ADR exists to forbid, and it would sit
+  outside the gate that keeps README's copy honest.
 
 ## Rejected alternatives
 

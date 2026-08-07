@@ -2,6 +2,8 @@ usage:
   casegraphen version
   casegraphen --version
   casegraphen graph lint --input <execution.topology.json> --format json|text [--output <path>]
+  casegraphen schema list --format json [--output <path>]  (every schema and example this crate embeds, tagged stable or experimental)
+  casegraphen schema get --id <schema-id> | --file <filename> --format json [--output <path>]  (exactly one of --id or --file selects the embedded contract to emit)
   casegraphen memory query|conflicts|candidates --store <dir> --case-space-id <id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --format json [--output <path>]
   casegraphen memory explain|history|sources --store <dir> --case-space-id <id> --target-id <claim-id> --input <memory.query.v0.json> --policy <memory.policy.v0.json> --format json [--output <path>]
   casegraphen memory source <attach|inspect>

@@ -1,9 +1,13 @@
 # Exact handoff contract
 
-Validate every phase handoff with the installed
-`skill.orchestration_handoff.v0.schema.json`. The installer copies the canonical
-experimental schema and example into this directory; they are not independent
-copies to edit.
+Validate every phase handoff against `skill.orchestration_handoff.v0.schema.json`.
+Fetch it and its example directly from the installed binary — never copy them
+into this directory to edit:
+
+```sh
+casegraphen schema get --id casegraphen.experimental.skill.orchestration_handoff.v0 --format json
+casegraphen schema get --file skill.orchestration_handoff.v0.example.json --format json
+```
 
 ## Evidence roles
 

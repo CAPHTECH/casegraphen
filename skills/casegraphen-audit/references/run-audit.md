@@ -12,11 +12,15 @@
   policies.
 
 In a repository checkout, validate report shape against
-`schemas/experimental/runtime.node_report.schema.json`. A user-level
-installation includes a byte-for-byte copy at
-`references/runtime.node_report.schema.json`. Semantic validation and
-completeness still belong to `casegraphen::runtime_protocol`, not the JSON
-Schema or this Skill.
+`schemas/experimental/runtime.node_report.schema.json`. Without a checkout,
+get the same schema straight from the installed binary:
+
+```sh
+casegraphen schema get --id casegraphen.experimental.runtime.node_report.v0 --format json
+```
+
+Semantic validation and completeness still belong to
+`casegraphen::runtime_protocol`, not the JSON Schema or this Skill.
 
 Do not derive completeness locally. The canonical result already covers graph
 joins, expected/missing nodes, failures, duplicate/retry lineage, output-schema

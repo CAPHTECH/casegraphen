@@ -139,6 +139,8 @@ pub(super) struct NativeOptions {
     pub(super) source_boundary_id: Option<Id>,
     pub(super) title: Option<String>,
     pub(super) reason: Option<String>,
+    pub(super) schema_id: Option<String>,
+    pub(super) schema_file: Option<String>,
     pub(super) lifecycle: Option<String>,
     pub(super) validation_evidence_ids: Vec<Id>,
     pub(super) enabled_worker_kinds: Vec<String>,
@@ -415,6 +417,8 @@ impl NativeOptions {
             }
             Some("--title") => self.title = Some(require_string(args, "--title")?),
             Some("--reason") => self.reason = Some(require_string(args, "--reason")?),
+            Some("--id") => self.schema_id = Some(require_string(args, "--id")?),
+            Some("--file") => self.schema_file = Some(require_string(args, "--file")?),
             Some("--to") => self.lifecycle = Some(require_string(args, "--to")?),
             Some("--validation-evidence-id") => self
                 .validation_evidence_ids

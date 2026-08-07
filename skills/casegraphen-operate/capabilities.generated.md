@@ -60,6 +60,8 @@ commands and flags reach the shipped parser.
 | `casegraphen review waive` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--evidence-id`, `--format`, `--gate-profile`, `--gate-profile-file`, `--operation-scope-id`, `--output`, `--reason`, `--reviewer-id`, `--source-boundary-id`, `--store`, `--target-id` |
 | `casegraphen run --frontier` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--enable-worker`, `--format`, `--frontier`, `--gate-actor-id`, `--gate-profile`, `--gate-profile-file`, `--max-parallel`, `--operation-scope-id`, `--output`, `--plan-id`, `--retry-step`, `--source-boundary-id`, `--store`, `--strict`, `--supersede-trace` |
 | `casegraphen run --step` | `--actor-id`, `--audience`, `--base-revision-id`, `--capability-id`, `--case-space-id`, `--enable-worker`, `--format`, `--gate-actor-id`, `--gate-profile`, `--gate-profile-file`, `--operation-scope-id`, `--output`, `--plan-id`, `--retry-step`, `--source-boundary-id`, `--step`, `--store`, `--strict`, `--supersede-trace` |
+| `casegraphen schema get` | `--file`, `--format`, `--id`, `--output` |
+| `casegraphen schema list` | `--format`, `--output` |
 | `casegraphen space evidence` | `--case-space-id`, `--format`, `--output`, `--store` |
 | `casegraphen space frontier` | `--case-space-id`, `--format`, `--output`, `--store` |
 | `casegraphen space history` | `--case-space-id`, `--format`, `--output`, `--store` |
