@@ -1,0 +1,68 @@
+{
+  "schema": "highergraphen.case.workflow.graph.v1",
+  "schema_version": 1,
+  "workflow_graph_id": "workflow_graph:mini",
+  "case_graph_id": "case_graph:mini",
+  "space_id": "space:mini",
+  "work_items": [
+    {
+      "id": "work_item:design",
+      "space_id": "space:mini",
+      "item_type": "task",
+      "title": "Design the mini feature",
+      "state": "doing",
+      "case_ids": [],
+      "hard_dependency_ids": [],
+      "external_wait_ids": [],
+      "evidence_requirement_ids": [],
+      "proof_requirement_ids": [],
+      "source_ids": [],
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini example" },
+        "confidence": 1.0,
+        "review_status": "unreviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "work_item:implement",
+      "space_id": "space:mini",
+      "item_type": "task",
+      "title": "Implement the mini feature",
+      "state": "todo",
+      "case_ids": [],
+      "hard_dependency_ids": ["work_item:design"],
+      "external_wait_ids": [],
+      "evidence_requirement_ids": [],
+      "proof_requirement_ids": [],
+      "source_ids": [],
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini example" },
+        "confidence": 1.0,
+        "review_status": "unreviewed"
+      },
+      "metadata": {}
+    }
+  ],
+  "workflow_relations": [
+    {
+      "id": "relation:implement-depends-on-design",
+      "relation_type": "depends_on",
+      "from_id": "work_item:implement",
+      "to_id": "work_item:design",
+      "evidence_ids": [],
+      "source_ids": [],
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini example" },
+        "confidence": 1.0,
+        "review_status": "unreviewed"
+      }
+    }
+  ],
+  "readiness_rules": [],
+  "evidence_records": [],
+  "transition_records": [],
+  "projection_profiles": [],
+  "correspondence_records": [],
+  "metadata": {}
+}
