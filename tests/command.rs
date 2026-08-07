@@ -32,8 +32,12 @@ fn version_command_reports_package_version() {
     // (exercised separately in the packaging gate) is the case where it is
     // absent and the plain version prints instead.
     let head = git_short_head();
+    // Recomputes the same definition build.rs uses (dirty means tracked
+    // files differ from HEAD; an untracked file does not count) rather than
+    // deriving it independently — this only proves build.rs stays in sync
+    // with itself, not that the definition is the right one.
     let dirty = !std::process::Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--untracked-files=no"])
         .output()
         .expect("git status")
         .stdout
