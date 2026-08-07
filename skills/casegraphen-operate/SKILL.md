@@ -267,6 +267,24 @@ the report payload is unchanged.
   refuses a claim that is not the evidence the named `--completed-through`
   revision attached. A stored `review_status: accepted` on the cell does not
   count; only a review morphism does.
+- `error_code: "invalid"` on a document you authored (any `lift`, or a morphism
+  or packet input) names the **first** violation, not every one. Parsing stops
+  there, so violations nested inside a member that is still missing are not
+  reachable yet. Fixing the named field and re-running costs one invocation per
+  violation and hides how many are left. Validate the whole document against its
+  schema first — measured on one case space, the refusal named one violation and
+  the schema named seven:
+
+  ```sh
+  casegraphen schema get --id highergraphen.case.space.v1 --format json \
+    | jq -r .result.content > schema.json
+  python3 -m jsonschema -i your-document.json schema.json    # every violation, one pass
+  ```
+
+  The binary serves every schema it consumes, so this needs no repository
+  checkout; `casegraphen schema list` names them, and a `lift` refusal names the
+  id it wanted. Any JSON Schema validator works — `jsonschema` is one choice,
+  not a requirement.
 
 ## Never do these
 
