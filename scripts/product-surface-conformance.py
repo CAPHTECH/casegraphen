@@ -7,6 +7,41 @@ import json
 import pathlib
 import sys
 
+# Issue #129: eleven of twenty-eight MCP catalog tools had a real-host test;
+# seventeen had none. `catalog_tools_without_an_end_to_end_test` closes the
+# class of regression that made the gap possible in the first place — a tool
+# added to the catalog with zero mentions in any driver that spawns the real
+# `casegraphen-mcp-host` binary. It is necessary, not sufficient: it proves a
+# tool's name was passed to `tools/call` somewhere, nothing about whether that
+# call asserts on the emitted payload. #129's own fixtures are the bar for
+# what a real test looks like (assert on `structuredContent.result` fields,
+# not just `isError`); this check cannot enforce that bar, only that a name
+# is not silently absent from every driver. A green run here is not proof of
+# coverage — read the test, the same way #129 itself was found by grepping
+# the catalog against the drivers rather than trusting the suite being green.
+END_TO_END_DRIVER_FILES = (
+    "tests/mcp_stdio.rs",
+    "tests/product_surface.rs",
+    "tests/resource_host_e2e.rs",
+    "tests/verification_lineage_e2e.rs",
+)
+
+
+def catalog_tools_without_an_end_to_end_test(root: pathlib.Path, catalog: list[str]) -> list[str]:
+    # Driver files pass a tool name either inline in a `json!` literal
+    # (`"name":"attach_runtime_report"`) or as a bare string argument to a
+    # local helper (`tool_call("reserve_resources", ...)` in
+    # resource_host_e2e.rs); both forms quote the exact tool name once. A bare
+    # quoted-string match is looser than requiring a `"name":` prefix, but a
+    # snake_case catalog tool name is distinctive enough in a narrowly-scoped
+    # e2e test file that this is a reasonable trade for covering both forms.
+    driver_text = "\n".join(
+        (root / driver_file).read_text() for driver_file in END_TO_END_DRIVER_FILES
+    )
+    return [
+        tool for tool in catalog if f'"{tool}"' not in driver_text
+    ]
+
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[1]
@@ -89,6 +124,13 @@ def main() -> int:
     }
     if seen != expected:
         failures.append(f"workflow inventory differs: {sorted(seen ^ expected)}")
+
+    untested = catalog_tools_without_an_end_to_end_test(root, catalog)
+    if untested:
+        failures.append(
+            "catalog tools with no real-host test in any of "
+            f"{', '.join(END_TO_END_DRIVER_FILES)}: {untested}"
+        )
 
     if failures:
         for failure in failures:
