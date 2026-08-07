@@ -194,6 +194,11 @@ fn every_skill_refuses_a_removed_responsibility_boundary() {
             "Repair an audit finding by accepting a claim",
         ),
         (
+            "casegraphen-github-evidence",
+            "A refresh never rebases a review basis.",
+            "A refresh may rebase a review basis.",
+        ),
+        (
             "casegraphen-orchestrate",
             "These are explicit return seams.",
             "These seams may be crossed automatically.",

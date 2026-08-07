@@ -1,0 +1,130 @@
+{
+  "schema": "casegraphen.experimental.github.capture_manifest.v0",
+  "repository": "CAPHTECH/casegraphen",
+  "issue_numbers": [
+    92
+  ],
+  "pr_number": 101,
+  "captured_at": "2026-08-06T08:30:00Z",
+  "capture_tool": "gh",
+  "entries": [
+    {
+      "category": "pr",
+      "artifact_path": "pr-101.json",
+      "content_hash": "sha256:07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+      "command_record": [
+        "gh",
+        "pr",
+        "view",
+        "101",
+        "--repo",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,state,url,author,body,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,mergeable,createdAt,updatedAt"
+      ]
+    },
+    {
+      "category": "files",
+      "artifact_path": "pr-101.json",
+      "content_hash": "sha256:07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+      "command_record": [
+        "gh",
+        "pr",
+        "view",
+        "101",
+        "--repo",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,state,url,author,body,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,mergeable,createdAt,updatedAt"
+      ]
+    },
+    {
+      "category": "reviews",
+      "artifact_path": "pr-101-reviews.json",
+      "content_hash": "sha256:ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=<pull request reviews query>",
+        "-F",
+        "owner=CAPHTECH",
+        "-F",
+        "name=casegraphen",
+        "-F",
+        "number=101"
+      ]
+    },
+    {
+      "category": "review_threads",
+      "artifact_path": "pr-101-threads.json",
+      "content_hash": "sha256:03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=<pull request review threads query>",
+        "-F",
+        "owner=CAPHTECH",
+        "-F",
+        "name=casegraphen",
+        "-F",
+        "number=101"
+      ]
+    },
+    {
+      "category": "commits",
+      "artifact_path": "pr-101-commits.json",
+      "content_hash": "sha256:a597a0bc8c8682401abe0318c3750985c57570145bea493718b51cb34e8fc36b",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=<pull request commits query>",
+        "-F",
+        "owner=CAPHTECH",
+        "-F",
+        "name=casegraphen",
+        "-F",
+        "number=101"
+      ]
+    },
+    {
+      "category": "checks",
+      "artifact_path": "pr-101-checks.json",
+      "content_hash": "sha256:216cf7c74bb3a3992d89e8e195a47af9c18cb0f0ac63cdf9c439b771ceb6a82c",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=<pull request status check rollup query>",
+        "-F",
+        "owner=CAPHTECH",
+        "-F",
+        "name=casegraphen",
+        "-F",
+        "number=101"
+      ]
+    },
+    {
+      "category": "issue",
+      "artifact_path": "issue-92.json",
+      "content_hash": "sha256:e41b2147adbaf76470bba4a14ede3ed816e09dd0568b486a9690c40de1bdd355",
+      "command_record": [
+        "gh",
+        "issue",
+        "view",
+        "92",
+        "--repo",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,state,url,author,body,createdAt,updatedAt,closed"
+      ],
+      "issue_number": 92
+    }
+  ]
+}
