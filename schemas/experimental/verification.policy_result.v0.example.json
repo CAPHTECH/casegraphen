@@ -1,0 +1,35 @@
+{
+  "schema": "casegraphen.experimental.verification_policy_result.v0",
+  "policy_id": "verification:security-finding",
+  "ledger_scope": {
+    "case_space_id": "case_space:test",
+    "case_revision_id": "revision:test",
+    "claim_cell_id": "claim:test",
+    "subject_kind": "execution_topology",
+    "subject_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "topology_content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_id": "node:test",
+    "attempt_id": "attempt:test:1"
+  },
+  "ledger_requirements_satisfied": true,
+  "runtime_attestations_satisfied": true,
+  "anchors_satisfied": true,
+  "quorum_satisfied": true,
+  "policy_satisfied": true,
+  "independent_minds_proven": false,
+  "fresh_context_proven": false,
+  "findings": [
+    {
+      "code": "fresh_context_not_observable",
+      "level": "not_observable_here",
+      "subject_id": null,
+      "detail": "runtime context metadata cannot prove genuine context freshness"
+    },
+    {
+      "code": "independent_minds_not_observable",
+      "level": "not_observable_here",
+      "subject_id": null,
+      "detail": "different actor ids do not prove independent minds or undeclared information isolation"
+    }
+  ]
+}

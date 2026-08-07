@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.verification_policy_result.v0",
+  "description": "Result of reconciling a verification.policy.v0 against ledger-derived producer/verifier lineage and tool-observed anchors (VerificationPolicyResult, src/verification_policy.rs). independent_minds_proven and fresh_context_proven are pinned const:false and required: this tool classifies review roles from ledger-observed identities and can never observe independent minds or a fresh context, so a result claiming either as true is not schema-constructible. The matching not_observable finding is a required, non-empty consequence of that boundary, so non-observability cannot be asserted by omitting the finding either.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "policy_id", "ledger_scope", "ledger_requirements_satisfied", "runtime_attestations_satisfied", "anchors_satisfied", "quorum_satisfied", "policy_satisfied", "independent_minds_proven", "fresh_context_proven", "findings"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.verification_policy_result.v0"},
+    "policy_id": {"type": "string"},
+    "ledger_scope": {"$ref": "#/$defs/ledger_scope"},
+    "ledger_requirements_satisfied": {"type": "boolean"},
+    "runtime_attestations_satisfied": {"type": "boolean"},
+    "anchors_satisfied": {"type": "boolean"},
+    "quorum_satisfied": {"type": "boolean"},
+    "policy_satisfied": {"type": "boolean"},
+    "independent_minds_proven": {"const": false},
+    "fresh_context_proven": {"const": false},
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/finding"},
+      "allOf": [
+        {"contains": {
+          "type": "object",
+          "properties": {
+            "code": {"const": "independent_minds_not_observable"},
+            "level": {"const": "not_observable_here"}
+          },
+          "required": ["code", "level"]
+        }},
+        {"contains": {
+          "type": "object",
+          "properties": {
+            "code": {"const": "fresh_context_not_observable"},
+            "level": {"const": "not_observable_here"}
+          },
+          "required": ["code", "level"]
+        }}
+      ]
+    }
+  },
+  "$defs": {
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "claim_level": {"enum": ["ledger_verifiable", "runtime_attested", "not_observable_here"]},
+    "subject_kind": {"enum": ["execution_topology", "native_execution_trace"]},
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "level", "subject_id", "detail"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "level": {"$ref": "#/$defs/claim_level"},
+        "subject_id": {"type": ["string", "null"]},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "ledger_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_space_id", "case_revision_id", "claim_cell_id", "subject_kind", "subject_content_hash", "node_id", "attempt_id"],
+      "properties": {
+        "case_space_id": {"type": "string", "minLength": 1},
+        "case_revision_id": {"type": "string", "minLength": 1},
+        "claim_cell_id": {"type": "string", "minLength": 1},
+        "subject_kind": {"$ref": "#/$defs/subject_kind"},
+        "subject_content_hash": {"$ref": "#/$defs/content_hash"},
+        "topology_content_hash": {"$ref": "#/$defs/content_hash"},
+        "node_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

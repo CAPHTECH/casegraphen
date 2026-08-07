@@ -556,6 +556,32 @@ fn real_cli_run_and_review_derive_live_opaque_lineage_proofs() {
     assert_eq!(host_result["read_only"], true);
     assert_eq!(host_result["mutation_performed"], false);
     assert_eq!(host_result["accepted"], false);
+    // Issue #117: the exact VerificationPolicyResult this MCP host emits over
+    // the wire — not a hand-built stand-in — validates against the contract
+    // that pins independent_minds_proven/fresh_context_proven const:false.
+    let vpr_instance = std::env::temp_dir().join(format!(
+        "casegraphen-lineage-e2e-vpr-instance-{}.json",
+        std::process::id()
+    ));
+    fs::write(
+        &vpr_instance,
+        serde_json::to_vec(&host_result["result"]).unwrap(),
+    )
+    .expect("write VerificationPolicyResult instance");
+    let vpr_schema = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("schemas/experimental/verification.policy_result.v0.schema.json");
+    let vpr_status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&vpr_instance)
+        .arg(&vpr_schema)
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&vpr_instance);
+    assert!(
+        vpr_status.success(),
+        "the live MCP host's VerificationPolicyResult failed to validate against \
+         verification.policy_result.v0"
+    );
     assert_eq!(
         responses[2]["result"]["structuredContent"]["refusal"]["code"],
         "duplicate_or_empty_review_morphism_id"
