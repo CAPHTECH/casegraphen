@@ -3367,6 +3367,106 @@ fn the_store_refuses_a_morphism_whose_result_it_could_not_load_back() {
 }
 
 #[test]
+fn propose_refuses_a_relation_whose_evidence_id_does_not_exist() {
+    // Issue #155: `validate_candidate_morphism` (shared by propose, check, and
+    // apply) used to check only the morphism's own top-level `preserved_ids`/
+    // `evidence_ids` against the candidate graph — never a *relation's* own
+    // `evidence_ids`, and never a projection's referenced ids. That narrower
+    // rule let `check` report `applicable: true` for a relation naming a
+    // nonexistent evidence id, and only the store's append-time
+    // `require_ids_exist` (`native_store.rs`) caught it, after a gated `apply`.
+    // `validate_candidate_morphism` now calls that same function directly
+    // against the candidate it already builds, so this is refused here too.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:issue155-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let morphism_path = directory.join("bogus-evidence.case_morphism.json");
+    fs::write(
+        &morphism_path,
+        serde_json::to_string_pretty(&json!({
+            "morphism_id": "morphism:issue155-bogus-evidence",
+            "morphism_type": "relate",
+            "source_revision_id": "revision:issue155-base",
+            "target_revision_id": "revision:issue155-bogus-evidence",
+            "added_ids": ["relation:issue155-bogus-evidence"],
+            "review_status": "unreviewed",
+            "metadata": {"payload": {"added_relations": [{
+                "id": "relation:issue155-bogus-evidence",
+                "relation_type": "covers",
+                "relation_strength": "soft",
+                "from_id": "case:native-contract-example",
+                "to_id": "goal:native-case-contract",
+                "evidence_ids": ["evidence:does-not-exist"],
+                "source_ids": [],
+                "provenance": {
+                    "source": {"kind": "human"},
+                    "confidence": 1.0,
+                    "review_status": "unreviewed"
+                },
+                "metadata": {}
+            }]}}
+        }))
+        .expect("serialize morphism"),
+    )
+    .expect("write morphism");
+    let proposed = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        morphism_path.to_str().expect("morphism path"),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        !proposed.status.success(),
+        "the store accepted a proposal naming a relation evidence id that does not exist"
+    );
+    assert!(
+        stderr(&proposed).contains("unknown referenced id evidence:does-not-exist"),
+        "stderr: {}",
+        stderr(&proposed)
+    );
+    // Nothing was written, so the store is not the thing that's wrong here —
+    // the input is. `require_ids_exist` classifies its own refusal
+    // `store_integrity`, correctly, for the append path it was written for;
+    // called from `propose` on a document nothing has touched yet, that
+    // classification would tell an operator to inspect a healthy store
+    // instead of fixing their input. The boundary maps it to `invalid`.
+    assert_eq!(
+        stderr_json(&proposed)["error_code"],
+        json!("invalid"),
+        "stderr: {}",
+        stderr(&proposed)
+    );
+
+    // Nothing was written, so every read path still works.
+    for operation in ["validate", "replay", "inspect"] {
+        let read = run_cli(&[
+            "space",
+            operation,
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--format",
+            "json",
+        ]);
+        assert!(
+            read.status.success(),
+            "space {operation} stderr: {}",
+            stderr(&read)
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn the_store_refuses_an_attached_cell_the_evaluator_could_not_read_back() {
     // The writer used to check only the store's own reference rule, which is
     // narrower than the loader's. `evidence attach` never inspects space_id or

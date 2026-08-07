@@ -1962,7 +1962,13 @@ fn require_embedded_log_matches_prefix(
     Ok(())
 }
 
-fn require_ids_exist(path: &Path, case_space: &CaseSpace) -> NativeStoreResult<()> {
+/// `pub(crate)`, not private: `native_cli::ops::validate_candidate_morphism`
+/// calls this directly against the candidate case space it already builds,
+/// so `morphism check` (and `propose`) can answer the same referenced-id
+/// question `apply`'s append path answers here — one implementation, called
+/// from both, rather than a second traversal of relation `evidence_ids` and
+/// projection references living in `native_cli` too (#155).
+pub(crate) fn require_ids_exist(path: &Path, case_space: &CaseSpace) -> NativeStoreResult<()> {
     let ids = known_ids(case_space);
     for relation in &case_space.case_relations {
         require_referenced_ids(

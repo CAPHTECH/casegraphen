@@ -73,10 +73,23 @@ casegraphen morphism apply   --store "$STORE" --case-space-id "$CS" --morphism-i
 REV="$(next_revision "$APPLY_REPORT")"
 ```
 
-`check` reports `applicable` plus diagnostics and mutates nothing. Run it: it
-catches payload/id mismatches before the gated call. It does not evaluate the
-append-time contract, so `applicable: true` is not a guarantee that `apply`
-will succeed (open: #155).
+`check` reports `applicable` plus diagnostics and mutates nothing. Run it —
+and know its boundary: `check` can answer everything derivable from the
+candidate graph the proposal would produce. It cannot answer who is asking,
+or when the write lands. Concretely, `apply` additionally requires three
+things `check` never sees:
+
+- **The operation gate.** `check` takes no `--actor-id`/`--capability-id`/
+  `--operation-scope-id`/`--audience`/`--source-boundary-id` — it cannot
+  evaluate authorization because it does not know who is asking.
+- **That `--base-revision-id` still names the current revision.** `check`
+  takes no revision flag either, so a case space that moved since `check` ran
+  invalidates its answer; there is no staleness `check` could have detected.
+- **The append-time evaluator backstop**, which re-checks the log's whole
+  history for self-consistency, not just this one candidate morphism.
+
+`applicable: true` means the candidate graph is self-consistent by every rule
+`check` runs; it is not a guarantee that `apply` will succeed.
 
 What the reducer refuses, at propose time:
 
@@ -85,7 +98,9 @@ What the reducer refuses, at propose time:
 - changing an evidence cell's `provenance` or its `evidence_boundary`,
   `content_hash`, `trace_id`, `worker_report_id` metadata
 - an illegal lifecycle transition (table below)
-- leaving a relation whose `from_id` or `to_id` cell does not exist
+- leaving a relation whose `from_id`, `to_id`, or own `evidence_ids` names an
+  id that does not exist, or a projection whose represented/omitted cell or
+  relation ids do not
 - retiring a relation (below)
 
 Retiring a **cell** sets `lifecycle: retired` and keeps it as a tombstone.
