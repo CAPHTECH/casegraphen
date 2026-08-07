@@ -76,8 +76,7 @@ REV="$(next_revision "$APPLY_REPORT")"
 `check` reports `applicable` plus diagnostics and mutates nothing. Run it: it
 catches payload/id mismatches before the gated call. It does not evaluate the
 append-time contract, so `applicable: true` is not a guarantee that `apply`
-will succeed (open: #155) — the relation-retirement case below is one where
-`check` says `applicable: true` and `apply` refuses anyway.
+will succeed (open: #155).
 
 What the reducer refuses, at propose time:
 
@@ -87,13 +86,19 @@ What the reducer refuses, at propose time:
   `content_hash`, `trace_id`, `worker_report_id` metadata
 - an illegal lifecycle transition (table below)
 - leaving a relation whose `from_id` or `to_id` cell does not exist
+- retiring a relation (below)
 
 Retiring a **cell** sets `lifecycle: retired` and keeps it as a tombstone.
-Retiring a **relation** is refused: `morphism check` reports `applicable: true`
-for it, but `morphism apply` refuses with `store_integrity` /
-`DanglingReference`, because retirement would remove the relation from the
-graph outright — it gets no tombstone — while the morphism that originally
-added it still names it in `added_ids` (open: #157). Cells are never deleted.
+Retiring a **relation** is refused, at `propose`, not just at `apply`: unlike
+a cell it gets no tombstone, so removing it would leave the morphism that
+originally added it pointing at a missing id, which the store refuses. Do not
+retire a relation to discharge the obstruction it participates in — keep the
+relation and record the decision instead: `review waive --target-id
+<obstruction-id>` on the obstruction (its id, from `space reason` or
+`obstruction list` — not the relation's, and not the blocked cell's) accepts
+the risk — the close-check invariants stop blocking on it — without erasing
+the conflict: the obstruction stays listed in `space reason` afterward, by
+design. Cells are never deleted.
 
 ## Legal lifecycle transitions
 

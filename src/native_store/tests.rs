@@ -1367,6 +1367,123 @@ fn append_rejects_payload_and_added_id_mismatch() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Issue #156/#159: the append path every durable mutation reaches used to
+/// Debug-dump the evaluator's violation list into the refusal message,
+/// leaving `NativeStoreError::NotEvaluable`'s structured `violations` field
+/// unread. Fixed by constructing `NotEvaluable` directly at this call site
+/// instead of folding it into a string first.
+///
+/// This drove `morphism apply` through the CLI when it was written. #157
+/// closed that path: retiring a relation is now refused at `propose`, before
+/// a caller ever reaches `apply`, so the CLI can no longer reach the
+/// append-time evaluability check this test exercises. That check is not
+/// dead, though — `NativeCaseStore::append_morphism` is `pub`, so a library
+/// consumer that never goes through the CLI's `propose`/`check`/`apply`
+/// sequence can still call it directly with a hand-built entry and land here.
+/// This test does exactly that: it drives `NativeCaseStore` and `apply_morphism`
+/// (`native_model.rs`) below the CLI's guard, the way such a caller would,
+/// rather than through `run_cli`.
+///
+/// Reaching the append-time evaluator needs a relation the *log* names, so
+/// this adds one by morphism and then retires it — retiring a genesis
+/// relation trips an earlier reference check inside `apply_morphism` itself
+/// and never reaches this one.
+#[test]
+fn append_reports_an_unevaluable_result_as_data_not_a_debug_dump() {
+    let root = temp_root("append-not-evaluable");
+    let store = NativeCaseStore::new(root.clone());
+    let case_space = fixture_space();
+    store
+        .import_case_space(&case_space)
+        .expect("import native case space");
+
+    // Add a relation the log will name, exactly as `metadata_entry` builds a
+    // valid, correctly gated and hash-chained entry — overridden to carry a
+    // `relate` payload instead of the metadata-only one it defaults to.
+    let mut add_entry = metadata_entry(&case_space);
+    add_entry.entry_id = id("morphism_log_entry:issue156-add");
+    add_entry.morphism_id = id("morphism:issue156-add");
+    add_entry.target_revision_id = id("revision:issue156-added");
+    add_entry.morphism.morphism_id = add_entry.morphism_id.clone();
+    add_entry.morphism.morphism_type = CaseMorphismType::Relate;
+    add_entry.morphism.target_revision_id = add_entry.target_revision_id.clone();
+    add_entry.morphism.added_ids = vec![id("relation:issue156-link")];
+    add_entry.morphism.metadata.insert(
+        "payload".to_owned(),
+        serde_json::json!({"added_relations": [{
+            "id": "relation:issue156-link",
+            "relation_type": "covers",
+            "relation_strength": "soft",
+            "from_id": "case:native-contract-example",
+            "to_id": "goal:native-case-contract",
+            "evidence_ids": [], "source_ids": [],
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "metadata": {}
+        }]}),
+    );
+    let mut expected = case_space.clone();
+    apply_morphism(&mut expected, &add_entry.morphism).expect("reducer accepts the addition");
+    expected.morphism_log.push(add_entry.clone());
+    expected.revision = revision_from_entry(&expected.case_space_id, &add_entry);
+    add_entry.replay_checksum = case_space_checksum(&expected).expect("checksum after add");
+    store
+        .append_morphism(&case_space.case_space_id, add_entry)
+        .expect("append add-relation morphism");
+    let after_add = store
+        .replay_current_case_space(&case_space.case_space_id)
+        .expect("replay after add");
+
+    // Retire it. `apply_morphism` — the same reducer `append_morphism` itself
+    // runs the candidate through to compute the checksum below — accepts this
+    // retirement on its own: retiring a relation only removes it from
+    // `case_relations`, and nothing else in *this* candidate space still
+    // names it. The dangling reference only exists one level up, in the log:
+    // `add_entry.morphism.added_ids` still names `relation:issue156-link`
+    // after this retirement removes it, which is exactly what
+    // `validate_native_case_space` (run after the reducer, inside
+    // `append_morphism_with_authority`) refuses.
+    let mut retire_entry = next_metadata_entry(&after_add.case_space);
+    retire_entry.entry_id = id("morphism_log_entry:issue156-retire");
+    retire_entry.morphism_id = id("morphism:issue156-retire");
+    retire_entry.target_revision_id = id("revision:issue156-retired");
+    retire_entry.morphism.morphism_id = retire_entry.morphism_id.clone();
+    retire_entry.morphism.morphism_type = CaseMorphismType::Retire;
+    retire_entry.morphism.target_revision_id = retire_entry.target_revision_id.clone();
+    retire_entry.morphism.retired_ids = vec![id("relation:issue156-link")];
+    let mut next = after_add.case_space.clone();
+    apply_morphism(&mut next, &retire_entry.morphism).expect("reducer accepts the retirement");
+    next.morphism_log.push(retire_entry.clone());
+    next.revision = revision_from_entry(&next.case_space_id, &retire_entry);
+    retire_entry.replay_checksum = case_space_checksum(&next).expect("checksum after retire");
+
+    let error = store
+        .append_morphism(&case_space.case_space_id, retire_entry)
+        .expect_err("retiring a log-referenced relation leaves it not evaluable");
+    let NativeStoreError::NotEvaluable { violations, .. } = &error else {
+        panic!("expected NotEvaluable, got {error:?}");
+    };
+    assert!(!violations.is_empty(), "{error:?}");
+    for violation in violations {
+        assert!(!violation.field.is_empty(), "{error:?}");
+        assert!(!violation.message.is_empty(), "{error:?}");
+    }
+    let message = error.to_string();
+    assert!(
+        !message.contains("NativeEvalViolation") && !message.contains("Some(Id("),
+        "the message must be prose, not a Debug rendering: {message}"
+    );
+    assert!(
+        !message.contains("imported case space"),
+        "nothing was imported on the append path: {message}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn append_rejects_morphism_that_does_not_advance_revision() {
     let root = temp_root("same-revision-append");
