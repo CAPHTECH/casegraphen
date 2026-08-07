@@ -1,0 +1,12 @@
+{
+  "schema": "casegraphen.review.promotion_blocker_issue_state.v0",
+  "schema_version": 1,
+  "captured_at": "2026-08-07",
+  "captured_via": "gh issue view <number> --repo CAPHTECH/casegraphen --json number,state,closedAt",
+  "issues": {
+    "76": {"state": "open", "closed_at": null},
+    "88": {"state": "closed", "closed_at": "2026-08-06T00:18:46Z"},
+    "89": {"state": "closed", "closed_at": "2026-08-04T23:32:10Z"},
+    "116": {"state": "open", "closed_at": null}
+  }
+}

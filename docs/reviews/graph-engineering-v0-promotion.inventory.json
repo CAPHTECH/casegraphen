@@ -1,8 +1,8 @@
 {
   "schema": "casegraphen.review.graph_engineering_promotion_inventory.v1",
   "schema_version": 1,
-  "as_of_date": "2026-08-06",
-  "review_source_commit": "a8d11a9764842eafb7bc5f0a97623a5b1217a004",
+  "as_of_date": "2026-08-07",
+  "review_source_commit": "b33524913c900b37ce7cef1b591b9f225e25b7e3",
   "decision": {
     "contract": "experimental-v0",
     "promotion_recommended": false,
@@ -92,8 +92,13 @@
     },
     {
       "id": "allocator-checkpoint-compaction",
-      "status": "missing_release_evidence",
-      "owner_issue": 88
+      "status": "satisfied_repository",
+      "evidence_date": "2026-08-06",
+      "owner_issue": 88,
+      "reference": {
+        "path": "docs/pilots/issue-88/resource-allocator-100000.report.json",
+        "content_hash": "sha256:af236f4a2ba1c4f4679973f783deafaae3e2bbef6d1b6c2e6ede52f9d007ce9c"
+      }
     },
     {
       "id": "runtime-durability-retained-release",
@@ -109,7 +114,7 @@
     {
       "id": "production-remote-fleet-evidence",
       "status": "missing_external",
-      "owner_issue": 89
+      "owner_issue": 116
     },
     {
       "id": "exact-compiler-profile-compatibility",
@@ -138,12 +143,12 @@
     {"id": "bounded-durability", "fact_ids": ["bounded-runtime-durability-pilot"]},
     {"id": "durable-runtime-evidence", "fact_ids": ["runtime-durability-retained-release"], "owner_issue": 89},
     {"id": "verification-product-surface", "fact_ids": ["verification-lineage-supported-surface"], "owner_issue": 87},
-    {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91}
+    {"id": "compiler-profile-compatibility", "fact_ids": ["exact-compiler-profile-compatibility"], "owner_issue": 91},
+    {"id": "allocator-fleet-replay", "fact_ids": ["allocator-checkpoint-compaction"], "owner_issue": 88}
   ],
   "required_stable_blockers": [
     {"id": "provider-authority", "fact_ids": ["provider-attested-release-matrix"], "owner_issue": 76},
-    {"id": "allocator-fleet-replay", "fact_ids": ["allocator-checkpoint-compaction"], "owner_issue": 88},
-    {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 89}
+    {"id": "production-fleet", "fact_ids": ["production-remote-fleet-evidence"], "owner_issue": 116}
   ],
   "optional_post_v0_enhancements": [
     "tool-specific stable MCP payload schemas",
