@@ -22,7 +22,7 @@ from the shipped CLI surface and schemas in
 |---|---|
 | Create a case space, or model goals/work/evidence so readiness comes out right | `references/authoring.md` |
 | Change the graph: add, update, retire cells or relations; attach evidence and the artifacts it cites; promote evidence; transition a cell; drive attach → review → transition from one packet | `references/mutating.md` |
-| Have a worker do the work: binding, plan, `run --step`, reading the result | `references/executing.md` |
+| Have a worker do the work: binding, plan, `operate` and `run --step`, reading the result | `references/executing.md` |
 | An agent runtime executes the graph and CaseGraphen records what was accepted: node granularity, mandates, taking runtime reports as evidence | `references/governing.md` |
 
 For a reviewed execution topology, accept the exact topology/policy artifact
@@ -36,6 +36,46 @@ host's read-only `reconcile_verification_lineage` tool can assess the exact
 retained report, trace, stdout, and stderr bytes against a verification policy.
 It replays the client-observed current revision, constructs no caller proof,
 returns no proof object, and performs no acceptance-ledger mutation.
+
+## CaseGraphen drives the graph; you supply what it cannot
+
+Do not read state, pick the next step, and invoke it yourself. That loop is
+already implemented: `casegraphen operate` (ADR 0016) repeats `run --frontier`'s
+own round selection until a halt other than progress. It never widens
+eligibility, never retries, never waits, and never authorizes or reviews
+anything itself, so it stops at exactly two things — nothing is dispatchable, or
+`--max-rounds` ran out while something still was.
+
+```sh
+casegraphen operate --store "$STORE" --case-space-id "$CS" --plan-id <id> \
+  --base-revision-id "$REV" $GATE --max-rounds 20 \
+  --format json --output operate-report.json
+```
+
+`$GATE` is the operation-gate selection defined under rule 2 below; `operate`
+is a durable mutation and refuses without it, one missing flag at a time.
+Read `result.halt` (or the ranked `result.halts`). A halt is not a failure: it
+is the loop reaching something only you can supply — evidence, a review, an
+accepted plan, an explicit retry. Supply that one thing and call `operate`
+again. Hand-stepping with `run --step` is for when you need a single step
+under your own eye, not for making progress.
+
+The division is deliberate. A tool that authorized its own mutations would
+defeat the gate that makes its records worth anything. See
+`references/executing.md` for round budgets, `--max-parallel`, retry, and how
+to read halts.
+
+**A lifted space cannot be executed as lifted.** `lift workflow` and its
+siblings produce an *analysis* space with no capability cells. Making that work
+executable means authoring a native genesis that declares capabilities — ADR
+0003 §4 calls it "an intentional re-declaration of authority, not a flag." That
+step is the authority boundary, not a missing feature, and
+[`docs/guides/entry-ladder.md`](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder.md)
+walks both loops end to end. Mechanical transcription from the analysis space
+into that genesis was considered and declined (ADR 0035); it re-opens on a
+measured report of operators doing the transcription repeatedly at a size where
+typing it is the bottleneck, so report that measurement rather than requesting
+the tool.
 
 ## The two rules that break every first attempt
 
