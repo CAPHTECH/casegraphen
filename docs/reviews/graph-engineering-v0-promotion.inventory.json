@@ -12,7 +12,7 @@
     "workflow_count": 20,
     "runtime_family_count": 4,
     "experimental_contract_version": 0,
-    "experimental_contract_count": 70
+    "experimental_contract_count": 71
   },
   "evidence_facts": [
     {
@@ -83,11 +83,11 @@
     {
       "id": "verification-lineage-supported-surface",
       "status": "satisfied_repository",
-      "evidence_date": "2026-08-06",
+      "evidence_date": "2026-08-07",
       "owner_issue": 87,
       "reference": {
         "path": "docs/product-surface.v0.json",
-        "content_hash": "sha256:3d0f3d56dba89c0c87479c9396d4cea0f9760196e6f4ee2e268eaf7030fea5fc"
+        "content_hash": "sha256:4b456d411c603fba409b10aca838154a9deacc84bff78c08e93d4f00e828c5b7"
       }
     },
     {

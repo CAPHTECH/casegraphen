@@ -265,7 +265,32 @@ pub fn read_resource(
             "resource URI must use the casegraphen scheme",
         ));
     }
-    delegate.read_resource(uri)
+    let value = delegate.read_resource(uri)?;
+    // Layer 2 of ADR 0034, extended to `resources/read` by ADR 0036 (#122):
+    // this function is the single chokepoint every resource read flows
+    // through before reaching the wire (`mcp_stdio.rs::read_resource_request`
+    // calls nowhere else), exactly as `ControlPlaneState::execute` is the
+    // chokepoint for `tools/call`. The vocabulary and the comparison
+    // (`claim_vocabulary_violation`) are shared with that path verbatim,
+    // because the question is identical: does this top-level object claim
+    // something only the canonical review morphism may truthfully claim?
+    // What differs is what a violation means here — a resource read has no
+    // request/response envelope to journal a refusal into, so this refuses
+    // the read itself rather than converting a delegate result into an
+    // envelope refusal.
+    //
+    // Unlike `execute`, a non-object top-level value is not itself a
+    // violation on this path: `result`/`refusal` exclusivity is a property
+    // of the `tools/call` envelope that `resources/read` does not have, so
+    // there is no equivalent shape this path must reject. A non-object
+    // resource value simply has no top-level key for the vocabulary to
+    // apply to, so the check is a no-op rather than a refusal.
+    if let Value::Object(object) = &value {
+        if let Some(detail) = claim_vocabulary_violation(object) {
+            return Err(resource_wire_claim_refusal(&detail));
+        }
+    }
+    Ok(value)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -643,6 +668,20 @@ fn wire_claim_violation(result: &Value) -> Option<String> {
             ));
         }
     };
+    claim_vocabulary_violation(object)
+}
+
+/// The seven-key claim vocabulary ADR 0034 pins at the top level of a
+/// `tools/call` result, shared verbatim with the `resources/read` chokepoint
+/// (`read_resource`, above; ADR 0036 / #122). Only this predicate — the
+/// vocabulary and the truthful-value comparison — is shared: the two call
+/// sites answer the same question ("does this top-level object claim
+/// something only the canonical review morphism may truthfully claim?"), but
+/// what a violation means differs by call site (an envelope refusal for
+/// `tools/call`, a resource-read refusal here), so each keeps its own
+/// wrapper and refusal construction rather than a single function trying to
+/// serve both.
+fn claim_vocabulary_violation(object: &serde_json::Map<String, Value>) -> Option<String> {
     let pinned_values: &[(&str, Value)] = &[
         ("accepted", Value::Bool(false)),
         ("mutation_performed", Value::Bool(false)),
@@ -658,9 +697,7 @@ fn wire_claim_violation(result: &Value) -> Option<String> {
     for (key, pinned) in pinned_values {
         if let Some(actual) = object.get(*key) {
             if actual != pinned {
-                return Some(format!(
-                    "result.{key} = {actual}, but only {pinned} is truthful"
-                ));
+                return Some(format!("{key} = {actual}, but only {pinned} is truthful"));
             }
         }
     }
@@ -687,6 +724,22 @@ fn wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
         // retrying will not change the delegate's defect. This is a
         // host-side defect surface (ADR 0034), so the suggested operation
         // says so instead of implying the caller can fix its own input.
+        suggested_next_operation: "report_host_defect".to_owned(),
+    }
+}
+
+/// Resource-read counterpart to `wire_claim_refusal` (ADR 0036 / #122): the
+/// vocabulary and comparison are shared via `claim_vocabulary_violation`,
+/// but the code is distinct — `noncanonical_wire_claim` names a `tools/call`
+/// envelope refusal, and a resource read has no envelope to name, so reusing
+/// that code would make the two failure surfaces indistinguishable to a
+/// caller that branches on it.
+fn resource_wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
+    ControlPlaneRefusal {
+        code: "noncanonical_resource_wire_claim".to_owned(),
+        detail: format!("resource read carried a forbidden top-level wire claim: {detail}"),
+        supplied_base_revision_id: None,
+        current_revision_id: None,
         suggested_next_operation: "report_host_defect".to_owned(),
     }
 }

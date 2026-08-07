@@ -553,6 +553,195 @@ fn operational_host_projects_real_store_state_and_compiles_without_a_custom_rust
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejects_a_forged_claim()
+{
+    // ADR 0036 / #122: prove, against a real spawned host and a real store,
+    // both halves of the classification — the four pure-echo resources still
+    // read cleanly (the regression the top-level-only pin exists to avoid),
+    // and the three claim-bearing resources carry the contracted
+    // `resource_projection.v0` shape, which rejects a forged top-level
+    // `accepted: true` when validated live rather than in the abstract.
+    let directory = std::env::temp_dir().join(format!(
+        "casegraphen-mcp-host-resource-read-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    let store = directory.join("store");
+    let artifacts = directory.join("artifacts");
+    let state = directory.join("protocol-state.json");
+    fs::create_dir_all(&directory).unwrap();
+
+    let case_space_id = "case_space:resource-read-e2e";
+    let revision_id = "revision:resource-read-e2e";
+    let create = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .args([
+            "space",
+            "new",
+            "--store",
+            store.to_str().unwrap(),
+            "--case-space-id",
+            case_space_id,
+            "--space-id",
+            "space:resource-read-e2e",
+            "--title",
+            "Resource Read E2E",
+            "--revision-id",
+            revision_id,
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        create.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+
+    // Claim-bearing artifact files, written the way an external runtime
+    // would write them — outside every CaseGraphen mutation path, exactly
+    // as `read_external_projection` expects to find them.
+    let run_id = "run:resource-read-e2e";
+    let topology_id = "topology:resource-read-e2e";
+    for (subdirectory, identity_field, id) in [
+        ("halts", "case_space_id", case_space_id),
+        ("runs", "run_id", run_id),
+        ("topologies", "topology_id", topology_id),
+    ] {
+        let subdirectory_path = artifacts.join(subdirectory);
+        fs::create_dir_all(&subdirectory_path).unwrap();
+        fs::write(
+            subdirectory_path.join(format!("{id}.json")),
+            serde_json::to_vec(&json!({identity_field: id, "halt": "needs_review"})).unwrap(),
+        )
+        .unwrap();
+    }
+
+    let messages = vec![
+        request(1, "initialize", json!({"protocolVersion":"2025-06-18"})),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+        request(
+            2,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/status")}),
+        ),
+        request(
+            3,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/frontier")}),
+        ),
+        request(
+            4,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/reviews")}),
+        ),
+        request(
+            5,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/revisions/{revision_id}")}),
+        ),
+        request(
+            6,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/halts")}),
+        ),
+        request(
+            7,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://runs/{run_id}")}),
+        ),
+        request(
+            8,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://topologies/{topology_id}")}),
+        ),
+    ];
+    let responses = run_operational_host(&state, &store, &artifacts, &messages);
+    assert_eq!(responses.len(), 8);
+
+    // The four pure-echo resources read cleanly: no refusal, real ledger
+    // content, and none of them ever surfaces a top-level claim key — the
+    // classification this ADR relies on, checked here rather than assumed.
+    let status = resource_content(&responses[1]);
+    assert_eq!(status["case_space_id"], case_space_id, "{status}");
+    assert!(status.get("refusal").is_none(), "{status}");
+
+    let frontier = resource_content(&responses[2]);
+    assert_eq!(frontier["case_space_id"], case_space_id, "{frontier}");
+    assert!(frontier.get("refusal").is_none(), "{frontier}");
+
+    let reviews = resource_content(&responses[3]);
+    assert_eq!(reviews["case_space_id"], case_space_id, "{reviews}");
+    assert!(reviews.get("refusal").is_none(), "{reviews}");
+
+    let revision = resource_content(&responses[4]);
+    assert_eq!(revision["revision_id"], revision_id, "{revision}");
+    assert!(revision.get("refusal").is_none(), "{revision}");
+
+    // The three claim-bearing resources carry the contracted
+    // `resource_projection.v0` shape and validate against the shipped
+    // schema; a forged top-level `accepted: true` on the same live response
+    // fails that validation, proven by construction, not by inspection.
+    for (response, identity_field, id) in [
+        (&responses[5], "case_space_id", case_space_id),
+        (&responses[6], "run_id", run_id),
+        (&responses[7], "topology_id", topology_id),
+    ] {
+        let projection = resource_content(response);
+        assert_eq!(
+            projection["schema"], "casegraphen.experimental.control_plane.resource_projection.v0",
+            "{projection}"
+        );
+        assert_eq!(projection["accepted"], false, "{projection}");
+        assert_eq!(projection["projection"][identity_field], id, "{projection}");
+        assert!(
+            validates_against_resource_projection_schema(&projection),
+            "a real, live resource-read projection failed to validate against \
+             control_plane.resource_projection.v0: {projection}"
+        );
+
+        let mut forged = projection.clone();
+        forged["accepted"] = json!(true);
+        assert!(
+            !validates_against_resource_projection_schema(&forged),
+            "accepted: true forgery on a live resource-read response must fail validation"
+        );
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Parses the JSON string an MCP `resources/read` response wraps in
+/// `contents[0].text`.
+fn resource_content(response: &Value) -> Value {
+    let text = response["result"]["contents"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("resource content missing: {response}"));
+    serde_json::from_str(text).unwrap()
+}
+
+/// ADR 0036 / #117 pattern: validate a real, live resource-read projection
+/// against the shipped contract rather than asserting about the schema in
+/// the abstract.
+fn validates_against_resource_projection_schema(instance: &Value) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-resource-projection-{}-{nonce}.json",
+        std::process::id()
+    ));
+    fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(root().join("schemas/experimental/control_plane.resource_projection.v0.schema.json"))
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&file);
+    status.success()
+}
+
 fn run_operational_host(
     state: &std::path::Path,
     store: &std::path::Path,

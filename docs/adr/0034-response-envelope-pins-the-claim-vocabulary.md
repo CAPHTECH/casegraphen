@@ -225,8 +225,8 @@ schema for a record no consumer receives. The deferral is recorded here and as
 a comment on the struct pointing at this ADR, so whoever plumbs it through a
 CLI or the host inherits the obligation explicitly instead of rediscovering it.
 
-**Deliberately out of scope: `resources/read` bypasses this envelope, and the
-same claims do cross it.** MCP resource reads are wrapped as
+~~**Deliberately out of scope: `resources/read` bypasses this envelope, and
+the same claims do cross it.** MCP resource reads are wrapped as
 `contents[].text` in `src/mcp_stdio.rs` and never pass through
 `ControlPlaneResponse` or `ControlPlaneState::execute`, so neither layer 1 nor
 layer 2 covers them — and the path is not claim-free: the `halts`/`runs`
@@ -241,7 +241,18 @@ them means minting a new contract for an undeclared surface, a separate
 decision with its own triage (which resources carry claims versus pure ledger
 echoes). It must be filed as its own issue rather than assumed covered; until
 then, a consumer must not read resource-read contents as governed by
-`control_plane.response.v0`.
+`control_plane.response.v0`.~~
+
+**Superseded by [ADR 0036](0036-the-claim-vocabulary-pin-extends-to-resource-reads.md).**
+The issue this paragraph called for (#122) classified all seven resources,
+found the four pure-echo ones never carry the vocabulary at their own top
+level and the three claim-bearing ones share one construction site, declared
+the surface in `product-surface.v0.json`, added a top-level-only runtime pin
+at the `read_resource` chokepoint (sharing the vocabulary predicate with this
+ADR's `wire_claim_violation`, not a second implementation of it), and
+contracted the claim-bearing shape. `resources/read` is no longer
+claim-unconstrained; `control_plane.response.v0` and layer 2's enforcement
+here are unchanged.
 
 **What this implies for #118 (the input mirror).** The same architecture
 answers the request side, with one asymmetry that changes the urgency. The

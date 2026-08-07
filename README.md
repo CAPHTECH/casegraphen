@@ -340,9 +340,10 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0033: schema distribution through the binary, not per-skill copies](docs/adr/0033-schema-distribution-through-the-binary.md)
 - [ADR 0034: the response envelope pins the claim vocabulary, not its payloads](docs/adr/0034-response-envelope-pins-the-claim-vocabulary.md)
 - [ADR 0035: no analysis-to-genesis transcription assist, for now](docs/adr/0035-no-analysis-to-genesis-transcription-assist.md)
+- [ADR 0036: the claim vocabulary pin extends to resource reads, by self-identification rather than envelope surgery](docs/adr/0036-the-claim-vocabulary-pin-extends-to-resource-reads.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0036**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0037**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and

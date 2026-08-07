@@ -117,6 +117,8 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("experimental", SchemaStability::Experimental, "control_plane.notification.v0.schema.json"),
     entry!("experimental", SchemaStability::Experimental, "control_plane.request.v0.example.json"),
     entry!("experimental", SchemaStability::Experimental, "control_plane.request.v0.schema.json"),
+    entry!("experimental", SchemaStability::Experimental, "control_plane.resource_projection.v0.example.json"),
+    entry!("experimental", SchemaStability::Experimental, "control_plane.resource_projection.v0.schema.json"),
     entry!("experimental", SchemaStability::Experimental, "control_plane.response.v0.example.json"),
     entry!("experimental", SchemaStability::Experimental, "control_plane.response.v0.schema.json"),
     entry!("experimental", SchemaStability::Experimental, "control_plane.response.v0.success.example.json"),

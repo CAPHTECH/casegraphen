@@ -1,0 +1,10 @@
+{
+  "schema": "casegraphen.experimental.control_plane.resource_projection.v0",
+  "projection": {
+    "case_space_id": "case_space:release-1",
+    "halt": "needs_review",
+    "summary": "frontier blocked pending review"
+  },
+  "content_hash": "sha256:eca51257b02bc7e1efca36842c70b98f3f002fdba716cc7840e3670866836f96",
+  "accepted": false
+}

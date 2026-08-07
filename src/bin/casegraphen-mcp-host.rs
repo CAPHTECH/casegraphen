@@ -1235,6 +1235,29 @@ fn safe_id(value: &str) -> Result<Id, ControlPlaneRefusal> {
     Id::new(value.to_owned()).map_err(|error| refusal("invalid_resource_id", &error.to_string()))
 }
 
+/// Contract for [`ResourceProjection`], the `halts`/`runs`/`topologies`
+/// `resources/read` shape (#122, ADR 0036).
+pub const RESOURCE_PROJECTION_SCHEMA: &str =
+    "casegraphen.experimental.control_plane.resource_projection.v0";
+
+/// The `halts`/`runs`/`topologies` `resources/read` shape, constructed at
+/// its one site (`read_external_projection`, below). `accepted` is pinned
+/// `const: false` and `required` in its schema, #117's pattern: this
+/// projection reflects content an external runtime wrote to the artifact
+/// directory, and only the canonical review morphism accepts anything.
+/// `schema` self-identifies the record because `resources/read` wraps
+/// content as an opaque JSON string in `contents[].text` with no envelope of
+/// its own (ADR 0034's response envelope covers `tools/call` only) — a
+/// consumer parsing that string needs some way to know which contract
+/// governs what it just read, and this is that way.
+#[derive(Serialize)]
+struct ResourceProjection {
+    schema: String,
+    projection: Value,
+    content_hash: String,
+    accepted: bool,
+}
+
 fn read_external_projection(
     directory: &Path,
     id: &str,
@@ -1251,11 +1274,14 @@ fn read_external_projection(
             "projection content does not name the requested identity",
         ));
     }
-    Ok(json!({
-        "projection": value,
-        "content_hash": format!("sha256:{:x}", Sha256::digest(&bytes)),
-        "accepted": false
-    }))
+    let projection = ResourceProjection {
+        schema: RESOURCE_PROJECTION_SCHEMA.to_owned(),
+        content_hash: format!("sha256:{:x}", Sha256::digest(&bytes)),
+        projection: value,
+        accepted: false,
+    };
+    serde_json::to_value(projection)
+        .map_err(|error| refusal("serialization_failure", &error.to_string()))
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, ControlPlaneRefusal> {
