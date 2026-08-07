@@ -28,6 +28,8 @@ use std::collections::BTreeSet;
 pub const VERIFICATION_POLICY_SCHEMA: &str = "casegraphen.experimental.verification_policy.v0";
 pub const VERIFICATION_LINEAGE_DECLARATIONS_SCHEMA: &str =
     "casegraphen.experimental.verification_lineage_declarations.v0";
+pub const VERIFICATION_POLICY_RESULT_SCHEMA: &str =
+    "casegraphen.experimental.verification_policy_result.v0";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -592,8 +594,18 @@ pub struct LedgerDerivedLineageScope {
     pub attempt_id: String,
 }
 
+/// Contract: `schemas/experimental/verification.policy_result.v0.schema.json`
+/// (`VERIFICATION_POLICY_RESULT_SCHEMA`) pins `independent_minds_proven` and
+/// `fresh_context_proven` as `const: false` **and** `required`, so a result
+/// claiming either as true is not schema-constructible, and requires the
+/// matching `*_not_observable` finding as a non-empty consequence so
+/// non-observability cannot be asserted by omitting the finding either. This
+/// tool classifies review roles from ledger-observed identities; it can
+/// never observe independent minds or a fresh context, so this type can
+/// never carry `true` for either field (issue #117).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct VerificationPolicyResult {
+    pub schema: String,
     pub policy_id: String,
     pub ledger_scope: LedgerDerivedLineageScope,
     pub ledger_requirements_satisfied: bool,
@@ -1739,6 +1751,7 @@ fn reconcile_bound_verification_policy(
     let policy_satisfied =
         ledger_requirements_satisfied && runtime_ok && anchors_satisfied && quorum_satisfied;
     VerificationPolicyResult {
+        schema: VERIFICATION_POLICY_RESULT_SCHEMA.to_owned(),
         policy_id: policy.verification_policy_id.clone(),
         ledger_scope: LedgerDerivedLineageScope {
             case_space_id: producer.binding.case_space_id.clone(),
@@ -1906,6 +1919,92 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.level == ClaimLevel::NotObservableHere));
+    }
+
+    // Issue #117: `independent_minds_proven` and `fresh_context_proven` are
+    // deliberately hardcoded `false` (never settable), but before this
+    // contract existed nothing stopped a consumer's JSON from expressing
+    // `true` for either. `verification.policy_result.v0.schema.json` pins
+    // both `const: false` and `required`, and pins the matching
+    // `*_not_observable` finding as a required, non-empty consequence.
+    fn result_schema_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("schemas/experimental/verification.policy_result.v0.schema.json")
+    }
+
+    static SCHEMA_CHECK_COUNTER: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    fn validates_against_result_schema(instance: &serde_json::Value) -> bool {
+        let nonce = SCHEMA_CHECK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let file = std::env::temp_dir().join(format!(
+            "casegraphen-verification-policy-result-{}-{nonce}.json",
+            std::process::id()
+        ));
+        std::fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+        let status = std::process::Command::new("python3")
+            .args(["-m", "jsonschema", "-i"])
+            .arg(&file)
+            .arg(result_schema_path())
+            .status()
+            .expect("run python3 -m jsonschema");
+        let _ = std::fs::remove_file(&file);
+        status.success()
+    }
+
+    fn a_real_reconciled_result() -> VerificationPolicyResult {
+        reconcile_bound_verification_policy(
+            &policy(),
+            &producer(),
+            &[
+                verifier("review:1", "actor:v1", VerifierDisposition::Accept),
+                verifier("review:2", "actor:v2", VerifierDisposition::Accept),
+                verifier("review:3", "actor:v3", VerifierDisposition::Reject),
+            ],
+            &[anchor()],
+        )
+    }
+
+    #[test]
+    fn the_real_produced_result_validates_against_its_shipped_schema() {
+        let instance = serde_json::to_value(a_real_reconciled_result()).unwrap();
+        assert!(
+            validates_against_result_schema(&instance),
+            "a real VerificationPolicyResult failed to validate against \
+             verification.policy_result.v0: {instance}"
+        );
+    }
+
+    #[test]
+    fn a_result_claiming_proven_independence_or_freshness_fails_schema_validation() {
+        let instance = serde_json::to_value(a_real_reconciled_result()).unwrap();
+        assert!(
+            validates_against_result_schema(&instance),
+            "sanity: the unmodified real result must validate before forging it"
+        );
+
+        let mut forged_independence = instance.clone();
+        forged_independence["independent_minds_proven"] = serde_json::json!(true);
+        assert!(
+            !validates_against_result_schema(&forged_independence),
+            "a result claiming proven independent minds must fail schema validation"
+        );
+
+        let mut forged_freshness = instance.clone();
+        forged_freshness["fresh_context_proven"] = serde_json::json!(true);
+        assert!(
+            !validates_against_result_schema(&forged_freshness),
+            "a result claiming a proven fresh context must fail schema validation"
+        );
+
+        // Omitting the not_observable findings cannot stand in for the false
+        // claim either: the finding is a required, non-empty consequence.
+        let mut no_findings = instance;
+        no_findings["findings"] = serde_json::json!([]);
+        assert!(
+            !validates_against_result_schema(&no_findings),
+            "a result with no not_observable findings must fail schema validation"
+        );
     }
 
     #[test]

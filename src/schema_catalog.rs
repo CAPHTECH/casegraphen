@@ -214,6 +214,8 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("experimental", SchemaStability::Experimental, "verification_lineage_declarations.v0.schema.json"),
     entry!("experimental", SchemaStability::Experimental, "verification.policy.example.json"),
     entry!("experimental", SchemaStability::Experimental, "verification.policy.v0.schema.json"),
+    entry!("experimental", SchemaStability::Experimental, "verification.policy_result.v0.example.json"),
+    entry!("experimental", SchemaStability::Experimental, "verification.policy_result.v0.schema.json"),
 ];
 
 /// Reads a file's own declared identity back out of its content: `$id` for a
