@@ -10,7 +10,9 @@ use super::{
     write_genesis_materialization, NativeCliError,
 };
 use crate::{
-    native_model::CaseSpace, native_store::NativeCaseStore, workflow_model::WorkflowCaseGraph,
+    native_model::{has_capability_cells, is_capability_cell, CaseSpace},
+    native_store::NativeCaseStore,
+    workflow_model::WorkflowCaseGraph,
 };
 use higher_graphen_core::Id;
 use serde_json::{json, Map, Value};
@@ -25,9 +27,30 @@ pub(in crate::native_cli) fn case_new(
 ) -> Result<Value, NativeCliError> {
     let case_space = new_case_space(case_space_id, space_id, title, revision_id)?;
     let record = NativeCaseStore::new(store.to_path_buf()).import_case_space(&case_space)?;
+    // Capability cells enter only at lift/import (ADR 0003 §4), and `space
+    // new` mints only a root cell, so a space made this way can never gain
+    // one after the fact. Declared here, at creation, rather than left for
+    // the operator to discover only once a later gated command refuses: see
+    // `has_capability_cells` in native_model for the single check this and
+    // the operation-gate refusal both read.
+    let capability_cell_count = case_space
+        .case_cells
+        .iter()
+        .filter(|cell| is_capability_cell(cell))
+        .count();
+    let capability_gate = json!({
+        "capability_cell_count": capability_cell_count,
+        "durable_mutation_possible": has_capability_cells(&case_space),
+        "note": "This space has no capability cells. Capability cells enter only at lift/import, \
+                 never at `space new`, so no operation gate can ever be satisfied here: every \
+                 gated command (evidence attach, cell transition, morphism accept/reject, review, \
+                 etc.) will be permanently refused. The space is legitimately usable for read-only \
+                 and proposal-only work. A space capable of durable mutation needs a genesis \
+                 authored with capability cells, imported with `lift native`."
+    });
     Ok(report(
         "casegraphen space new",
-        json!({ "record": record, "case_space": case_space }),
+        json!({ "record": record, "case_space": case_space, "capability_gate": capability_gate }),
     ))
 }
 
