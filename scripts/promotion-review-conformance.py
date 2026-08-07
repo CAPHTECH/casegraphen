@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import pathlib
@@ -14,6 +15,15 @@ from typing import Any
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INVENTORY_PATH = ROOT / "docs/reviews/graph-engineering-v0-promotion.inventory.json"
 REVIEW_PATH = ROOT / "docs/reviews/graph-engineering-v0-promotion-2026-08-03.md"
+# owner_issue values point at GitHub issues, but this gate must not need `gh`
+# auth or network access to run. Instead it checks owner_issue state against
+# this hand-refreshed, in-repo ledger. That does not remove the drift risk,
+# it relocates it: an issue can still close on GitHub without anyone updating
+# the ledger. ISSUE_STATE_MAX_AGE_DAYS bounds how long that can go unnoticed —
+# past that age the gate fails closed and demands a refresh via `gh issue
+# view`, rather than silently trusting old "open" state forever.
+ISSUE_STATE_PATH = ROOT / "docs/reviews/promotion-blocker-issue-state.v0.json"
+ISSUE_STATE_MAX_AGE_DAYS = 14
 SATISFIED = {"satisfied_local", "satisfied_non_promotional", "satisfied_repository"}
 MISSING = {
     "missing_external",
@@ -46,8 +56,97 @@ def digest(path: pathlib.Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def collect_referenced_issues(inventory: dict[str, Any]) -> set[int]:
+    """Every owner_issue named anywhere in the inventory.
+
+    This used to be a hardcoded set of issue numbers the review prose was
+    checked against, which had to be remembered and edited every time an
+    owner_issue changed in the inventory — the same shape as the ADR 0012
+    counter and the schema copies this repository has already fixed by
+    removing the duplicate rather than promising to keep it in sync.
+    """
+    issues: set[int] = set()
+    for fact in inventory.get("evidence_facts", []):
+        if isinstance(fact, dict) and isinstance(fact.get("owner_issue"), int):
+            issues.add(fact["owner_issue"])
+    for section in ("completed_local_triggers", "required_stable_blockers"):
+        for trigger in inventory.get(section, []):
+            if isinstance(trigger, dict) and isinstance(trigger.get("owner_issue"), int):
+                issues.add(trigger["owner_issue"])
+    return issues
+
+
+def load_issue_state(failures: list[str]) -> dict[int, str]:
+    """Load the in-repo owner_issue open/closed ledger.
+
+    Returns a map of issue number to lowercase state ("open"/"closed") for
+    every issue the gate can vouch for; issues absent from the map could not
+    be verified and callers must treat that as a failure, not as "open".
+    """
+    try:
+        state = load(ISSUE_STATE_PATH)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        failures.append(f"invalid promotion blocker issue-state ledger: {error}")
+        return {}
+    if state.get("schema") != "casegraphen.review.promotion_blocker_issue_state.v0":
+        failures.append("promotion blocker issue-state ledger schema mismatch")
+    if state.get("schema_version") != 1:
+        failures.append("promotion blocker issue-state ledger version mismatch")
+
+    captured_at = state.get("captured_at")
+    try:
+        captured_date = datetime.date.fromisoformat(str(captured_at))
+    except ValueError:
+        failures.append("promotion blocker issue-state ledger has no valid captured_at date")
+        captured_date = None
+    if captured_date is not None:
+        age_days = (datetime.date.today() - captured_date).days
+        if age_days < 0:
+            failures.append("promotion blocker issue-state ledger captured_at is in the future")
+        elif age_days > ISSUE_STATE_MAX_AGE_DAYS:
+            failures.append(
+                "promotion blocker issue-state ledger is "
+                f"{age_days} days old (max {ISSUE_STATE_MAX_AGE_DAYS}); "
+                "refresh it with `gh issue view`"
+            )
+
+    issues = state.get("issues")
+    if not isinstance(issues, dict):
+        failures.append("promotion blocker issue-state ledger has no issues map")
+        return {}
+    result: dict[int, str] = {}
+    for key, entry in issues.items():
+        if not isinstance(entry, dict) or entry.get("state") not in {"open", "closed"}:
+            failures.append(f"promotion blocker issue-state ledger entry is malformed: {key}")
+            continue
+        try:
+            number = int(key)
+        except ValueError:
+            failures.append(f"promotion blocker issue-state ledger key is not an issue number: {key}")
+            continue
+        result[number] = entry["state"]
+    return result
+
+
+def check_owner_issue_open(
+    owner: int, where: str, issue_state: dict[int, str], failures: list[str]
+) -> None:
+    state = issue_state.get(owner)
+    if state is None:
+        failures.append(
+            f"{where} names Issue #{owner}, which is not recorded in the "
+            "promotion blocker issue-state ledger"
+        )
+    elif state == "closed":
+        failures.append(
+            f"{where} names Issue #{owner}, which the issue-state ledger "
+            "records as closed"
+        )
+
+
 def main() -> int:
     failures: list[str] = []
+    issue_state = load_issue_state(failures)
     try:
         inventory = load(INVENTORY_PATH)
     except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -117,6 +216,10 @@ def main() -> int:
                 failures.append(f"executed evidence has no exact evaluated commit: {fact['id']}")
         elif not isinstance(fact.get("owner_issue"), int):
             failures.append(f"missing evidence fact has no owner Issue: {fact['id']}")
+        else:
+            check_owner_issue_open(
+                fact["owner_issue"], f"missing evidence fact {fact['id']}", issue_state, failures
+            )
 
     completed_ids: set[str] = set()
     for trigger in inventory.get("completed_local_triggers", []):
@@ -132,7 +235,6 @@ def main() -> int:
             failures.append(f"completed trigger is not proved by retained evidence: {trigger_id}")
 
     blocker_ids: set[str] = set()
-    linked_issues: set[int] = set()
     for trigger in inventory.get("required_stable_blockers", []):
         trigger_id = trigger.get("id") if isinstance(trigger, dict) else None
         if not isinstance(trigger_id, str) or trigger_id in blocker_ids:
@@ -143,7 +245,7 @@ def main() -> int:
         if not isinstance(owner, int):
             failures.append(f"stable blocker has no owner Issue: {trigger_id}")
         else:
-            linked_issues.add(owner)
+            check_owner_issue_open(owner, f"stable blocker {trigger_id}", issue_state, failures)
         fact_ids = trigger.get("fact_ids")
         if not isinstance(fact_ids, list) or not fact_ids or any(item not in facts for item in fact_ids):
             failures.append(f"stable blocker has unknown facts: {trigger_id}")
@@ -166,7 +268,7 @@ def main() -> int:
     for trigger_id in sorted(completed_ids | blocker_ids):
         if f"promotion-trigger:{trigger_id}" not in review:
             failures.append(f"promotion review omits structured trigger marker: {trigger_id}")
-    for issue in {76, 87, 88, 89, 91}:
+    for issue in sorted(collect_referenced_issues(inventory)):
         if f"#{issue}" not in review:
             failures.append(f"promotion review omits Issue #{issue}")
     if "promotion_recommended: false" not in review:

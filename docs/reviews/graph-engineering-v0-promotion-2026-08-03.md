@@ -81,6 +81,15 @@ this prose does not redefine those decision rules.
   and gates representative verification cost. This is repository lifecycle
   evidence, not multi-release production history.
 
+<!-- promotion-trigger:allocator-fleet-replay -->
+
+- Issue #88 retained the required 10k and 100k journal-scale reports —
+  checkpoint creation/verification/compaction, restart replay, and
+  reserve/release latency — from clean source revision `9b23383...`, passing
+  every threshold ADR 0026 defines as its release-evidence lanes. This is
+  retained release-candidate evidence, not sustained-fleet operation or
+  promotion authority.
+
 All completed items above remain `accepted: false` unless and until an
 independent acceptance-ledger review records a separate decision.
 
@@ -94,19 +103,14 @@ independent acceptance-ledger review records a separate decision.
    workflow. Authenticated Codex CLI and Claude Code sessions are required;
    provider API keys are not part of this lifecycle.
 
-<!-- promotion-trigger:allocator-fleet-replay -->
-
-2. **Allocator checkpoint/compaction release evidence — Issue #88.** The
-   repository implementation and bounded fixture are not the stable trigger.
-   Retain the required 10k/100k journal replay, compaction, crash/resume, and
-   verification reports as governed release evidence.
-
 <!-- promotion-trigger:production-fleet -->
 
-3. **Production or remote fleet evidence — Issue #89.** Retain evidence from a
-   real long-lived scheduler/fleet boundary, including remote failures and
-   recovery. Local adapter diversity and bounded synthetic scale do not prove
-   this behavior.
+2. **Production or remote fleet evidence — Issue #116.** Retain evidence from
+   a real long-lived scheduler/fleet boundary, including remote failures and
+   recovery. Issue #89 built the content-addressed retention mechanism this
+   evidence would use, but supplied none of the evidence itself. Local
+   adapter diversity and bounded synthetic scale still do not prove this
+   behavior.
 
 These blockers are conjunctive. Satisfying one does not weaken another, and a
 runtime report or passing test never performs promotion automatically.
