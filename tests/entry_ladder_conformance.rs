@@ -300,16 +300,13 @@ fn entry_ladder_governed_loop_reproduces_the_published_transcript() {
     fs::remove_dir_all(store.parent().expect("store parent")).ok();
 }
 
-/// Documents the known, separate CLI defect the entry-ladder guide warns
-/// readers about (`lift workflow` accepts but ignores `--case-space-id`) so
-/// that guide's caution note is checked against real behaviour rather than
-/// asserted once and left to rot. If this test starts failing, either the
-/// defect was fixed — update the caution note and this test together — or
-/// something else changed; either way, the doc must not go on misleading a
-/// reader about a flag it silently drops.
-#[test]
-fn lift_workflow_still_silently_ignores_case_space_id() {
-    let store = unique_temp_dir("ignored-flag").join("store");
+/// Shared body for the two identity-flag refusal tests below: run `lift
+/// workflow` with one extra `[flag, value]` pair, then assert it is refused
+/// outright — exit failure, nothing on stdout, `error_code: "usage"` on
+/// stderr, and no store directory left behind — rather than silently
+/// accepted and dropped.
+fn assert_lift_workflow_refuses_identity_flag(label: &str, flag: &str, value: &str) {
+    let store = unique_temp_dir(label).join("store");
 
     let lift = run_cli(&[
         "lift",
@@ -320,31 +317,60 @@ fn lift_workflow_still_silently_ignores_case_space_id() {
         repo_path("docs/guides/entry-ladder/mini-workflow.graph.json")
             .to_str()
             .expect("input path"),
-        "--case-space-id",
-        "case_space:ignored-by-lift",
+        flag,
+        value,
         "--revision-id",
         "revision:mini-genesis",
         "--format",
         "json",
     ]);
     assert!(
-        lift.status.success(),
-        "lift workflow failed: {}",
-        stderr(&lift)
+        !lift.status.success(),
+        "lift workflow {flag} succeeded; it must be refused, not silently accepted (stdout: {})",
+        stdout(&lift)
     );
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout(&lift)).expect("lift workflow report parses");
-    let case_space_id = report["result"]["case_space"]["case_space_id"]
-        .as_str()
-        .expect("result.case_space.case_space_id is a string");
+    assert!(
+        stdout(&lift).is_empty(),
+        "a refusal must not write a report to stdout: {}",
+        stdout(&lift)
+    );
+    let refusal: serde_json::Value =
+        serde_json::from_str(stderr(&lift).trim_end()).expect("lift workflow refusal parses");
     assert_eq!(
-        case_space_id, "case_space:workflow_graph:mini",
-        "--case-space-id case_space:ignored-by-lift was passed but the created space id was not \
-         derived from it — if this now equals the requested id, the flag was fixed to be \
-         honoured (or refused); update docs/guides/entry-ladder.md's caution note accordingly"
+        refusal["error_code"].as_str(),
+        Some("usage"),
+        "lift workflow {flag} must refuse with error_code \"usage\": {refusal}"
+    );
+    assert!(
+        !store.exists(),
+        "a refused lift must not create the store directory"
     );
 
     fs::remove_dir_all(store.parent().expect("store parent")).ok();
+}
+
+/// Issue #130: `lift workflow --case-space-id` used to be accepted and
+/// silently dropped — the entry-ladder guide carried a caution note about it
+/// so the note couldn't go stale. It is now refused outright, the same way a
+/// genuinely unknown flag was already refused. This pins the fixed behaviour
+/// so a regression back to silent-drop shows up here, not only in the doc.
+#[test]
+fn lift_workflow_refuses_case_space_id() {
+    assert_lift_workflow_refuses_identity_flag(
+        "refused-case-space-id",
+        "--case-space-id",
+        "case_space:ignored-by-lift",
+    );
+}
+
+/// Same defect shape as `--case-space-id` (issue #130's wider sweep):
+/// `--space-id` names an identity `lift workflow` derives from the input, so
+/// a caller-supplied value was likewise accepted and silently dropped before
+/// this fix. Refused for the same reason: an unread identity flag lets the
+/// operator believe they named something they did not.
+#[test]
+fn lift_workflow_refuses_space_id() {
+    assert_lift_workflow_refuses_identity_flag("refused-space-id", "--space-id", "space:ignored");
 }
 
 /// Issue #123: the release-decision genesis carried the full derived

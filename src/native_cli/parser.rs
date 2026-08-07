@@ -430,6 +430,30 @@ impl NativeCliCommand {
             .to_str()
             .ok_or_else(|| NativeCliError::usage("lift adapter must be UTF-8"))?;
         let options = NativeOptions::parse("lift", args)?;
+        // Every lift adapter derives its identity from the input — `lift
+        // native` the case space id from the imported case space's own id,
+        // the structured-source adapters both the space id and the case
+        // space id from the source graph/snapshot id — so a caller-supplied
+        // `--case-space-id` or `--space-id` is never load-bearing. Issue
+        // #130: `--case-space-id` used to be accepted and silently dropped,
+        // which is worse than an unknown flag because nothing downstream
+        // ever reads it; `--space-id` has the same shape and the same
+        // false-naming risk. Refuse both before dispatching on the adapter,
+        // rather than duplicating the adapter match here just to reorder
+        // this ahead of "unsupported lift adapter" — that would answer
+        // "which lift adapters exist?" in two places for one flag check.
+        if options.case_space_id.is_some() {
+            return Err(NativeCliError::usage(
+                "--case-space-id is not accepted by lift: the case space id is always derived \
+                 from the input, never from the command line",
+            ));
+        }
+        if options.space_id.is_some() {
+            return Err(NativeCliError::usage(
+                "--space-id is not accepted by lift: the space id is always derived from the \
+                 input, never from the command line",
+            ));
+        }
         match adapter {
             "native" => Ok(Self::CaseImport {
                 store: options.require_store()?,
