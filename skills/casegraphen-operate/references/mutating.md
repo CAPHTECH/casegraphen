@@ -30,12 +30,34 @@ metadata keys `native_review_schema_version`, `target_kind`,
 
 ## Generic morphism: propose → check → apply
 
-The proposal is a `CaseMorphism` JSON document. The fields that must agree:
+The proposal is a bare `CaseMorphism` JSON document — no `case_space_id`
+wrapper, and any add/update payload lives at `metadata.payload`, not the top
+level — validated against `highergraphen.case.morphism_propose_input.v1`.
+Fetch the shipped add-one-cell template rather than assembling one from this
+section:
+
+```sh
+casegraphen schema get --file native.morphism-propose-input.example.json --format json \
+  | jq -r .result.content > m.json
+```
+
+(`--id` selects a `*.schema.json` entry only, never an example — `--file` is
+how the template itself gets fetched.)
+
+`added_ids`, `updated_ids`, `retired_ids`, `preserved_ids`,
+`violated_invariant_ids`, `evidence_ids`, and `source_ids` may all be left out
+of `m.json` — the tool defaults each of them to `[]`. Fields that still must
+agree once you edit the template:
 
 - `source_revision_id` — the current revision at apply time.
-- `added_ids` / `updated_ids` / `retired_ids` — exactly the ids in
-  `metadata.payload.{added,updated}_{cells,relations}`; `retired_ids` names
-  existing ids. No id may appear in two lists.
+- `added_ids` — if you leave it out (or leave it empty), the tool derives it
+  from `metadata.payload.added_cells`/`added_relations`. If you declare a
+  non-empty value yourself, it must match the payload exactly.
+- `updated_ids` — **not derived**: if `metadata.payload` has
+  `updated_cells`/`updated_relations`, `updated_ids` must name exactly those
+  ids yourself; omitting it only works when there is nothing to update.
+- `retired_ids` — names existing ids to retire; also not payload-derived.
+- No id may appear in two lists.
 - `morphism_type` — `create`, `update`, `relate`, `unrelate`, `retire`,
   `migration`, or `custom:<name>`. It is metadata for readers plus the key the
   plan's `allowed_transition_classes` match on; the reducer keys off the payload.

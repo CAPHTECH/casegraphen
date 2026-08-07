@@ -64,8 +64,16 @@ a stale value is not a refusal — it is simply discarded:
 |---|---|---|
 | `morphism.metadata.payload.added_cells` / `.added_relations` | the top-level `case_cells` / `case_relations` | fine — `metadata` is free-form |
 | `morphism.metadata.genesis_case_space` | `space_id`, `projections`, `close_policy_id`, `metadata`, `revision_metadata` | fine — same |
-| `morphism.added_ids` | every id in that payload | write `[]`; the field itself is required |
+| `morphism.added_ids` | every id in that payload | fine — omit it; it now defaults to `[]` on parse and gets overwritten either way |
 | `revision.checksum`, the entry's `replay_checksum` | the resealed space | write `""`; the fields are required |
+
+`morphism.updated_ids`, `retired_ids`, `preserved_ids`, `violated_invariant_ids`,
+`evidence_ids`, and `source_ids` also default to `[]` now, so a genesis stub —
+which adds everything and updates or retires nothing — can omit all six rather
+than writing `[]` six times per genesis morphism. They are not derived the way
+`added_ids` is: if a later, non-genesis morphism needs a non-empty value, it
+still has to be declared and it still has to match what the morphism actually
+does (see `mutating.md`'s generic-morphism section).
 
 Hand-mirroring the payload is the single most expensive way to get this wrong:
 the copies are not compared, so a hand-written one is discarded, and a generator
