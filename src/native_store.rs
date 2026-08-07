@@ -257,11 +257,18 @@ impl NativeCaseStore {
         // written, each then failed every derived command permanently, and
         // `space validate` reported `valid: true` on all three because the
         // fold verifies checksums rather than this contract.
+        // Issue #156: the same structured violations the import path emits.
+        // #145 fixed only `import_case_space`, because it was found through
+        // `lift`, verified through `lift`, and tested through `lift` — so this
+        // site, which every durable mutation reaches, kept Debug-dumping the
+        // violation list into the message with `data` left null. This is the
+        // costlier of the two: an operator arrives here having already authored
+        // a proposal and paid a gated call.
         crate::native_eval::validate_native_case_space(&next).map_err(|error| {
-            invalid_morphism(
-                &log_path,
-                format!("resulting case space is not evaluable: {error:?}"),
-            )
+            NativeStoreError::NotEvaluable {
+                path: log_path.clone(),
+                violations: error.violations,
+            }
         })?;
 
         let snapshot_path = self.resolve_snapshot_path(
