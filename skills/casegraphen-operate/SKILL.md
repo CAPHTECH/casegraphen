@@ -21,7 +21,7 @@ from the shipped CLI surface and schemas in
 | Task | Read |
 |---|---|
 | Create a case space, or model goals/work/evidence so readiness comes out right | `references/authoring.md` |
-| Change the graph: add, update, retire cells or relations; attach evidence and the artifacts it cites; promote evidence; transition a cell; drive attach → review → transition from one packet | `references/mutating.md` |
+| Change the graph: add or update cells and relations, retire cells; attach evidence and the artifacts it cites; promote evidence; transition a cell; drive attach → review → transition from one packet | `references/mutating.md` |
 | Have a worker do the work: binding, plan, `operate` and `run --step`, reading the result | `references/executing.md` |
 | An agent runtime executes the graph and CaseGraphen records what was accepted: node granularity, mandates, taking runtime reports as evidence | `references/governing.md` |
 
