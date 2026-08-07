@@ -162,6 +162,149 @@ fn native_case_commands_create_import_list_inspect_history_and_replay() {
 }
 
 #[test]
+fn space_new_report_and_gate_refusal_declare_the_space_has_no_capability_cells() {
+    // #124: `space new` mints a genesis with only a root cell, and capability
+    // cells enter only at lift/import (ADR 0003 §4) — there is no post-genesis
+    // path that adds one. So a space made this way can never satisfy an
+    // operation gate, and both ends of that experience must say so: the
+    // creation report at the moment the space is made, and the eventual gate
+    // refusal in terms that point at the space rather than the supplied id.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let store = directory.to_str().expect("temp path").to_owned();
+    let case_space_id = "case_space:no-capability-cells";
+    let source_boundary_id = format!("source_boundary:{case_space_id}");
+
+    let created = run_cli(&[
+        "space",
+        "new",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--space-id",
+        "space:no-capability-cells",
+        "--title",
+        "No capability cells",
+        "--revision-id",
+        "revision:no-capability-cells-genesis",
+        "--format",
+        "json",
+    ]);
+    assert!(created.status.success(), "stderr: {}", stderr(&created));
+    let created_json = stdout_json(&created);
+    let capability_gate = &created_json["result"]["capability_gate"];
+    assert_eq!(capability_gate["capability_cell_count"], json!(0));
+    assert_eq!(capability_gate["durable_mutation_possible"], json!(false));
+    assert!(
+        capability_gate["note"]
+            .as_str()
+            .expect("capability_gate note")
+            .contains("no capability cells"),
+        "space new must declare, at creation, that it made a space with no capability cells: {capability_gate}"
+    );
+
+    let gated = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        &store,
+        "--case-space-id",
+        case_space_id,
+        "--base-revision-id",
+        "revision:no-capability-cells-genesis",
+        "--cell-id",
+        "case:native-root",
+        "--to",
+        "active",
+        "--actor-id",
+        "actor:anyone",
+        "--capability-id",
+        "capability:anything",
+        "--operation-scope-id",
+        case_space_id,
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        &source_boundary_id,
+        "--format",
+        "json",
+    ]);
+    assert!(!gated.status.success());
+    let gated_json = stderr_json(&gated);
+    assert_eq!(gated_json["error_code"], json!("gate_violation"));
+    let message = gated_json["message"].as_str().expect("refusal message");
+    assert!(
+        message.contains("this case space has no capability cells at all"),
+        "refusal must name the space's own property, not just the supplied id: {message}"
+    );
+    assert!(
+        message.contains("lift native"),
+        "refusal must name the remedy: {message}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn gate_refusal_for_a_wrong_capability_id_stays_id_scoped_when_the_space_has_capabilities() {
+    // The other arm of #124's boundary: when a space *does* have capability
+    // cells and the caller simply named one that is not among them, the
+    // original id-scoped message is correct and must not gain the
+    // no-capability-cells wording — that would misdescribe a space that could
+    // in fact satisfy the gate with a different id.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-wrong-capability-base");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let gated = run_cli(&[
+        "cell",
+        "transition",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--base-revision-id",
+        "revision:native-wrong-capability-base",
+        "--cell-id",
+        "goal:native-case-contract",
+        "--to",
+        "resolved",
+        "--reason",
+        "The goal is complete",
+        "--actor-id",
+        "actor:native-transition-cli",
+        "--capability-id",
+        "capability:not-present",
+        "--operation-scope-id",
+        native_case_space_id(),
+        "--audience",
+        "audit",
+        "--source-boundary-id",
+        "source_boundary:native-case-management-contract",
+        "--format",
+        "json",
+    ]);
+    assert!(!gated.status.success());
+    let gated_json = stderr_json(&gated);
+    assert_eq!(gated_json["error_code"], json!("gate_violation"));
+    let message = gated_json["message"].as_str().expect("refusal message");
+    assert!(
+        message.contains(
+            "capability capability:not-present does not resolve to an existing case cell"
+        ),
+        "stderr: {message}"
+    );
+    assert!(
+        !message.contains("no capability cells at all"),
+        "a space that has capability cells must not get the no-capability-cells wording: {message}"
+    );
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn space_rebuild_recovers_a_deleted_nearest_snapshot() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");

@@ -8,7 +8,8 @@ use crate::{
         NativeCloseInvariantResult, NativeEvalError, NativeReviewGapType,
     },
     native_model::{
-        CaseCellLifecycle, CaseCellType, CaseMorphism, CaseSpace, ProjectionAudience, ReviewAction,
+        has_capability_cells, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseSpace,
+        ProjectionAudience, ReviewAction,
     },
 };
 use higher_graphen_core::{Id, ReviewStatus};
@@ -467,16 +468,32 @@ fn operation_gate_failures(
             witness_ids: vec![gate.actor_id.clone()],
         });
     }
+    // Computed once: whether *any* capability id could ever resolve here, as
+    // opposed to whether this particular one does. A space with none can
+    // never satisfy a gate (capability cells enter only at lift/import), and
+    // that is a different fact than "you named the wrong id" — the id-scoped
+    // message below invites trying another id, which only helps when another
+    // id could actually work.
+    let space_has_capability_cells = has_capability_cells(case_space);
     for capability_id in &gate.capability_ids {
         let Some(capability) = case_space
             .case_cells
             .iter()
             .find(|cell| cell.id == *capability_id)
         else {
+            let message = if space_has_capability_cells {
+                format!("capability {capability_id} does not resolve to an existing case cell")
+            } else {
+                format!(
+                    "capability {capability_id} does not resolve to an existing case cell: \
+                     this case space has no capability cells at all, so no capability id can \
+                     ever satisfy this gate; capability cells enter only at lift/import, so a \
+                     space that needs durable mutation must be created with `lift native` from \
+                     a genesis that includes them, not `space new`"
+                )
+            };
             failures.push(OperationGateFailure {
-                message: format!(
-                    "capability {capability_id} does not resolve to an existing case cell"
-                ),
+                message,
                 witness_ids: vec![capability_id.clone()],
             });
             continue;

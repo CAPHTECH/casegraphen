@@ -896,6 +896,21 @@ pub(crate) fn is_artifact_cell(cell: &CaseCell) -> bool {
     cell.cell_type == CaseCellType::Custom(ARTIFACT_CELL_TYPE.to_owned())
 }
 
+pub(crate) const CAPABILITY_CELL_TYPE: &str = "capability";
+
+pub(crate) fn is_capability_cell(cell: &CaseCell) -> bool {
+    cell.cell_type == CaseCellType::Custom(CAPABILITY_CELL_TYPE.to_owned())
+}
+
+/// Capability cells enter only at lift/import (ADR 0003 §4) and there is no
+/// post-genesis path that creates one. Whether a case space has *any* such
+/// cell is therefore fixed at creation and worth asking as one question: a
+/// space with none can never satisfy an operation gate, no matter what
+/// capability id a caller supplies.
+pub(crate) fn has_capability_cells(case_space: &CaseSpace) -> bool {
+    case_space.case_cells.iter().any(is_capability_cell)
+}
+
 fn is_artifact_cell_id(id: &Id, case_space: &CaseSpace) -> bool {
     case_space
         .case_cells
