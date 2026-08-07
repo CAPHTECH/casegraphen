@@ -373,7 +373,7 @@ not a document to parse; `render_native_case_evaluation`
 (`native_cli_text.rs`) is what builds it, so nothing here is a second,
 independently-derived opinion. A real sample, measured against a live store:
 
-```
+```text
 Progress: active
 Assurance: review_required
 
