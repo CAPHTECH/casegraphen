@@ -69,6 +69,23 @@ macro_rules! entry {
     };
 }
 
+/// Like `entry!`, but for a file outside `schemas/` — `$dir` is a full path
+/// relative to this module rather than a `schemas/` subdirectory name. Used
+/// only for `docs/guides/entry-ladder/mini-genesis.case.space.json` (issue
+/// #153): that file is a published, `tests/entry_ladder_conformance.rs`-
+/// tested guide artifact with its own relative links in `entry-ladder.md`, so
+/// it stays at that one path — embedded from there — rather than being
+/// duplicated or moved into `schemas/`.
+macro_rules! guide_entry {
+    ($dir:literal, $stability:expr, $file:literal) => {
+        (
+            $stability,
+            $file,
+            include_str!(concat!("../", $dir, "/", $file)),
+        )
+    };
+}
+
 /// `(stability, file, content)` for every embedded file. Sorted the way `ls`
 /// lists them (stable tree, then experimental tree, each alphabetical) so a
 /// diff against `ls schemas/*/*.{schema,example}.json` stays easy to read by
@@ -249,10 +266,23 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("experimental", SchemaStability::Experimental, "verification.policy_result.v0.schema.json"),
 ];
 
+/// Embedded files that live outside `schemas/`, so `tests.rs`'s on-disk
+/// completeness check — which only scans `schemas/casegraphen` and
+/// `schemas/experimental` — does not (and should not) hold them to the same
+/// "every file on disk has an `entry!` line" invariant `RAW` gets. `catalog()`
+/// serves both lists the same way; `include_str!` already fails the build if
+/// one of these files moves or is deleted, which is the guarantee that
+/// matters here.
+#[rustfmt::skip]
+const EXTRA: &[(SchemaStability, &str, &str)] = &[
+    guide_entry!("docs/guides/entry-ladder", SchemaStability::Stable, "mini-genesis.case.space.json"),
+];
+
 /// Reads a file's own declared identity back out of its content: `$id` for a
 /// `*.schema.json`, the fixture's own `schema` field for a `*.example.json`.
 /// Never hand-copied, so the catalog cannot assert an identity a file does
-/// not itself carry.
+/// not itself carry. A file matching neither suffix (`EXTRA`'s guide
+/// fixtures) has no declared id and is reachable only through `--file`.
 fn declared_id(file: &str, content: &str) -> Option<String> {
     let key = if file.ends_with(".schema.json") {
         "$id"
@@ -265,13 +295,14 @@ fn declared_id(file: &str, content: &str) -> Option<String> {
     value.get(key)?.as_str().map(str::to_owned)
 }
 
-/// The full catalog, built once from `RAW` and cached: `declared_id` reparses
-/// JSON, which is unnecessary work to repeat on every `schema list`/`schema
-/// get` call within one process.
+/// The full catalog, built once from `RAW` and `EXTRA` and cached:
+/// `declared_id` reparses JSON, which is unnecessary work to repeat on every
+/// `schema list`/`schema get` call within one process.
 pub(crate) fn catalog() -> &'static [SchemaCatalogEntry] {
     static CATALOG: OnceLock<Vec<SchemaCatalogEntry>> = OnceLock::new();
     CATALOG.get_or_init(|| {
         RAW.iter()
+            .chain(EXTRA.iter())
             .map(|(stability, file, content)| SchemaCatalogEntry {
                 file,
                 stability: *stability,

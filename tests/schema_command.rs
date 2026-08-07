@@ -137,6 +137,76 @@ fn get_by_file_returns_an_example_fixture() {
     );
 }
 
+/// Issue #153: the only genesis example `schema get` served was
+/// `native.case.space.example.json` at 37,637 bytes (~9,400 tokens) — an
+/// operator either copied that or wrote one from the 2,085-token schema.
+/// `mini-genesis.case.space.json`
+/// (`docs/guides/entry-ladder/mini-genesis.case.space.json`) is the minimal
+/// governed genesis #123 already built and `entry_ladder_conformance.rs`
+/// already tests — 3,692 bytes, ~920 tokens — but `schema get --file
+/// mini-genesis.case.space.json` answered `unknown schema file`. This
+/// proves it is now reachable, matches the on-disk file exactly (same file,
+/// not a copy — `schema_catalog::EXTRA` embeds it from its real path), and
+/// is not merely present but usable: `lift native` accepts it unmodified,
+/// the same way the issue's own dogfooding did.
+#[test]
+fn get_by_file_returns_the_minimal_genesis_and_it_still_lifts() {
+    let output = run(&[
+        "schema",
+        "get",
+        "--file",
+        "mini-genesis.case.space.json",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("get JSON");
+    assert_eq!(report["result"]["id"], Value::Null);
+
+    let on_disk: Value = serde_json::from_str(
+        &fs::read_to_string(root().join("docs/guides/entry-ladder/mini-genesis.case.space.json"))
+            .expect("read mini-genesis from disk"),
+    )
+    .expect("on-disk mini-genesis JSON");
+    assert_eq!(report["result"]["content"], on_disk);
+
+    let directory = std::env::temp_dir().join(format!(
+        "casegraphen-schema-command-mini-genesis-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).expect("create temp directory");
+    let input_path = directory.join("served-mini-genesis.json");
+    fs::write(
+        &input_path,
+        serde_json::to_vec(&report["result"]["content"]).expect("serialize served content"),
+    )
+    .expect("write served content");
+
+    let lift = run(&[
+        "lift",
+        "native",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--input",
+        input_path.to_str().expect("input path"),
+        "--revision-id",
+        "revision:mini-genesis",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        lift.status.success(),
+        "the served content should lift the same way the file on disk does: {}",
+        String::from_utf8_lossy(&lift.stderr)
+    );
+
+    fs::remove_dir_all(&directory).ok();
+}
+
 #[test]
 fn get_without_a_selector_is_refused() {
     let output = run(&["schema", "get", "--format", "json"]);

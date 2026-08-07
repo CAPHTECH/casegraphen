@@ -33,16 +33,43 @@ casegraphen lift native --store "$STORE" --input genesis.case.space.json \
   --revision-id revision:<name>-genesis --format json
 ```
 
-Start from the
-[minimal governed-loop genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder/mini-genesis.case.space.json)
-(one work cell, one capability cell, 108 lines) and edit it — see the
+Start from the minimal governed-loop genesis (one work cell, one capability
+cell, 108 lines) rather than the full case-space example or a blank page —
+920 tokens against the ~9,400 of `native.case.space.example.json`, the only
+other genesis-shaped document the binary serves. Fetch it from the binary,
+no checkout needed:
+
+```sh
+casegraphen schema get --file mini-genesis.case.space.json --format json \
+  | jq -r .result.content > genesis.case.space.json
+```
+
+([Source](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder/mini-genesis.case.space.json)
+to read in context; see the
 [entry ladder](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder.md)
-for the loop it lifts into. The
+for the loop it lifts into.)
+
+**Before you lift it, decide every operation your loop will need.** This
+fixture's one capability grants `metadata.operations: ["cell-transition"]`
+only — enough to move a cell through its lifecycle, nothing else. The moment
+you go past that (`morphism propose` → `apply` to add or update a cell or
+relation, `evidence attach`, `review accept`, `close-check`, ...) you hit a
+gate violation, and the repair is not forward: capabilities enter only at
+genesis, so fixing it means authoring a new genesis with the operations you
+need and lifting into a *new* store — the space you already built is stuck.
+Add every operation string you expect to need
+(`morphism-apply`, `morphism-reject`, `evidence-attach`, `cell-transition`,
+`review`, `close-check`, `dispatch`, `plan-review`, ...; the release-decision
+genesis below shows a fuller set) to that capability's `metadata.operations`
+before you lift, not after.
+
+The
 [release-decision genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/release-decision/genesis.case.space.json)
 is the complete reference — four capabilities, two actors, worker bindings —
 once your case space needs any of that. The contract is
-[`native.case.space.schema.json`](https://github.com/CAPHTECH/casegraphen/blob/main/schemas/casegraphen/native.case.space.schema.json)
-(`additionalProperties: false` throughout).
+`highergraphen.case.space.v1`
+(`casegraphen schema get --id highergraphen.case.space.v1`),
+`additionalProperties: false` throughout.
 
 ## The genesis snapshot is made self-reconstructing for you
 
