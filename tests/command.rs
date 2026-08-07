@@ -15956,3 +15956,130 @@ fn native_run_frontier_retry_names_the_failed_trace_it_retried() {
     assert_native_store_valid_and_rebuilds(&directory);
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
+
+/// Issue #145: `skills/casegraphen-operate/SKILL.md` tells an operator that
+/// running `lift` against a document they are unsure of is safe, because a
+/// refused lift writes nothing — that is what makes the evaluator's half of
+/// the rule set reachable at all, since `morphism.metadata` is an open object
+/// the schema cannot constrain. A documented safety claim that nothing pins
+/// rots the way the entry-ladder caution note did (#130). This pins it:
+/// nothing is created anywhere under the store's parent, not only the store
+/// path itself, so a temporary file or work directory beside it would fail
+/// here too. It also pins that the refusal carries every violation as data
+/// rather than only the first, which is the other half of the claim.
+#[test]
+fn a_refused_lift_reports_every_violation_and_writes_nothing() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp dir");
+    let store = directory.join("store");
+
+    // Schema-valid — `$defs.metadata` is `{"type": "object"}` — but the
+    // evaluator requires `lift_semantics` and `source_boundary` on the first
+    // morphism, so this is exactly the shape that validates clean and refuses.
+    let fixture = json!({
+        "schema": "highergraphen.case.space.v1",
+        "schema_version": 1,
+        "case_space_id": "case_space:refusal-writes-nothing",
+        "space_id": "space:refusal-writes-nothing",
+        "case_cells": [],
+        "case_relations": [],
+        "projections": [],
+        "morphism_log": [{
+            "schema": "highergraphen.case.morphism_log_entry.v1",
+            "schema_version": 1,
+            "case_space_id": "case_space:refusal-writes-nothing",
+            "sequence": 1,
+            "entry_id": "entry:1",
+            "morphism_id": "morphism:1",
+            "target_revision_id": "revision:1",
+            "actor_id": "actor:test",
+            "recorded_at": "2026-08-07T00:00:00Z",
+            "provenance": {
+                "source": {"kind": "human"},
+                "confidence": 1.0,
+                "review_status": "unreviewed"
+            },
+            "source_ids": [],
+            "replay_checksum": "x",
+            "morphism": {
+                "morphism_id": "morphism:1",
+                "morphism_type": "create",
+                "target_revision_id": "revision:1",
+                "added_ids": [], "updated_ids": [], "retired_ids": [],
+                "preserved_ids": [], "violated_invariant_ids": [],
+                "review_status": "unreviewed", "evidence_ids": [],
+                "source_ids": [],
+                "metadata": {}
+            }
+        }],
+        "revision": {
+            "revision_id": "revision:1",
+            "case_space_id": "case_space:refusal-writes-nothing",
+            "applied_entry_ids": ["entry:1"],
+            "applied_morphism_ids": ["morphism:1"],
+            "checksum": "x",
+            "created_at": "2026-08-07T00:00:00Z",
+            "source_ids": [], "metadata": {}
+        },
+        "metadata": {"source_boundary": {
+            "id": "source_boundary:1",
+            "included_sources": ["s"], "adapters": ["a"],
+            "accepted_fact_policy": "p", "inference_policy": "p",
+            "information_loss": []
+        }}
+    });
+    let fixture_path = directory.join("evaluator-refuses.case.space.json");
+    write_json_value(&fixture_path, &fixture);
+
+    let lifted = run_cli(&[
+        "lift",
+        "native",
+        "--store",
+        store.to_str().expect("store path"),
+        "--input",
+        fixture_path.to_str().expect("fixture path"),
+        "--revision-id",
+        "revision:1",
+        "--format",
+        "json",
+    ]);
+    assert!(!lifted.status.success(), "stdout: {}", stdout(&lifted));
+
+    let refusal: serde_json::Value =
+        serde_json::from_str(stderr(&lifted).trim_end()).expect("refusal parses");
+    assert_eq!(refusal["error_code"], json!("store_integrity"), "{refusal}");
+
+    let violations = refusal["data"]["violations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("refusal carries data.violations: {refusal}"));
+    let fields: Vec<&str> = violations
+        .iter()
+        .filter_map(|violation| violation["field"].as_str())
+        .collect();
+    assert!(
+        fields.contains(&"morphism.metadata.lift_semantics")
+            && fields.contains(&"morphism.metadata.source_boundary"),
+        "both violations must be reported in one refusal, not one per invocation: {refusal}"
+    );
+    for violation in violations {
+        for key in ["code", "field", "message"] {
+            assert!(
+                violation[key].is_string(),
+                "each violation carries {key} as a string: {refusal}"
+            );
+        }
+    }
+
+    let written: Vec<PathBuf> = fs::read_dir(&directory)
+        .expect("read temp dir")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path != &fixture_path)
+        .collect();
+    assert!(
+        written.is_empty(),
+        "a refused lift must write nothing beside the input — SKILL.md tells \
+         operators the run is safe on that basis: {written:?}"
+    );
+
+    fs::remove_dir_all(&directory).ok();
+}
