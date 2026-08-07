@@ -1,4 +1,4 @@
-use crate::native_model::{CaseCell, ProjectionAudience};
+use crate::native_model::{CaseCell, ProjectionAudience, RelationStrength};
 use higher_graphen_core::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +11,18 @@ pub const MEMORY_PROJECTION_SCHEMA: &str = "casegraphen.experimental.memory.proj
 pub const MEMORY_USE_REPORT_SCHEMA: &str = "casegraphen.experimental.memory.use_report.v0";
 pub const MEMORY_POLICY_SCHEMA: &str = "casegraphen.experimental.memory.policy.v0";
 pub const MEMORY_INDEX_SCHEMA: &str = "casegraphen.experimental.memory.index.v0";
+/// ADR 0034: contracts `MemoryClaimProposal`, pinning `accepted` and
+/// `mutation_performed` `const:false` + `required`.
+pub const MEMORY_CLAIM_PROPOSAL_SCHEMA: &str = "casegraphen.experimental.memory.claim_proposal.v0";
+/// ADR 0034 (found by the adversarial-execution-reviewer's pass on the ADR's
+/// own diff, not by the original audit): contracts `MemoryRelationProposal`,
+/// pinning `accepted` `const:false` and `review_status` `const:"unreviewed"`,
+/// both `required`. This record crosses the wire nested inside the
+/// `memory_propose_supersession` / `memory_propose_retraction` results as
+/// `relation_proposal`, so layers 1 and 2 do not see it (both are top-level
+/// only, by design) — layer 3 is what must cover it, and originally did not.
+pub const MEMORY_RELATION_PROPOSAL_SCHEMA: &str =
+    "casegraphen.experimental.memory.relation_proposal.v0";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -315,9 +327,39 @@ pub struct MemoryIndexValidation {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MemoryClaimProposal {
+    pub schema: String,
     pub claim_cell: CaseCell,
     pub source_artifact_id: Id,
     pub findings: Vec<MemoryValidationFinding>,
     pub accepted: bool,
     pub mutation_performed: bool,
+}
+
+/// What kind of memory-claim relation morphism a proposal names. Distinct
+/// from `native_model::CaseRelationType`: this is the two-value vocabulary
+/// the Memory Plane's `memory_propose_supersession` / `memory_propose_retraction`
+/// tools construct, not the case graph's general relation-type set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRelationKind {
+    Supersedes,
+    Retracts,
+}
+
+/// A proposed supersession/retraction relation between two memory claims
+/// (`src/bin/casegraphen-mcp-host.rs::memory_proposal_tool`, its single
+/// construction site). `accepted` and `review_status` are pinned in
+/// `memory.relation_proposal.v0`: this record can never truthfully claim
+/// acceptance or a reviewed status, for the same reason `MemoryClaimProposal`
+/// cannot — only the canonical review morphism accepts anything.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MemoryRelationProposal {
+    pub schema: String,
+    pub relation_id: String,
+    pub relation_type: MemoryRelationKind,
+    pub relation_strength: RelationStrength,
+    pub from_id: String,
+    pub to_id: String,
+    pub review_status: String,
+    pub accepted: bool,
 }

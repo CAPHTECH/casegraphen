@@ -463,6 +463,76 @@ fn operational_host_projects_real_store_state_and_compiles_without_a_custom_rust
         .join("manifest.json")
         .is_file());
 
+    // ADR 0034 / issue #120, T6: the exact ControlPlaneResponse this live,
+    // spawned `casegraphen-mcp-host` process just emitted for
+    // `compile_deployment_bundle` must validate against the tightened
+    // envelope, and every envelope forgery family constructed against it
+    // must be rejected — except the one that must not be, because it is
+    // outside the envelope's declared scope.
+    let live_response = &first[2]["result"]["structuredContent"];
+    assert!(
+        validates_against_control_plane_response_schema(live_response),
+        "a real, live compile_deployment_bundle response failed to validate \
+         against control_plane.response.v0: {live_response}"
+    );
+
+    let mut forged = live_response.clone();
+    forged["result"]["accepted"] = json!(true);
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result.accepted: true forgery on a live response must fail validation"
+    );
+
+    let mut forged = live_response.clone();
+    forged["result"]["mutation_performed"] = json!(true);
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result.mutation_performed: true forgery on a live response must fail validation"
+    );
+
+    let mut forged = live_response.clone();
+    forged["result"]["read_only"] = json!(false);
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result.read_only: false forgery on a live response must fail validation"
+    );
+
+    let mut forged = live_response.clone();
+    forged["result"]["review_status"] = json!("accepted");
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result.review_status: \"accepted\" forgery on a live response must fail validation"
+    );
+
+    let mut forged = live_response.clone();
+    forged["refusal"] = json!({
+        "code": "forged_refusal", "detail": "forged", "supplied_base_revision_id": null,
+        "current_revision_id": null, "suggested_next_operation": "report_host_defect"
+    });
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result and refusal both non-null must fail validation"
+    );
+
+    let mut forged = live_response.clone();
+    forged["result"] = Value::Null;
+    assert!(
+        !validates_against_control_plane_response_schema(&forged),
+        "result and refusal both null must fail validation"
+    );
+
+    // Scope boundary (ADR 0034): a nested `accepted: true` below the top
+    // level of `result` is payload semantics, not an envelope-level claim,
+    // so the envelope must still accept it. This is the pass case the issue
+    // asks to be proven, not assumed.
+    let mut nested = live_response.clone();
+    nested["result"]["nested_ledger_echo"] = json!({"accepted": true});
+    assert!(
+        validates_against_control_plane_response_schema(&nested),
+        "a nested accepted: true at depth >= 1 must still validate; \
+         the pin is top-level only by design"
+    );
+
     let replay = run_operational_host(
         &state,
         &store,
@@ -523,4 +593,28 @@ fn run_operational_host(
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// ADR 0034 / #117 pattern: validate a real, live response against the
+/// shipped contract rather than asserting about the schema in the abstract.
+fn validates_against_control_plane_response_schema(instance: &Value) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-control-plane-response-{}-{nonce}.json",
+        std::process::id()
+    ));
+    fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(root().join("schemas/experimental/control_plane.response.v0.schema.json"))
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&file);
+    status.success()
 }

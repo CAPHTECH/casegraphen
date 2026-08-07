@@ -95,6 +95,13 @@ fn operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review() 
         ["allocator_event"]["payload"]["reviewed_deployment"]
         .clone();
     assert_eq!(reviewed_binding["deployment_bundle_hash"], bundle_hash);
+    assert!(
+        validates_against_control_plane_response_schema(
+            &reserve_responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live reserve_resources response failed to validate \
+         against control_plane.response.v0"
+    );
 
     let artifact_bytes = b"review complete";
     let artifact_digest = format!("{:x}", Sha256::digest(artifact_bytes));
@@ -142,6 +149,12 @@ fn operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review() 
     assert!(result["proposals"]
         .as_array()
         .is_some_and(|values| !values.is_empty()));
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live reconcile_run response failed to validate against control_plane.response.v0"
+    );
 
     if let Ok(path) = std::env::var("CASEGRAPHEN_REVIEWED_RESOURCE_PILOT_REPORT") {
         let retained = json!({
@@ -212,6 +225,10 @@ fn operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review() 
         stale[1]["result"]["structuredContent"]["refusal"]["code"],
         "stale_revision"
     );
+    assert!(
+        validates_against_control_plane_response_schema(&stale[1]["result"]["structuredContent"]),
+        "a real, live release_resources refusal failed to validate against control_plane.response.v0"
+    );
     let release = tool_call(
         "release_resources",
         "release-current",
@@ -224,6 +241,12 @@ fn operational_host_reserves_then_reconciles_a_resource_bearing_run_to_review() 
     assert_eq!(
         released[1]["result"]["structuredContent"]["result"]["allocator_generation"],
         2
+    );
+    assert!(
+        validates_against_control_plane_response_schema(
+            &released[1]["result"]["structuredContent"]
+        ),
+        "a real, live release_resources response failed to validate against control_plane.response.v0"
     );
     fs::remove_dir_all(directory).unwrap();
 }
@@ -427,6 +450,30 @@ fn tool_call(
     json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"authorization":"token:e2e-resource","name":name,"arguments":arguments}}).to_string()
 }
 
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// ADR 0034 / #117 pattern: validate a real, live response against the
+/// shipped contract rather than asserting about the schema in the abstract.
+fn validates_against_control_plane_response_schema(instance: &Value) -> bool {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let file = std::env::temp_dir().join(format!(
+        "casegraphen-resource-host-schema-check-{}-{nonce}.json",
+        std::process::id()
+    ));
+    fs::write(&file, serde_json::to_vec(instance).unwrap()).expect("write instance");
+    let status = Command::new("python3")
+        .args(["-m", "jsonschema", "-i"])
+        .arg(&file)
+        .arg(root().join("schemas/experimental/control_plane.response.v0.schema.json"))
+        .status()
+        .expect("run python3 -m jsonschema");
+    let _ = fs::remove_file(&file);
+    status.success()
+}
+
 fn temp(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "casegraphen-resource-host-e2e-{label}-{}",
@@ -628,6 +675,13 @@ fn reviewed_deployment(directory: &Path) -> ReviewedDeploymentFixture {
     assert_eq!(
         result["manifest"]["accepted_review_revision_id"],
         accepted_revision
+    );
+    assert!(
+        validates_against_control_plane_response_schema(
+            &responses[1]["result"]["structuredContent"]
+        ),
+        "a real, live compile_reviewed_deployment_bundle response failed to validate \
+         against control_plane.response.v0"
     );
     ReviewedDeploymentFixture {
         topology_json,

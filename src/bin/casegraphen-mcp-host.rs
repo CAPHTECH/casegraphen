@@ -19,9 +19,11 @@ use casegraphen::{
     memory::{
         build_claim_proposal, query_memory, source_records_for_claim, validate_memory_claim,
         validate_memory_policy, validate_memory_proposal, MemoryClaim, MemoryKind, MemoryPolicy,
-        MemoryQuery, SourceRecord,
+        MemoryQuery, MemoryRelationKind, MemoryRelationProposal, SourceRecord,
+        MEMORY_RELATION_PROPOSAL_SCHEMA,
     },
     native_eval::evaluate_native_case,
+    native_model::RelationStrength,
     native_store::NativeCaseStore,
     resource_allocator::{
         validate_resource_allocator_retention_policy, AtomicResourceAllocator,
@@ -1010,28 +1012,31 @@ fn memory_proposal_tool(
                     "target claim is absent from the replayed CaseSpace",
                 ));
             }
-            let relation_type = if request.tool == ControlPlaneTool::MemoryProposeSupersession {
-                "supersedes"
-            } else {
-                "retracts"
-            };
+            let (relation_type, relation_type_str) =
+                if request.tool == ControlPlaneTool::MemoryProposeSupersession {
+                    (MemoryRelationKind::Supersedes, "supersedes")
+                } else {
+                    (MemoryRelationKind::Retracts, "retracts")
+                };
             let material = serde_json::to_vec(&(
-                relation_type,
+                relation_type_str,
                 input.claim.claim_id.as_str(),
                 target,
                 request.base_revision_id.as_deref(),
             ))
             .expect("memory relation material serializes");
             let digest = format!("{:x}", Sha256::digest(&material));
-            json!({
-                "relation_id": format!("memory-relation:{digest}"),
-                "relation_type": relation_type,
-                "relation_strength": "hard",
-                "from_id": input.claim.claim_id,
-                "to_id": target,
-                "review_status": "unreviewed",
-                "accepted": false
+            serde_json::to_value(MemoryRelationProposal {
+                schema: MEMORY_RELATION_PROPOSAL_SCHEMA.to_owned(),
+                relation_id: format!("memory-relation:{digest}"),
+                relation_type,
+                relation_strength: RelationStrength::Hard,
+                from_id: input.claim.claim_id.clone(),
+                to_id: target.to_owned(),
+                review_status: "unreviewed".to_owned(),
+                accepted: false,
             })
+            .expect("typed memory relation proposal serializes")
         }
         ControlPlaneTool::MemoryProposeClaim | ControlPlaneTool::MemoryProposeProcedure => {
             Value::Null

@@ -704,6 +704,16 @@ pub fn validate_verification_policy(policy: &VerificationPolicy) -> Vec<PolicyFi
     findings
 }
 
+/// `ledger_requirements_satisfied` is hardcoded `false` at this type's single
+/// construction site in `reconcile_declared_lineage` and asserted by
+/// `caller_declared_lineage_never_satisfies_ledger_requirements`, but this
+/// type deliberately has **no schema** (ADR 0034): no CLI or MCP path
+/// serializes it today, so there is no forgeable wire surface to contract.
+/// Whoever plumbs this through a CLI or the host must contract it with
+/// #117's pattern (`const` + `required` on `ledger_requirements_satisfied`)
+/// *first*, following `verification.policy_result.v0.schema.json` and
+/// `streaming.reconciliation.v0.schema.json` as precedent, rather than
+/// shipping the wire path and discovering the gap the way #120 found it here.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DeclaredLineageReconciliation {
     pub policy_id: String,

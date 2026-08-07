@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.memory.claim_proposal.v0",
+  "description": "Result of build_claim_proposal (MemoryClaimProposal, src/memory/model.rs), the wrapper both `casegraphen memory propose` and the MCP memory_propose_* tools emit around a curated memory claim. accepted and mutation_performed are pinned const:false and required: no CaseGraphen memory tool can accept a claim or mutate accepted state directly, only propose an unreviewed evidence cell for the canonical review morphism (ADR 0034). const alone is evadable by omitting the field, so both are pinned together (#117's pattern). claim_cell is left permissive: this contract governs the proposal wrapper's own claim, not the full CaseCell shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "claim_cell", "source_artifact_id", "findings", "accepted", "mutation_performed"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.memory.claim_proposal.v0"},
+    "claim_cell": {"type": "object"},
+    "source_artifact_id": {"type": "string", "pattern": "^artifact:sha256-[0-9a-f]{64}$"},
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "accepted": {"const": false},
+    "mutation_performed": {"const": false}
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "location", "detail"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "location": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
