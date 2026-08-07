@@ -326,6 +326,15 @@ the report payload is unchanged.
   id it wanted. Any JSON Schema validator works — `jsonschema` is one choice,
   not a requirement.
 
+  **That pass is necessary, not sufficient.** The native evaluator enforces
+  rules the schema cannot express — `morphism.metadata` is an open object in
+  the contract, yet the first morphism must declare `lift_semantics` and a
+  `source_boundary`. A document can validate with zero schema violations and
+  still be refused. Run the `lift` and read the refusal: it accumulates every
+  evaluator rule the document breaks into `data.violations`, each with `field`
+  and `message`, and it writes nothing when it refuses — a `lift` against a bad
+  document is safe, and is the only way to see that half of the rule set.
+
 ## Never do these
 
 - **Do not edit a snapshot, a log entry, a stored plan, or a registered
