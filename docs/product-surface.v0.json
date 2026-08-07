@@ -25,6 +25,20 @@
     {"workflow":"memory_propose_retraction","entry_point":"operational_mcp_host","tool":"memory_propose_retraction","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/conflicts.rs","skills":["casegraphen-memory-curate"]},
     {"workflow":"memory_propose_procedure","entry_point":"operational_mcp_host","tool":"memory_propose_procedure","semantics":"unreviewed_non_mutating_proposal_v0","owner":"src/memory/validation.rs","skills":["casegraphen-memory-curate"]}
   ],
+  "resources": {
+    "entry_point": "operational_mcp_host",
+    "wire_method": "resources/read",
+    "note": "ADR 0036 / issue #122: resources/read has no response envelope and no wire_response_schema of its own, unlike the 20 tool workflows above. Each of the 7 RESOURCE_TEMPLATES is classified below as claim_bearing (contracted) or pure_echo (left open by declared design, not by silence, mirroring how control_plane.response.v0's `result` stays open outside the pinned vocabulary).",
+    "templates": [
+      {"template":"casegraphen://spaces/{id}/status","owner":"src/bin/casegraphen-mcp-host.rs::OperationalDelegate::read_resource","classification":"pure_echo","contract":null},
+      {"template":"casegraphen://spaces/{id}/frontier","owner":"src/bin/casegraphen-mcp-host.rs::OperationalDelegate::read_resource","classification":"pure_echo","contract":null},
+      {"template":"casegraphen://spaces/{id}/halts","owner":"src/bin/casegraphen-mcp-host.rs::read_external_projection","classification":"claim_bearing","contract":"casegraphen.experimental.control_plane.resource_projection.v0"},
+      {"template":"casegraphen://spaces/{id}/reviews","owner":"src/bin/casegraphen-mcp-host.rs::OperationalDelegate::read_resource","classification":"pure_echo","contract":null},
+      {"template":"casegraphen://spaces/{id}/revisions/{revision}","owner":"src/bin/casegraphen-mcp-host.rs::OperationalDelegate::read_resource","classification":"pure_echo","contract":null},
+      {"template":"casegraphen://runs/{run_id}","owner":"src/bin/casegraphen-mcp-host.rs::read_external_projection","classification":"claim_bearing","contract":"casegraphen.experimental.control_plane.resource_projection.v0"},
+      {"template":"casegraphen://topologies/{topology_id}","owner":"src/bin/casegraphen-mcp-host.rs::read_external_projection","classification":"claim_bearing","contract":"casegraphen.experimental.control_plane.resource_projection.v0"}
+    ]
+  },
   "invariants": {
     "runtime_reports_are_untrusted": true,
     "proposals_are_never_auto_accepted": true,
@@ -39,6 +53,7 @@
     "streaming_v0_requires_terminal_producer_and_final_artifact": true,
     "verification_lineage_proofs_are_canonical_opaque_and_never_serialized": true,
     "memory_tools_never_mutate_accepted_state": true,
-    "memory_indexes_are_derived_and_non_authoritative": true
+    "memory_indexes_are_derived_and_non_authoritative": true,
+    "resource_read_claim_vocabulary_is_pinned_top_level_only": true
   }
 }

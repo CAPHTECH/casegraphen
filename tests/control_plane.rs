@@ -2,10 +2,10 @@
 
 use casegraphen::{
     control_plane::{
-        CallerDeclaredAuditContext, ControlPlaneNotification, ControlPlaneRefusal,
+        read_resource, CallerDeclaredAuditContext, ControlPlaneNotification, ControlPlaneRefusal,
         ControlPlaneRequest, ControlPlaneState, ControlPlaneTool, DecisionDelegate,
-        NotificationKind, CONTROL_PLANE_NOTIFICATION_SCHEMA, CONTROL_PLANE_REQUEST_SCHEMA,
-        NOTIFICATIONS, RESOURCE_TEMPLATES, TOOLS,
+        NotificationKind, ResourceDelegate, CONTROL_PLANE_NOTIFICATION_SCHEMA,
+        CONTROL_PLANE_REQUEST_SCHEMA, NOTIFICATIONS, RESOURCE_TEMPLATES, TOOLS,
     },
     execution_topology::parse_execution_topology,
     graph_lint::lint_execution_topology,
@@ -529,6 +529,109 @@ fn replaying_a_wire_claim_violation_replays_the_refusal_never_the_false_claim() 
         Some("noncanonical_wire_claim")
     );
     assert!(replayed.result.is_none());
+}
+
+struct FixedResourceDelegate {
+    result: Value,
+    calls: usize,
+}
+
+impl ResourceDelegate for FixedResourceDelegate {
+    fn read_resource(&mut self, _uri: &str) -> Result<Value, ControlPlaneRefusal> {
+        self.calls += 1;
+        Ok(self.result.clone())
+    }
+}
+
+#[test]
+fn a_resource_read_claiming_a_forbidden_wire_value_is_refused_not_returned() {
+    // ADR 0036 / #122: `read_resource` is the resources/read chokepoint,
+    // architecturally the same as `execute` for tools/call, and checks the
+    // same seven-key vocabulary at the top level only.
+    for (key, forbidden) in [
+        ("accepted", json!(true)),
+        ("mutation_performed", json!(true)),
+        ("read_only", json!(false)),
+        ("accepted_runtime_output", json!(true)),
+        ("proofs_serialized", json!(true)),
+        ("review_status", json!("accepted")),
+        ("generated_plan_review_status", json!("accepted")),
+    ] {
+        let mut delegate = FixedResourceDelegate {
+            result: json!({key: forbidden}),
+            calls: 0,
+        };
+        let outcome = read_resource("casegraphen://spaces/case-1/halts", &mut delegate);
+        assert_eq!(delegate.calls, 1, "key {key}");
+        let refusal = outcome.expect_err(&format!("key {key} must be refused"));
+        assert_eq!(
+            refusal.code, "noncanonical_resource_wire_claim",
+            "key {key}"
+        );
+        assert!(
+            refusal.detail.contains(key),
+            "key {key}: {}",
+            refusal.detail
+        );
+    }
+}
+
+#[test]
+fn a_compliant_resource_read_passes_through_unchanged() {
+    let mut delegate = FixedResourceDelegate {
+        result: json!({"accepted": false, "review_status": "unreviewed"}),
+        calls: 0,
+    };
+    let outcome = read_resource("casegraphen://spaces/case-1/halts", &mut delegate)
+        .expect("compliant resource read must not be refused");
+    assert_eq!(
+        outcome,
+        json!({"accepted": false, "review_status": "unreviewed"})
+    );
+}
+
+#[test]
+fn a_nested_claim_in_a_resource_read_is_not_refused_because_reads_truthfully_echo_ledger_state() {
+    // Mirrors `a_nested_claim_below_the_top_level_is_not_refused_...` for
+    // tools/call: a nested `accepted: true` reflects real ledger state
+    // (e.g. reviewed cells), not an envelope-level claim, on either path.
+    let mut delegate = FixedResourceDelegate {
+        result: json!({
+            "case_space_id": "case-1",
+            "reviewed_cells": [{"provenance": {"review_status": "accepted"}}]
+        }),
+        calls: 0,
+    };
+    let outcome = read_resource("casegraphen://spaces/case-1/reviews", &mut delegate)
+        .expect("a nested claim below the top level must not be refused");
+    assert_eq!(
+        outcome,
+        json!({
+            "case_space_id": "case-1",
+            "reviewed_cells": [{"provenance": {"review_status": "accepted"}}]
+        })
+    );
+}
+
+#[test]
+fn a_non_object_resource_read_is_not_refused_because_resources_have_no_envelope_to_violate() {
+    // Deliberate divergence from `execute`, recorded in ADR 0036: unlike
+    // `tools/call`, `resources/read` has no result/refusal exclusivity
+    // envelope, so a non-object top-level resource value is not itself a
+    // violation of anything the vocabulary pin protects.
+    for value in [
+        json!([1, 2, 3]),
+        json!("plain string"),
+        json!(1),
+        Value::Null,
+    ] {
+        let mut delegate = FixedResourceDelegate {
+            result: value.clone(),
+            calls: 0,
+        };
+        let outcome = read_resource("casegraphen://runs/run-1", &mut delegate);
+        assert_eq!(outcome, Ok(value.clone()), "value {value}");
+    }
 }
 
 fn root() -> &'static Path {

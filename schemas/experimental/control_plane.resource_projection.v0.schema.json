@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.control_plane.resource_projection.v0",
+  "description": "The `casegraphen://spaces/{id}/halts`, `casegraphen://runs/{run_id}`, and `casegraphen://topologies/{topology_id}` `resources/read` shape (ResourceProjection, src/bin/casegraphen-mcp-host.rs::read_external_projection), the only three of the seven RESOURCE_TEMPLATES that carry a top-level claim: this wraps content an external runtime wrote to the artifact directory, and `accepted` is pinned const:false and required (#117's pattern; either alone is evadable) because only the canonical review morphism accepts anything. The other four resource templates (status, frontier, reviews, revisions/{revision}) are pure ledger echoes with no claim key at their own top level and are deliberately left uncontracted here (ADR 0036) — this schema governs this one shape only, not resources/read as a whole. `projection` is left open: it is the runtime-authored content this record wraps, not this record's own claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "projection", "content_hash", "accepted"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.control_plane.resource_projection.v0"},
+    "projection": {},
+    "content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "accepted": {"const": false}
+  }
+}
