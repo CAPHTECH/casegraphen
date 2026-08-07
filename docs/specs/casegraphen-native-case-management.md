@@ -878,6 +878,24 @@ rejected by an explicit review morphism. Application and rejection commands
 validate their operation gates before construction, and the store validates the
 recorded gate again before every append.
 
+`morphism propose --input` accepts a bare `CaseMorphism` — no `case_space_id`
+wrapper — validated against
+`highergraphen.case.morphism_propose_input.v1`
+(`schemas/casegraphen/native.morphism-propose-input.schema.json`, paired with
+`native.morphism-propose-input.example.json`, which shows the minimal
+add-one-cell case). That schema's `required` list is looser than the stored
+`case_morphism` record's: an author may omit `added_ids`, `updated_ids`,
+`retired_ids`, `preserved_ids`, `violated_invariant_ids`, `evidence_ids`, and
+`source_ids`, and the CLI defaults each to `[]`. When `added_ids` is left
+empty, `morphism propose` derives it from `metadata.payload`'s `added_cells`
+and `added_relations` — the same derivation genesis materialization already
+performs for the first `MorphismLogEntry`. If an author supplies a non-empty
+`added_ids` that disagrees with the payload, the existing cross-check still
+refuses the proposal; derivation only fills a gap, it never overrides a
+declared value. The stored record — what a proposal becomes once appended —
+is unaffected: it still carries every field the `case_morphism` definition
+requires.
+
 Implemented review mutation commands:
 
 ```sh

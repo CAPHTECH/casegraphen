@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "highergraphen.case.morphism_propose_input.v1",
+  "title": "Native CaseGraphen Morphism Propose Input",
+  "description": "The bare CaseMorphism document `casegraphen morphism propose --input <file>` accepts. There is no case_space_id wrapper: the accepted document is the morphism itself, addressed by --case-space-id on the command line. An add/update payload of cells and relations lives at metadata.payload (added_cells, added_relations, updated_cells, updated_relations), not at the top level. Each property reuses its definition from the stored case-space contract's case_morphism record (native.case.space.schema.json#/$defs/case_morphism) by reference, but this schema's own required list is looser: added_ids, updated_ids, retired_ids, preserved_ids, violated_invariant_ids, evidence_ids, and source_ids may all be omitted here. The tool defaults every omitted one to [], and derives added_ids from metadata.payload's added_cells/added_relations when the author leaves it out.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "morphism_id",
+    "morphism_type",
+    "target_revision_id",
+    "review_status",
+    "metadata"
+  ],
+  "properties": {
+    "morphism_id": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/morphism_id"
+    },
+    "morphism_type": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/morphism_type"
+    },
+    "source_revision_id": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/source_revision_id"
+    },
+    "target_revision_id": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/target_revision_id"
+    },
+    "added_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/added_ids"
+    },
+    "updated_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/updated_ids"
+    },
+    "retired_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/retired_ids"
+    },
+    "preserved_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/preserved_ids"
+    },
+    "violated_invariant_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/violated_invariant_ids"
+    },
+    "review_status": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/review_status"
+    },
+    "evidence_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/evidence_ids"
+    },
+    "source_ids": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/source_ids"
+    },
+    "metadata": {
+      "$ref": "native.case.space.schema.json#/$defs/case_morphism/properties/metadata"
+    }
+  }
+}

@@ -32,6 +32,17 @@ CLI.
 - `native.morphism-log-entry.schema.json` gives the embedded native morphism-log
   record contract its standalone `highergraphen.case.morphism_log_entry.v1`
   schema identity while reusing the case-space definition.
+- `native.morphism-propose-input.schema.json` validates the bare `CaseMorphism`
+  document `morphism propose --input <file>` accepts, with
+  `highergraphen.case.morphism_propose_input.v1`. No `case_space_id` wrapper —
+  the input is the morphism itself — and an add/update payload lives at
+  `metadata.payload`, not at the top level. Each property is reused by
+  reference from `native.case.space.schema.json#/$defs/case_morphism` rather
+  than duplicated, but this schema's own `required` list is looser:
+  `added_ids`, `updated_ids`, `retired_ids`, `preserved_ids`,
+  `violated_invariant_ids`, `evidence_ids`, and `source_ids` may all be
+  omitted — the tool defaults each to `[]`, deriving `added_ids` from
+  `metadata.payload` when it is left out.
 - `native.case.report.schema.json` validates
   `highergraphen.case.native.report.v1` package-level native report envelopes.
 - `native-cli.report.schema.json` validates generated repo-owned native CLI
@@ -53,7 +64,8 @@ CLI.
 The matching `*.example.json` files are used by package tests. Input fixtures
 such as `case.graph.example.json`, `workflow.graph.example.json`,
 `github.issue-snapshot.example.json`, `projection.example.json`,
-`coverage.policy.example.json`, `operation-gate-profiles.example.json`, and
-`native.case.space.example.json` can be passed directly to the relevant
-`casegraphen` CLI commands. Report fixtures such as
+`coverage.policy.example.json`, `operation-gate-profiles.example.json`,
+`native.case.space.example.json`, and `native.morphism-propose-input.example.json`
+can be passed directly to the relevant `casegraphen` CLI commands (the last as
+`morphism propose --input`). Report fixtures such as
 `native.case.report.example.json` are output contract examples, not CLI inputs.

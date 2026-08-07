@@ -8,7 +8,10 @@ use casegraphen::{
     },
     github_issue_snapshot::GITHUB_ISSUE_SNAPSHOT_SCHEMA,
     native_cli::{EVIDENCE_PACKET_SCHEMA, OPERATION_GATE_PROFILES_SCHEMA},
-    native_model::{NATIVE_CASE_SPACE_SCHEMA, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA},
+    native_model::{
+        NATIVE_CASE_SPACE_SCHEMA, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
+        NATIVE_MORPHISM_PROPOSE_INPUT_SCHEMA,
+    },
     workflow_model::WORKFLOW_GRAPH_SCHEMA,
 };
 use serde_json::Value;
@@ -44,6 +47,7 @@ fn every_input_and_record_schema_constant_has_a_shipped_schema_id() {
         GITHUB_ISSUE_SNAPSHOT_SCHEMA,
         NATIVE_CASE_SPACE_SCHEMA,
         NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
+        NATIVE_MORPHISM_PROPOSE_INPUT_SCHEMA,
         EXECUTION_PLAN_SCHEMA,
         WORKER_BINDING_SCHEMA,
         WORKER_REPORT_SCHEMA,

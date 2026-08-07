@@ -96,6 +96,8 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("casegraphen", SchemaStability::Stable, "native.case.space.example.json"),
     entry!("casegraphen", SchemaStability::Stable, "native.case.space.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "native.morphism-log-entry.schema.json"),
+    entry!("casegraphen", SchemaStability::Stable, "native.morphism-propose-input.example.json"),
+    entry!("casegraphen", SchemaStability::Stable, "native.morphism-propose-input.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "operation-gate-profiles.example.json"),
     entry!("casegraphen", SchemaStability::Stable, "operation-gate-profiles.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "projection.example.json"),
