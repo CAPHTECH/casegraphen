@@ -1,0 +1,108 @@
+{
+  "schema": "highergraphen.case.space.v1",
+  "schema_version": 1,
+  "case_space_id": "case_space:mini-governed",
+  "space_id": "space:mini-governed",
+  "case_cells": [
+    {
+      "id": "work:mini-task",
+      "cell_type": "work",
+      "space_id": "space:mini-governed",
+      "title": "Do the one governed thing",
+      "lifecycle": "active",
+      "source_ids": ["source:mini-intent"],
+      "structure_ids": [],
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini governed example" },
+        "confidence": 1.0,
+        "review_status": "unreviewed"
+      },
+      "metadata": {}
+    },
+    {
+      "id": "capability:mini-operator",
+      "cell_type": "custom:capability",
+      "space_id": "space:mini-governed",
+      "title": "Mini operator authority",
+      "lifecycle": "accepted",
+      "source_ids": ["source:mini-intent"],
+      "structure_ids": [],
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini governed example" },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "metadata": {
+        "actor_ids": ["actor:mini-operator"],
+        "operations": ["cell-transition"]
+      }
+    }
+  ],
+  "case_relations": [],
+  "morphism_log": [
+    {
+      "schema": "highergraphen.case.morphism_log_entry.v1",
+      "schema_version": 1,
+      "case_space_id": "case_space:mini-governed",
+      "sequence": 1,
+      "entry_id": "morphism_log_entry:mini-genesis",
+      "morphism_id": "morphism:create-mini-space",
+      "target_revision_id": "revision:mini-genesis",
+      "morphism": {
+        "morphism_id": "morphism:create-mini-space",
+        "morphism_type": "create",
+        "target_revision_id": "revision:mini-genesis",
+        "added_ids": [],
+        "updated_ids": [],
+        "retired_ids": [],
+        "preserved_ids": [],
+        "violated_invariant_ids": [],
+        "review_status": "accepted",
+        "evidence_ids": [],
+        "source_ids": ["source:mini-intent"],
+        "metadata": {
+          "lift_semantics": "native_genesis",
+          "source_boundary_id": "source_boundary:mini-governed",
+          "source_boundary": {
+            "id": "source_boundary:mini-governed",
+            "included_sources": ["docs/guides/mini-governed-intent.md"],
+            "adapters": ["native_genesis.v1"],
+            "accepted_fact_policy": "Only this genesis snapshot is a fact.",
+            "inference_policy": "Anything proposed later enters unreviewed and cannot satisfy a hard requirement.",
+            "information_loss": []
+          }
+        }
+      },
+      "actor_id": "actor:mini-operator",
+      "recorded_at": "2026-08-06T00:00:00Z",
+      "provenance": {
+        "source": { "kind": "human", "title": "Mini governed example" },
+        "confidence": 1.0,
+        "review_status": "accepted"
+      },
+      "source_ids": ["source:mini-intent"],
+      "replay_checksum": ""
+    }
+  ],
+  "projections": [],
+  "revision": {
+    "revision_id": "revision:mini-genesis",
+    "case_space_id": "case_space:mini-governed",
+    "applied_entry_ids": ["morphism_log_entry:mini-genesis"],
+    "applied_morphism_ids": ["morphism:create-mini-space"],
+    "checksum": "",
+    "created_at": "2026-08-06T00:00:00Z",
+    "source_ids": ["source:mini-intent"],
+    "metadata": {}
+  },
+  "metadata": {
+    "source_boundary": {
+      "id": "source_boundary:mini-governed",
+      "included_sources": ["docs/guides/mini-governed-intent.md"],
+      "adapters": ["native_genesis.v1"],
+      "accepted_fact_policy": "Only this genesis snapshot is a fact.",
+      "inference_policy": "Anything proposed later enters unreviewed and cannot satisfy a hard requirement.",
+      "information_loss": []
+    }
+  }
+}

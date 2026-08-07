@@ -34,8 +34,13 @@ casegraphen lift native --store "$STORE" --input genesis.case.space.json \
 ```
 
 Start from the
-[example genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/release-decision/genesis.case.space.json)
-and edit it. The contract is
+[minimal governed-loop genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder/mini-genesis.case.space.json)
+(one work cell, one capability cell, 108 lines) and edit it — see the
+[entry ladder](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/entry-ladder.md)
+for the loop it lifts into. The
+[release-decision genesis](https://github.com/CAPHTECH/casegraphen/blob/main/docs/guides/release-decision/genesis.case.space.json)
+is the complete reference — four capabilities, two actors, worker bindings —
+once your case space needs any of that. The contract is
 [`native.case.space.schema.json`](https://github.com/CAPHTECH/casegraphen/blob/main/schemas/casegraphen/native.case.space.schema.json)
 (`additionalProperties: false` throughout).
 

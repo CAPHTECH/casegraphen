@@ -12,6 +12,17 @@ It was extracted from `CAPHTECH/higher-graphen` (`tools/casegraphen`) at v0.7.1
 and continues as a standalone repository from 0.8.0. See
 [ADR 0001](docs/adr/0001-extraction-from-higher-graphen.md).
 
+## Quickstart
+
+The full control model below is what CaseGraphen can do, not what it costs to
+start. There is a lighter entry, and it ships:
+[**the entry ladder**](docs/guides/entry-ladder.md) — two runnable rungs, an
+analysis loop with no authority setup at all, then a minimal governed loop
+(one work cell, one capability, one command per change), before the complete
+[release-decision walkthrough](docs/guides/release-decision-walkthrough.md).
+Plans, workers, evidence, packets, and close policies are pay-when-declared:
+none of them exist in a case space until something declares them.
+
 ## The control model
 
 An LLM or agent proposes; CaseGraphen decides. Concretely:
@@ -328,9 +339,10 @@ this tool live in [`docs/specs/`](docs/specs/).
 - [ADR 0031: GitHub issue-to-PR evidence is bounded, replayable observation](docs/adr/0031-github-evidence-observation-boundary.md)
 - [ADR 0033: schema distribution through the binary, not per-skill copies](docs/adr/0033-schema-distribution-through-the-binary.md)
 - [ADR 0034: the response envelope pins the claim vocabulary, not its payloads](docs/adr/0034-response-envelope-pins-the-claim-vocabulary.md)
+- [ADR 0035: no analysis-to-genesis transcription assist, for now](docs/adr/0035-no-analysis-to-genesis-transcription-assist.md)
 - ADR identifiers are contiguous, immutable four-digit decision identities;
   filenames and headings carry the same identifier. The next available
-  identifier is **0035**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
+  identifier is **0036**. [ADR 0012](docs/adr/0012-adr-identifier-inventory.md)
   defines the inventory convention enforced by the release gate.
 - [Fresh-agent release evaluation](docs/guides/fresh-agent-release-eval.md) —
   the ten-scenario harness, real-provider matrix, captured evidence, and
