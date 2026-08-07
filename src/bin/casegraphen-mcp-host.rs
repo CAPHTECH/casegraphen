@@ -862,7 +862,15 @@ impl DecisionDelegate for OperationalDelegate {
             | ControlPlaneTool::MemoryProposeSupersession
             | ControlPlaneTool::MemoryProposeRetraction
             | ControlPlaneTool::MemoryProposeProcedure => memory_proposal_tool(self, request),
-            _ => Err(refusal(
+            // Naming every remaining variant instead of `_` keeps this match
+            // exhaustive: a tool added to `TOOLS` fails to compile here until
+            // someone decides what it does, instead of silently landing in
+            // this refusal and reading as a deliberate decision it never was.
+            ControlPlaneTool::ApplyEvidencePacket
+            | ControlPlaneTool::ReviewAccept
+            | ControlPlaneTool::ReviewReject
+            | ControlPlaneTool::Resume
+            | ControlPlaneTool::SupersedeDispatch => Err(refusal(
                 "unsupported_operational_host_tool",
                 "this host release supports topology proposal/lint, content-addressed runtime attachment, and canonical run reconciliation; mutation tools remain delegated to the existing CaseGraphen CLI owner",
             )),
