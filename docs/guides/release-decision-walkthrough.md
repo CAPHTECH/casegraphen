@@ -98,6 +98,8 @@ cleared and `PATH` may never be allowlisted.
 
 ```jsonc
 {
+  "schema": "highergraphen.case.workflow.worker_binding.v1",
+  "schema_version": 1,
   "binding_id": "worker_binding:schema-id-gate",
   "worker_kind": "shell",
   "command": "<WORK>/gate-schema-ids.sh",
@@ -108,7 +110,8 @@ cleared and `PATH` may never be allowlisted.
   "command_content_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "env_allowlist": [],
   "timeout_ms": 10000,
-  "capability_ids": ["capability:release-worker-exec"]
+  "capability_ids": ["capability:release-worker-exec"],
+  "metadata": {}
 }
 ```
 

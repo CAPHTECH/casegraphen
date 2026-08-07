@@ -28,6 +28,44 @@ grep -F 'codex mcp get casegraphen' "$install_output" >/dev/null
 grep -F 'claude mcp get casegraphen' "$install_output" >/dev/null
 grep -F "$repository_dir/docs/guides/mcp-operational-host.md" "$install_output" >/dev/null
 
+# install_binary() must say what it found on PATH before replacing it, and
+# what checkout (with commit) it is installing from — see #105.
+grep -F 'no existing casegraphen found on PATH' "$install_output" >/dev/null
+source_commit=$(git -C "$repository_dir" rev-parse HEAD)
+grep -F "== installing the casegraphen binary from $repository_dir (commit $source_commit)" \
+  "$install_output" >/dev/null
+
+# With an existing `casegraphen` on PATH, its version is reported before
+# install.sh replaces it.
+mkdir -p "$test_dir/existing-bin"
+printf '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "casegraphen 0.1.0-fake\\n"; exit 0; fi\nexit 1\n' \
+  >"$test_dir/existing-bin/casegraphen"
+chmod +x "$test_dir/existing-bin/casegraphen"
+
+existing_output="$test_dir/install-output-existing.txt"
+(
+  cd "$test_dir/project"
+  HOME="$test_dir/home" CARGO_HOME="$test_dir/cargo-home" \
+    PATH="$test_dir/existing-bin:$test_dir/bin:/usr/bin:/bin" \
+    sh "$repository_dir/install.sh"
+) >"$existing_output"
+grep -F "existing casegraphen on PATH ($test_dir/existing-bin/casegraphen): casegraphen 0.1.0-fake" \
+  "$existing_output" >/dev/null
+
+# --root scopes the binary install without disturbing CARGO_HOME's default,
+# and the MCP setup output reflects the scoped path.
+root_output="$test_dir/install-output-root.txt"
+custom_root="$test_dir/custom-root"
+(
+  cd "$test_dir/project"
+  HOME="$test_dir/home" CARGO_HOME="$test_dir/cargo-home" \
+    PATH="$test_dir/bin:/usr/bin:/bin" \
+    sh "$repository_dir/install.sh" --root "$custom_root"
+) >"$root_output"
+root_mcp_binary="$custom_root/bin/casegraphen-mcp"
+grep -F "codex mcp add casegraphen -- '$root_mcp_binary'" "$root_output" >/dev/null
+grep -F "claude mcp add --scope user casegraphen -- '$root_mcp_binary'" "$root_output" >/dev/null
+
 for runtime in .claude .codex; do
   for skill in casegraphen-orchestrate casegraphen-operate casegraphen-design casegraphen-audit casegraphen-integrate casegraphen-memory-query casegraphen-memory-curate casegraphen-memory-audit; do
     installed="$test_dir/home/$runtime/skills/$skill/SKILL.md"
