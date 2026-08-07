@@ -124,6 +124,112 @@ fn documented_flags_reach_the_command_parser() {
     );
 }
 
+/// #108: `casegraphen <group> --help` used to reach the shared option parser
+/// (which treats an unrecognized flag as one needing a value) before the
+/// command's own dispatch ever ran, so a help request was answered with an
+/// unrelated `--format json is required` refusal and exit 1. This exercises
+/// every documented top-level group — the same extraction
+/// `accepted_commands_are_documented` uses, so a new group is covered
+/// automatically — and asserts both the exit code and that every one of that
+/// group's documented usage lines actually appears in stdout, not just that
+/// the process exits cleanly with unrelated output.
+#[test]
+fn group_help_prints_group_usage_lines_and_exits_zero() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli = read(&manifest_dir.join("src/cli.rs"));
+    let namespaces = top_level_namespaces(&cli);
+    let mut failures = Vec::new();
+
+    for namespace in &namespaces {
+        let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+            .arg(namespace)
+            .arg("--help")
+            .output()
+            .unwrap_or_else(|error| panic!("run `casegraphen {namespace} --help`: {error}"));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        if !output.status.success() {
+            failures.push(format!(
+                "`casegraphen {namespace} --help` should exit 0, but exited {:?}; stderr:\n{}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+            continue;
+        }
+
+        let expected_lines: Vec<&str> = USAGE
+            .lines()
+            .filter(|line| {
+                let mut tokens = line.split_whitespace();
+                tokens.next() == Some("casegraphen") && tokens.next() == Some(namespace.as_str())
+            })
+            .collect();
+        assert!(
+            !expected_lines.is_empty(),
+            "no usage lines found for documented group {namespace:?} in src/cli_usage.txt; \
+             refusing a vacuous check"
+        );
+        for line in expected_lines {
+            if !stdout.contains(line) {
+                failures.push(format!(
+                    "`casegraphen {namespace} --help` did not print its documented usage line:\n  {line}\ngot:\n{stdout}"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "group --help regressions:\n{}",
+        failures.join("\n\n")
+    );
+}
+
+/// #108: `casegraphen --help` used to fall through to "unsupported command
+/// segment" (exit 1) rather than the full usage dump it now renders with
+/// exit 0 — the exit code is what makes `--help` usable inside a script's
+/// own argument-validation path.
+#[test]
+fn top_level_help_prints_full_usage_and_exits_zero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .arg("--help")
+        .output()
+        .expect("run `casegraphen --help`");
+    assert!(
+        output.status.success(),
+        "`casegraphen --help` should exit 0, but exited {:?}; stderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in USAGE.lines().filter(|line| !line.trim().is_empty()) {
+        assert!(
+            stdout.contains(line),
+            "`casegraphen --help` stdout is missing a documented usage line:\n  {line}"
+        );
+    }
+}
+
+/// #108: no-argument invocation is unchanged on purpose — printing usage and
+/// refusing is defensible when the caller supplied nothing at all, unlike
+/// `--help`, which is an explicit, successful request.
+#[test]
+fn no_argument_invocation_still_refuses() {
+    let output = Command::new(env!("CARGO_BIN_EXE_casegraphen"))
+        .output()
+        .expect("run `casegraphen` with no arguments");
+    assert!(
+        !output.status.success(),
+        "no-argument invocation should still refuse (exit non-zero); stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("missing command segment"),
+        "no-argument invocation's refusal message changed unexpectedly:\n{stderr}"
+    );
+}
+
 #[test]
 fn readme_command_surface_is_documented_in_usage() {
     let readme = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"));
