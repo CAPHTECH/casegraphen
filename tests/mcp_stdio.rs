@@ -666,18 +666,22 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
     let status = resource_content(&responses[1]);
     assert_eq!(status["case_space_id"], case_space_id, "{status}");
     assert!(status.get("refusal").is_none(), "{status}");
+    assert_pure_echo("status", &status);
 
     let frontier = resource_content(&responses[2]);
     assert_eq!(frontier["case_space_id"], case_space_id, "{frontier}");
     assert!(frontier.get("refusal").is_none(), "{frontier}");
+    assert_pure_echo("frontier", &frontier);
 
     let reviews = resource_content(&responses[3]);
     assert_eq!(reviews["case_space_id"], case_space_id, "{reviews}");
     assert!(reviews.get("refusal").is_none(), "{reviews}");
+    assert_pure_echo("reviews", &reviews);
 
     let revision = resource_content(&responses[4]);
     assert_eq!(revision["revision_id"], revision_id, "{revision}");
     assert!(revision.get("refusal").is_none(), "{revision}");
+    assert_pure_echo("revisions/{revision}", &revision);
 
     // The three claim-bearing resources carry the contracted
     // `resource_projection.v0` shape and validate against the shipped
@@ -710,6 +714,42 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
     }
 
     fs::remove_dir_all(directory).unwrap();
+}
+
+/// The seven-key claim vocabulary `claim_vocabulary_violation`
+/// (`src/control_plane.rs`) checks at the top level of a response — kept in
+/// sync with that Rust list by inspection, since this asserts the absence of
+/// the whole vocabulary rather than any particular truthful/forbidden value.
+const CLAIM_VOCABULARY_KEYS: [&str; 7] = [
+    "accepted",
+    "mutation_performed",
+    "read_only",
+    "accepted_runtime_output",
+    "proofs_serialized",
+    "review_status",
+    "generated_plan_review_status",
+];
+
+/// Makes `product-surface.v0.json`'s `pure_echo` classification executable
+/// (ADR 0036 / #122). That classification is the entire reason a top-level
+/// vocabulary pin is safe on `resources/read` at all: the pin *permits* any
+/// of these keys at their truthful value (`accepted: false` is truthful, not
+/// forbidden), so if a pure-echo resource ever grows one of them, the
+/// layer-2 pin would let it through silently. A failure here does not mean
+/// this resource is broken — it means the resource is no longer a pure
+/// echo, and the fix is to reclassify it in `product-surface.v0.json` (and
+/// very likely contract it), not to relax this assertion.
+fn assert_pure_echo(name: &str, value: &Value) {
+    let object = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{name} resource content is not an object: {value}"));
+    for key in CLAIM_VOCABULARY_KEYS {
+        assert!(
+            !object.contains_key(key),
+            "{name} carries top-level {key:?}: {value} — this resource is no longer a \
+             pure echo, and its classification in product-surface.v0.json is now wrong"
+        );
+    }
 }
 
 /// Parses the JSON string an MCP `resources/read` response wraps in

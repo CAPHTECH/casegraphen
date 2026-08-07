@@ -117,8 +117,8 @@ to hook a validator without restructuring how MCP resource contents are
 wrapped — a redesign of the transport, not a fix to this gap. That
 restructuring is not done here. Instead, `ResourceProjection` — the Rust type
 `read_external_projection` now serializes instead of a bare `json!` literal —
-gained a `schema` field, exactly as `VerificationPolicyResult` gained one in
-#121 for the same reason. A consumer that parses `contents[].text` sees which
+gained a `schema` field, exactly as `VerificationPolicyResult` gained one in #121
+for the same reason. A consumer that parses `contents[].text` sees which
 contract governs what it just read and can validate against it directly, all
 without the envelope knowing anything about resource payloads. That is layer
 1's value for anyone who validates, reached without opening the "how does a
