@@ -588,24 +588,11 @@ impl<'a> NativeEvaluationContext<'a> {
                             | CaseRelationType::Invalidates
                             | CaseRelationType::Blocks
                     )
-                    && !self.unblocked_by_review(relation)
             })
             .map(|relation| (relation.id.as_str(), relation))
             .collect::<BTreeMap<_, _>>()
             .into_values()
             .collect()
-    }
-
-    fn unblocked_by_review(&self, blocked_relation: &CaseRelation) -> bool {
-        self.index
-            .relations_to(&blocked_relation.id)
-            .iter()
-            .any(|relation| {
-                relation.relation_strength == RelationStrength::Hard
-                    && relation.relation_type == CaseRelationType::Unblocks
-                    && relation.to_id == blocked_relation.id
-                    && self.review_satisfied(&relation.from_id)
-            })
     }
 
     fn required_review_relations(&self, cell_id: &Id) -> Vec<&'a CaseRelation> {

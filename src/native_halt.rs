@@ -598,9 +598,15 @@ fn needs_review(evaluation: &NativeCaseEvaluation, plan: &ExecutionPlan) -> bool
 /// gated `waiver` morphism, advances the revision, and leaves the obstruction
 /// exactly where it was — a halt that is a deadlock wearing a vocabulary
 /// word, which `docs/specs/operate-halt.fsl`'s `REQ-OPERATE-009` and ADR
-/// 0016's decision 2 both forbid. `Contradiction` is the same shape: it is
-/// cleared by an `Unblocks` relation from an already-accepted review *cell*,
-/// which no `review accept` invocation creates.
+/// 0016's decision 2 both forbid. `Contradiction` is the same shape: no
+/// `review accept` invocation removes a hard `blocks`/`contradicts`/`invalidates`
+/// relation or otherwise changes what `contradiction_relations`
+/// (`native_eval.rs`) returns for it. Retiring the relation is refused
+/// (#157), and the discharge path that does exist — `review waive` on the
+/// obstruction's own id (#158) — is a `residual_risk` acceptance of the
+/// conflict, not a clearance of it: it satisfies the close check while
+/// `space reason` keeps listing the obstruction by design. Either way,
+/// `review accept` clears neither.
 fn is_clearable_by_review(obstruction: &NativeObstruction) -> bool {
     match obstruction.obstruction_type {
         NativeObstructionType::ReviewRequired => {

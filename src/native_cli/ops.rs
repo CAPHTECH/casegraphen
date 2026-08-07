@@ -875,6 +875,29 @@ fn validate_candidate_morphism(
             "morphism target_revision_id must advance the revision",
         ));
     }
+    // Retiring a relation can never complete: unlike a cell it gets no
+    // tombstone, and the morphism that originally added it still names it in
+    // `added_ids`, so the store's own dangling-reference check refuses the
+    // result every time (#157). `apply_morphism` below only replays this one
+    // candidate morphism against the current case space, not the whole log,
+    // so it cannot see that failure coming — refuse here instead, before a
+    // caller pays for a gated `apply` that was never going to succeed.
+    for id in &morphism.retired_ids {
+        if case_space
+            .case_relations
+            .iter()
+            .any(|relation| relation.id == *id)
+        {
+            return Err(NativeCliError::invalid(format!(
+                "cannot retire relation {id}: relation retirement cannot complete — a relation \
+                 has no tombstone, so removing it leaves the morphism that added it pointing at \
+                 a missing id, which the store refuses. To discharge an obstruction this relation \
+                 participates in, keep the relation and record the decision instead: \
+                 `review waive --target-id <obstruction-id>` on the obstruction (see `space \
+                 reason` or `obstruction list` for its id)"
+            )));
+        }
+    }
     let mut candidate = case_space.clone();
     apply_morphism(&mut candidate, morphism)
         .map_err(|error| NativeCliError::invalid(error.to_string()))?;
