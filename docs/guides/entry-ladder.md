@@ -129,11 +129,11 @@ echo "$CS"
 case_space:workflow_graph:mini
 ```
 
-> **Do not pass `--case-space-id` to `lift workflow`.** The flag is accepted
-> and silently ignored — the created space id is always derived from
-> `workflow_graph_id`, never from what you name on the command line. This is a
-> separate, known CLI defect, not fixed here; the point above is how to work
-> around it rather than be misled by it.
+> **Do not pass `--case-space-id` or `--space-id` to `lift workflow`.** No
+> `lift` adapter accepts either — both ids are always derived from the input
+> (`workflow_graph_id` here), never from what you name on the command line, so
+> the flags are refused rather than honoured. The point above is how to read
+> the derived id, not a way to choose your own.
 
 Now reason over the lifted space — no gate, no capability, no worker, no
 evidence, only what the graph declared:
