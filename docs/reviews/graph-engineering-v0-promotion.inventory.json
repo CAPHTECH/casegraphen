@@ -9,10 +9,7 @@
     "accepted": false
   },
   "surface": {
-    "workflow_count": 20,
-    "runtime_family_count": 4,
-    "experimental_contract_version": 0,
-    "experimental_contract_count": 71
+    "experimental_contract_version": 0
   },
   "evidence_facts": [
     {
