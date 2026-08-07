@@ -1,5 +1,7 @@
 use super::super::{path_helpers::path_segment, NativeCliError};
-use crate::native_model::{CaseMorphism, CaseSpace, NATIVE_CASE_SPACE_SCHEMA_VERSION};
+use crate::native_model::{
+    CaseMorphism, CaseSpace, NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
+};
 use higher_graphen_core::{Confidence, Id, Provenance, ReviewStatus, SourceKind, SourceRef};
 use serde_json::{json, Value};
 use std::{
@@ -67,7 +69,21 @@ pub(super) fn proposal_path(
 }
 
 pub(super) fn read_case_space(path: &Path) -> Result<CaseSpace, NativeCliError> {
-    parse_strict(read_json(path)?)
+    // Issue #140: serde stops at the first member it cannot satisfy, so this
+    // refusal names one violation of however many the document has — measured
+    // at one against seven on the same file. An agent that fixes only the named
+    // field and re-runs pays a round trip per violation, and nested violations
+    // stay invisible until their parent exists. The binary already serves the
+    // whole schema, so all of them are one pass away; naming the schema id is
+    // the most this can honestly offer, because the validator that expands it
+    // is the caller's choice and is not a dependency of this crate.
+    parse_strict(read_json(path)?).map_err(|error| {
+        NativeCliError::invalid(format!(
+            "{error} (this is the first violation, not necessarily the only one: \
+             validate the whole document against {NATIVE_CASE_SPACE_SCHEMA}, served by \
+             `casegraphen schema get --id {NATIVE_CASE_SPACE_SCHEMA}`, to see them all at once)"
+        ))
+    })
 }
 
 pub(super) fn read_morphism(path: &Path) -> Result<CaseMorphism, NativeCliError> {
