@@ -273,7 +273,10 @@ impl std::fmt::Display for NativeStoreError {
                 // same list is the refusal's `data` (issue #145).
                 write!(
                     formatter,
-                    "{}: imported case space is not evaluable ({} violation{}): {}",
+                    // "case space", not "imported case space": #145 wrote this
+                    // for the import path alone, and #156 reaches it from every
+                    // durable mutation, where nothing was imported.
+                    "{}: case space is not evaluable ({} violation{}): {}",
                     path.display(),
                     violations.len(),
                     if violations.len() == 1 { "" } else { "s" },

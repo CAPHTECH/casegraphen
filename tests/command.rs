@@ -16256,3 +16256,167 @@ fn a_refused_lift_reports_every_violation_and_writes_nothing() {
 
     fs::remove_dir_all(&directory).ok();
 }
+
+/// Issue #156: #145 gave the *import* path structured `data.violations`; this,
+/// the append path every durable mutation reaches, kept Debug-dumping the list
+/// into the message with `data` null. It was missed because #145 was found,
+/// verified and tested through `lift` alone, so its regression test could not
+/// see the other call site. This drives `morphism apply`, where an operator
+/// arrives having already authored a proposal and paid a gated call — the most
+/// expensive refusal in the tool to leave unreadable.
+///
+/// Reaching the append-time evaluator needs a relation the *log* names, so this
+/// adds one by morphism and then retires it. Retiring a genesis relation trips
+/// an earlier reference check and never exercises this path.
+#[test]
+fn a_refused_apply_reports_violations_as_data_not_a_debug_dump() {
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:issue156-imported");
+    let store = directory.to_str().expect("temp path").to_owned();
+
+    let add_path = directory.join("add.case_morphism.json");
+    write_json_value(
+        &add_path,
+        &json!({
+            "morphism_id": "morphism:issue156-add",
+            "morphism_type": "relate",
+            "source_revision_id": "revision:issue156-imported",
+            "target_revision_id": "revision:issue156-added",
+            "added_ids": ["relation:issue156-link"],
+            "review_status": "unreviewed",
+            "metadata": {"payload": {"added_relations": [{
+                "id": "relation:issue156-link",
+                "relation_type": "covers",
+                "relation_strength": "soft",
+                "from_id": "case:native-contract-example",
+                "to_id": "goal:native-case-contract",
+                "evidence_ids": [], "source_ids": [],
+                "provenance": {
+                    "source": {"kind": "human"},
+                    "confidence": 1.0,
+                    "review_status": "unreviewed"
+                },
+                "metadata": {}
+            }]}}
+        }),
+    );
+    let add_propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        add_path.to_str().expect("path"),
+        "--format",
+        "json",
+    ]);
+    assert!(
+        add_propose.status.success(),
+        "stderr: {}",
+        stderr(&add_propose)
+    );
+    let add_apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:issue156-add",
+            "--base-revision-id",
+            "revision:issue156-imported",
+            "--reviewer-id",
+            "actor:native-mutation-cli",
+            "--reason",
+            "add a relation the log will name",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(add_apply.status.success(), "stderr: {}", stderr(&add_apply));
+    let applied = stdout_json(&add_apply)["result"]["record"]["current_revision_id"]
+        .as_str()
+        .expect("revision after add")
+        .to_owned();
+
+    let retire_path = directory.join("retire.case_morphism.json");
+    write_json_value(
+        &retire_path,
+        &json!({
+            "morphism_id": "morphism:issue156-retire",
+            "morphism_type": "retire",
+            "source_revision_id": applied,
+            "target_revision_id": "revision:issue156-retired",
+            "retired_ids": ["relation:issue156-link"],
+            "review_status": "unreviewed",
+            "metadata": {"payload": {}}
+        }),
+    );
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        &store,
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        retire_path.to_str().expect("path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+
+    let apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            &store,
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:issue156-retire",
+            "--base-revision-id",
+            &applied,
+            "--reviewer-id",
+            "actor:native-mutation-cli",
+            "--reason",
+            "retire a log-referenced relation",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(!apply.status.success(), "stdout: {}", stdout(&apply));
+
+    let refusal: Value = serde_json::from_str(stderr(&apply).trim_end()).expect("refusal parses");
+    let violations = refusal["data"]["violations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("append refusal carries data.violations: {refusal}"));
+    assert!(!violations.is_empty(), "{refusal}");
+    for violation in violations {
+        for key in ["code", "field", "message"] {
+            assert!(
+                violation[key].is_string(),
+                "violation carries {key}: {refusal}"
+            );
+        }
+    }
+    let message = refusal["message"].as_str().expect("message is a string");
+    assert!(
+        !message.contains("NativeEvalViolation") && !message.contains("Some(Id("),
+        "the message must be prose, not a Debug rendering: {message}"
+    );
+    assert!(
+        !message.contains("imported case space"),
+        "nothing was imported on the append path: {message}"
+    );
+
+    fs::remove_dir_all(&directory).ok();
+}

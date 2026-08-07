@@ -1752,7 +1752,21 @@ impl fmt::Display for NativeCliError {
             Self::Core(error) => write!(formatter, "{error}"),
             Self::Store(error) => write!(formatter, "{error}"),
             Self::Review(error) => write!(formatter, "{error}"),
-            Self::Eval(error) => write!(formatter, "{error:?}"),
+            // Issue #156: prose, not a `Debug` dump. `refusal_data` already
+            // emits `violations` structurally for this variant, so the Debug
+            // rendering was the message half of the same defect #145 fixed.
+            Self::Eval(error) => write!(
+                formatter,
+                "case space is not evaluable ({} violation{}): {}",
+                error.violations.len(),
+                if error.violations.len() == 1 { "" } else { "s" },
+                error
+                    .violations
+                    .iter()
+                    .map(|violation| format!("{}: {}", violation.field, violation.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
             Self::Worker(error) => write!(formatter, "{error}"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Json(error) => write!(formatter, "{error}"),
