@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.pr_observation.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "observation_id", "repository", "issues", "pr", "base", "head", "liveness", "changed_files", "implementation_actors", "source_record_ids", "captured_at", "provider_fields_unmapped", "normalized_content_hash"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.pr_observation.v0"},
+    "observation_id": {"type": "string", "pattern": "^github-observation:.+#[0-9]+@.+$"},
+    "repository": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"},
+    "issues": {"type": "array", "items": {"$ref": "#/$defs/issue"}},
+    "pr": {"$ref": "#/$defs/pr"},
+    "base": {"$ref": "#/$defs/ref_sha"},
+    "head": {"$ref": "#/$defs/ref_sha"},
+    "liveness": {"$ref": "#/$defs/liveness"},
+    "changed_files": {"type": "array", "items": {"$ref": "#/$defs/changed_file"}},
+    "implementation_actors": {"$ref": "#/$defs/implementation_actors"},
+    "source_record_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "captured_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "provider_fields_unmapped": {"const": true},
+    "normalized_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "ref_sha": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "sha"],
+      "properties": {
+        "ref": {"type": "string", "minLength": 1},
+        "sha": {"type": "string", "minLength": 1}
+      }
+    },
+    "pr_author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "login"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "login": {"type": "string", "minLength": 1}
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "title", "state", "url", "created_at", "body_content_hash", "closed_by_pr_numbers"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "title": {"type": "string", "minLength": 1},
+        "state": {"type": "string", "minLength": 1},
+        "state_reason": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "closed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "body_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "closed_by_pr_numbers": {"type": "array", "items": {"type": "integer", "minimum": 1}}
+      }
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "title", "url", "state", "author", "created_at", "body_content_hash"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "title": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "minLength": 1},
+        "state": {"type": "string", "minLength": 1},
+        "author": {"$ref": "#/$defs/pr_author"},
+        "created_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "body_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "liveness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "mergeable", "merge_state_status"],
+      "properties": {
+        "state": {"type": "string", "minLength": 1},
+        "mergeable": {"enum": ["MERGEABLE", "CONFLICTING", "UNKNOWN"]},
+        "merge_state_status": {"type": "string", "minLength": 1},
+        "merged_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "closed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        "merge_commit_sha": {"type": "string", "minLength": 1}
+      }
+    },
+    "changed_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "additions", "deletions", "change_type"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "additions": {"type": "integer", "minimum": 0},
+        "deletions": {"type": "integer", "minimum": 0},
+        "change_type": {"type": "string", "minLength": 1}
+      }
+    },
+    "implementation_actors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_ids", "logins", "derivation"],
+      "properties": {
+        "actor_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "logins": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "derivation": {"const": "pr_author_and_commit_authors_and_committers"}
+      }
+    }
+  }
+}

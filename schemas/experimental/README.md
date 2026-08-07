@@ -112,6 +112,26 @@ Rust owner, examples, references, and inventory atomically.
   worktree adapter creates and removes only explicitly located isolated
   worktrees from an exact base commit; integration fixtures use disposable
   repositories, and cleanup requires a matching release/supersede assertion.
+- The `github.*.v0` contracts are the store-free GitHub issue-to-PR evidence
+  adapter (`github observe|refresh|project`). `github.capture_manifest.v0` is
+  the only caller-authored input, strict-parsed with no trust vocabulary;
+  every captured artifact is retained as a `memory.source_record.v0` with
+  `authority_origin: "tool"`, so nothing derived from GitHub can exceed
+  observation authority. The six computed records —
+  `github.pr_observation.v0`, `github.check_evidence.v0`,
+  `github.review_finding.v0`, `github.review_independence.v0`,
+  `github.refresh_result.v0`, and `github.review_projection.v0` — never
+  become accepted facts (`accepted: const false` throughout). Independence is
+  a computed class, never a caller claim and never a proof:
+  `review_independence.v0` pins `independence_proven: const false` and always
+  carries the `independent_minds_not_observable` finding, the same stance
+  `verification_policy.rs` takes. A refresh never rebases the review basis:
+  `refresh_result.v0` pins `review_basis_moved: const false`, and a stale
+  head is reported as a domain finding rather than silently folded into the
+  new observation. `review_projection.v0` is read-only
+  (`read_only: const true`) and loss-explicit — `losses` is never empty in
+  v0 — and cites, but never replaces, the full audit trace it is compacted
+  from.
 
 Runtime reports join to `execution.topology.v0` through the exact topology
 identifier/content hash, canonical terminal retry attempts, parent lineage,

@@ -1,0 +1,46 @@
+{
+  "schema": "casegraphen.experimental.github.capture_manifest.v0",
+  "repository": "OWNER/repo",
+  "issue_numbers": [],
+  "pr_number": 7,
+  "captured_at": "2026-01-01T00:00:00Z",
+  "capture_tool": "gh",
+  "entries": [
+    {
+      "category": "pr",
+      "artifact_path": "pr.json",
+      "content_hash": "sha256:a8060321b2cc4e8d24b41fd071b19b40a78b30f1ce337421a9a97f07d9d97eec",
+      "command_record": []
+    },
+    {
+      "category": "files",
+      "artifact_path": "files.json",
+      "content_hash": "sha256:c966ecc08eecf2fd3b25813812caffe5cbe5a7764dcdeaf0d21687c270e59f75",
+      "command_record": []
+    },
+    {
+      "category": "reviews",
+      "artifact_path": "reviews.json",
+      "content_hash": "sha256:efd175bd87da6d08f8cd35cb29a71f17a7f0d81cb994b6324d07e0bbc5b1ba98",
+      "command_record": []
+    },
+    {
+      "category": "review_threads",
+      "artifact_path": "review_threads.json",
+      "content_hash": "sha256:113bc361ee76d313ec7cf58764bcf415d210bf9614011793f3bd8d9c769615f1",
+      "command_record": []
+    },
+    {
+      "category": "commits",
+      "artifact_path": "commits.json",
+      "content_hash": "sha256:1c1a56023a6dea34de002f1b89b39454ee3d069c29b207a56877ef5965fab1d1",
+      "command_record": []
+    },
+    {
+      "category": "checks",
+      "artifact_path": "checks.json",
+      "content_hash": "sha256:1cb7fe7cfd5c671863a61bd8d02b957a743a97613dbf23dd399cce958ad943ce",
+      "command_record": []
+    }
+  ]
+}

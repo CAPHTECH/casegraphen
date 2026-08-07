@@ -17,6 +17,10 @@ pub use index::{rebuild_memory_index, validate_memory_index};
 pub use model::*;
 pub use projection::query_memory;
 pub use query::source_records_for_claim;
+/// Re-exported for `github_evidence::normalize`: the manifest's
+/// `captured_at` is the one caller-authored timestamp the adapter validates
+/// (provider timestamps elsewhere stay verbatim, unvalidated strings).
+pub(crate) use temporal::validate_timestamp;
 pub use validation::{
     build_claim_proposal, parse_memory_claim, parse_memory_policy, parse_memory_query,
     parse_memory_source_record, parse_memory_use_report, validate_memory_claim,

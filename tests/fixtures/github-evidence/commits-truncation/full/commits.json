@@ -1,0 +1,49 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "commits": {
+          "totalCount": 2,
+          "nodes": [
+            {
+              "commit": {
+                "author": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "alice",
+                    "id": "actor:pr-author"
+                  }
+                },
+                "committer": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "alice",
+                    "id": "actor:pr-author"
+                  }
+                }
+              }
+            },
+            {
+              "commit": {
+                "author": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "bob",
+                    "id": "actor:bob"
+                  }
+                },
+                "committer": {
+                  "user": {
+                    "__typename": "User",
+                    "login": "bob",
+                    "id": "actor:bob"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -6,13 +6,15 @@ preferences.
 
 ## Non-negotiable
 
-- **New dependencies must satisfy ADR 0006's criterion.** A dependency is
+- **New dependencies must remove more risk than they add.** A dependency is
   admissible only when it removes more risk than it adds, has a transitive tree
   small enough to audit as measured with `cargo tree`, is pinned in
-  `Cargo.lock`, still lets the crate package and build standalone, and is
-  recorded in an ADR naming what it replaced and the measured tree size. The
+  `Cargo.lock`, and still lets the crate package and build standalone. The
   measurement is required for every proposal: argue it with that proposal's
-  `cargo tree` output, not by precedent.
+  `cargo tree` output, not by precedent, and record the measured tree size in
+  the proposing pull request. An ADR is no longer required for a dependency;
+  this supersedes the fourth bullet of ADR 0006's decision, and the rest of
+  that ADR's criterion still stands.
 - **No dependency on `higher-graphen-runtime`.** Runtime reports may be consumed
   as evidence input JSON. This is a contract inherited from HigherGraphen's spec.
 - **`unsafe_code` is forbidden** by lint. If a task seems to need it, the design

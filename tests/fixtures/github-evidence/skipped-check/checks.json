@@ -1,0 +1,44 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "statusCheckRollup": {
+                  "contexts": {
+                    "totalCount": 1,
+                    "nodes": [
+                      {
+                        "__typename": "CheckRun",
+                        "name": "quality",
+                        "status": "COMPLETED",
+                        "conclusion": "SKIPPED",
+                        "startedAt": "2026-01-01T03:00:00Z",
+                        "completedAt": "2026-01-01T03:05:00Z",
+                        "detailsUrl": "https://ci.example/1",
+                        "checkSuite": {
+                          "app": {
+                            "slug": "github-actions"
+                          },
+                          "workflowRun": {
+                            "workflow": {
+                              "name": "Quality"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

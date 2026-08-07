@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.review_projection.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "projection_id", "pr_observation_hash", "repository", "pr_number", "base_sha", "head_sha", "liveness", "must_review", "should_review", "can_skim", "blocking_findings", "non_blocking_findings", "unresolved_threads", "failed_checks", "inconclusive_checks", "verification_sources", "residual_risks", "losses", "full_trace", "projection_content_hash", "read_only", "accepted"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.review_projection.v0"},
+    "projection_id": {"type": "string", "minLength": 1},
+    "pr_observation_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "repository": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"},
+    "pr_number": {"type": "integer", "minimum": 1},
+    "base_sha": {"type": "string", "minLength": 1},
+    "head_sha": {"type": "string", "minLength": 1},
+    "liveness": {"$ref": "casegraphen.experimental.github.pr_observation.v0#/$defs/liveness"},
+    "must_review": {"type": "array", "items": {"$ref": "#/$defs/tier_item"}},
+    "should_review": {"type": "array", "items": {"$ref": "#/$defs/tier_item"}},
+    "can_skim": {"type": "array", "items": {"$ref": "#/$defs/tier_item"}},
+    "blocking_findings": {"type": "array", "items": {"$ref": "#/$defs/finding_reason"}},
+    "non_blocking_findings": {"type": "array", "items": {"$ref": "#/$defs/finding_reason"}},
+    "unresolved_threads": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "failed_checks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "inconclusive_checks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "verification_sources": {"type": "array", "items": {"$ref": "#/$defs/verification_source"}},
+    "residual_risks": {"type": "array", "items": {"$ref": "#/$defs/residual_risk"}},
+    "losses": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/loss"}},
+    "full_trace": {"$ref": "#/$defs/full_trace"},
+    "projection_content_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "read_only": {"const": true},
+    "accepted": {"const": false}
+  },
+  "$defs": {
+    "tier_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject_ids", "reason"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "subject_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "finding_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "reason"],
+      "properties": {
+        "finding_id": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "verification_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject_id", "evidence_role"],
+      "properties": {
+        "subject_id": {"type": "string", "minLength": 1},
+        "evidence_role": {"$ref": "casegraphen.experimental.github.review_independence.v0#/$defs/evidence_role"}
+      }
+    },
+    "residual_risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "detail"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "loss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loss_kind", "detail", "omitted_refs"],
+      "properties": {
+        "loss_kind": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "omitted_refs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "full_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_record_ids", "pr_observation_hash", "check_ids", "finding_ids", "independence_included"],
+      "properties": {
+        "source_record_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "pr_observation_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "check_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "independence_included": {"const": true}
+      }
+    }
+  }
+}

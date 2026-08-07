@@ -1,0 +1,12 @@
+{
+  "disposition": "head_unchanged",
+  "observation_changes": [],
+  "observed_base_sha": "947f347f219a60775bcf71b226ce778cc8ea21f4",
+  "observed_head_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+  "previous_base_sha": "947f347f219a60775bcf71b226ce778cc8ea21f4",
+  "previous_head_sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+  "previous_observation_hash": "sha256:748c176398e9481901f1ecaa07396faab02441faca2aa610586cc70bc2f76004",
+  "refreshed_observation_hash": "sha256:748c176398e9481901f1ecaa07396faab02441faca2aa610586cc70bc2f76004",
+  "review_basis_moved": false,
+  "schema": "casegraphen.experimental.github.refresh_result.v0"
+}

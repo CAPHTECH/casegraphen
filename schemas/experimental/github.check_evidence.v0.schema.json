@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "casegraphen.experimental.github.check_evidence.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "check_id", "head_sha", "kind", "name", "evidence_role", "source_record_id"],
+  "properties": {
+    "schema": {"const": "casegraphen.experimental.github.check_evidence.v0"},
+    "check_id": {"type": "string", "pattern": "^check:.+$"},
+    "head_sha": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["check_run", "status_context"]},
+    "name": {"type": "string", "minLength": 1},
+    "workflow_name": {"type": "string", "minLength": 1},
+    "status": {"type": "string", "minLength": 1},
+    "conclusion": {"type": "string", "minLength": 1},
+    "state": {"type": "string", "minLength": 1},
+    "creator": {"$ref": "#/$defs/actor"},
+    "details_url": {"type": "string", "minLength": 1},
+    "target_url": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
+    "started_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "completed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "created_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "evidence_role": {"const": "ci_check"},
+    "source_record_id": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "login", "typename"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "login": {"type": "string", "minLength": 1},
+        "typename": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

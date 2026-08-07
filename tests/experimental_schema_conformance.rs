@@ -8,6 +8,10 @@ use casegraphen::{
     control_plane::{ControlPlaneNotification, ControlPlaneRequest, ControlPlaneResponse},
     dynamic_expansion::{canonical_topology_patch, ExpansionPolicy, TopologyPatch},
     execution_topology::ExecutionTopology,
+    github_evidence::{
+        CaptureManifest, CheckEvidence, PrObservation, RefreshResult, ReviewFinding,
+        ReviewIndependence, ReviewProjection,
+    },
     graph_simulation::GraphSimulationRequest,
     memory::{
         MemoryClaim, MemoryIndex, MemoryPolicy, MemoryProjection, MemoryQuery, MemoryUseReport,
@@ -97,6 +101,13 @@ fn representative_rust_roundtrips_validate_against_shipped_schemas() {
         json!({"schema_id":"casegraphen.experimental.control_plane.request.v0","instance":roundtrip::<ControlPlaneRequest>("control_plane.request.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.control_plane.response.v0","instance":roundtrip::<ControlPlaneResponse>("control_plane.response.v0.example.json")}),
         json!({"schema_id":"casegraphen.experimental.control_plane.notification.v0","instance":roundtrip::<ControlPlaneNotification>("control_plane.notification.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.capture_manifest.v0","instance":roundtrip::<CaptureManifest>("github.capture_manifest.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.pr_observation.v0","instance":roundtrip::<PrObservation>("github.pr_observation.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.check_evidence.v0","instance":roundtrip::<CheckEvidence>("github.check_evidence.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.review_finding.v0","instance":roundtrip::<ReviewFinding>("github.review_finding.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.review_independence.v0","instance":roundtrip::<ReviewIndependence>("github.review_independence.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.refresh_result.v0","instance":roundtrip::<RefreshResult>("github.refresh_result.v0.example.json")}),
+        json!({"schema_id":"casegraphen.experimental.github.review_projection.v0","instance":roundtrip::<ReviewProjection>("github.review_projection.v0.example.json")}),
     ];
     let bundle = std::env::temp_dir().join(format!(
         "casegraphen-experimental-schema-instances-{}.json",

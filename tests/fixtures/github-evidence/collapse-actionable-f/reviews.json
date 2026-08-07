@@ -1,0 +1,13 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 7,
+        "reviews": {
+          "totalCount": 0,
+          "nodes": []
+        }
+      }
+    }
+  }
+}

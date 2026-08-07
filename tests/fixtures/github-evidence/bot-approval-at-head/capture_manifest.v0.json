@@ -1,0 +1,106 @@
+{
+  "schema": "casegraphen.experimental.github.capture_manifest.v0",
+  "repository": "CAPHTECH/casegraphen",
+  "issue_numbers": [
+    92
+  ],
+  "pr_number": 101,
+  "captured_at": "2026-08-06T09:00:00Z",
+  "capture_tool": "gh",
+  "entries": [
+    {
+      "category": "issue",
+      "issue_number": 92,
+      "artifact_path": "source/issue-92.json",
+      "content_hash": "sha256:e41b2147adbaf76470bba4a14ede3ed816e09dd0568b486a9690c40de1bdd355",
+      "command_record": [
+        "gh",
+        "issue",
+        "view",
+        "92",
+        "-R",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,state,stateReason,body,labels,createdAt,closedAt,url,author,closedByPullRequestsReferences"
+      ]
+    },
+    {
+      "category": "pr",
+      "artifact_path": "source/pr-101.json",
+      "content_hash": "sha256:07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+      "command_record": [
+        "gh",
+        "pr",
+        "view",
+        "101",
+        "-R",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,body,state,url,author,baseRefName,headRefName,baseRefOid,headRefOid,mergeable,mergeStateStatus,mergedAt,createdAt,files,reviews,statusCheckRollup,latestReviews,comments"
+      ]
+    },
+    {
+      "category": "files",
+      "artifact_path": "source/pr-101.json",
+      "content_hash": "sha256:07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+      "command_record": [
+        "gh",
+        "pr",
+        "view",
+        "101",
+        "-R",
+        "CAPHTECH/casegraphen",
+        "--json",
+        "number,title,body,state,url,author,baseRefName,headRefName,baseRefOid,headRefOid,mergeable,mergeStateStatus,mergedAt,createdAt,files,reviews,statusCheckRollup,latestReviews,comments"
+      ]
+    },
+    {
+      "category": "reviews",
+      "artifact_path": "source/pr-101-reviews.json",
+      "content_hash": "sha256:1dca665ce07deb30254489ccb6e9178afc9ca264398ab1a0bc6d828941ef1029",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query{repository(owner:\"CAPHTECH\",name:\"casegraphen\"){pullRequest(number:101){number reviews(first:100){totalCount nodes{id state body createdAt submittedAt lastEditedAt url authorAssociation commit{oid} author{__typename login ... on Node{id}}}}}}}"
+      ]
+    },
+    {
+      "category": "review_threads",
+      "artifact_path": "source/pr-101-threads.json",
+      "content_hash": "sha256:03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query{repository(owner:\"CAPHTECH\",name:\"casegraphen\"){pullRequest(number:101){number baseRefOid headRefOid mergeable reviewThreads(first:100){totalCount nodes{id isResolved isOutdated isCollapsed line path resolvedBy{__typename login id} comments(first:20){totalCount nodes{id body createdAt lastEditedAt url authorAssociation author{__typename login ... on Node{id}}}}}}}}}"
+      ]
+    },
+    {
+      "category": "commits",
+      "artifact_path": "source/pr-101-commits.json",
+      "content_hash": "sha256:a597a0bc8c8682401abe0318c3750985c57570145bea493718b51cb34e8fc36b",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query{repository(owner:\"CAPHTECH\",name:\"casegraphen\"){pullRequest(number:101){commits(first:100){totalCount nodes{commit{oid authoredDate committedDate author{user{__typename login id} name email} committer{user{__typename login id} name email}}}}}}}}"
+      ]
+    },
+    {
+      "category": "checks",
+      "artifact_path": "source/pr-101-checks.json",
+      "content_hash": "sha256:216cf7c74bb3a3992d89e8e195a47af9c18cb0f0ac63cdf9c439b771ceb6a82c",
+      "command_record": [
+        "gh",
+        "api",
+        "graphql",
+        "-f",
+        "query=query{repository(owner:\"CAPHTECH\",name:\"casegraphen\"){pullRequest(number:101){headRefOid commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:50){totalCount nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt detailsUrl checkSuite{app{slug} workflowRun{workflow{name}}}} ... on StatusContext{context state targetUrl description createdAt creator{__typename login ... on Node{id}}}}}}}}}}}}"
+      ]
+    }
+  ]
+}

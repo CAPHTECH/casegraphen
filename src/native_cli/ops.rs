@@ -31,6 +31,7 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 mod binding;
+mod github;
 mod github_issue_lift;
 mod io;
 mod lift;
@@ -42,6 +43,7 @@ mod run;
 mod topology_review;
 mod workflow_lift;
 pub(super) use binding::binding_register;
+pub(super) use github::{github_observe, github_project, github_refresh};
 use io::{
     case_space_checksum, known_ids, proposal_path, proposal_value, provenance, read_morphism,
     read_proposal, timestamp, write_json,

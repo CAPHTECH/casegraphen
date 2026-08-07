@@ -1,0 +1,52 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 7,
+        "baseRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reviewThreads": {
+          "totalCount": 1,
+          "nodes": [
+            {
+              "id": "thread-1",
+              "isResolved": false,
+              "isOutdated": false,
+              "path": "a.rs",
+              "resolvedBy": null,
+              "comments": {
+                "totalCount": 2,
+                "nodes": [
+                  {
+                    "body": "nitpick: x",
+                    "createdAt": "2026-01-01T02:30:00Z",
+                    "lastEditedAt": null,
+                    "url": "https://github.com/OWNER/repo/pull/7#discussion_r1",
+                    "authorAssociation": "NONE",
+                    "author": {
+                      "login": "reviewbot",
+                      "__typename": "Bot",
+                      "id": "actor:bot-1"
+                    }
+                  },
+                  {
+                    "body": "nitpick: x",
+                    "createdAt": "2026-01-01T02:35:00Z",
+                    "lastEditedAt": null,
+                    "url": "https://github.com/OWNER/repo/pull/7#discussion_r2",
+                    "authorAssociation": "NONE",
+                    "author": {
+                      "login": "reviewbot",
+                      "__typename": "Bot",
+                      "id": "actor:bot-1"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

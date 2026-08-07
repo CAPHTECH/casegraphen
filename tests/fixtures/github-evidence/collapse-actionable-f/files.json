@@ -1,0 +1,16 @@
+{
+  "files": [
+    {
+      "path": "a.rs",
+      "additions": 1,
+      "deletions": 0,
+      "changeType": "ADDED"
+    },
+    {
+      "path": "b.rs",
+      "additions": 2,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    }
+  ]
+}

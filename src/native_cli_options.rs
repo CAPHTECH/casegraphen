@@ -106,6 +106,11 @@ pub(super) struct NativeOptions {
     pub(super) policy_manifest: Option<PathBuf>,
     pub(super) projection: Option<PathBuf>,
     pub(super) packet: Option<PathBuf>,
+    pub(super) manifest: Option<PathBuf>,
+    pub(super) capture_dir: Option<PathBuf>,
+    pub(super) previous_manifest: Option<PathBuf>,
+    pub(super) previous_capture_dir: Option<PathBuf>,
+    pub(super) previous_observation: Option<PathBuf>,
     pub(super) output: Option<PathBuf>,
     pub(super) case_space_id: Option<Id>,
     pub(super) left_case_space_id: Option<Id>,
@@ -146,6 +151,7 @@ pub(super) struct NativeOptions {
     pub(super) min_persistence_stages: usize,
     pub(super) adopt_existing_log: bool,
     pub(super) strict: bool,
+    pub(super) require_independent_review: bool,
     pub(super) format: NativeOutputFormat,
 }
 
@@ -154,6 +160,28 @@ pub(crate) enum NativeOutputFormat {
     #[default]
     Json,
     Text,
+}
+
+/// The three independent per-call-site permissions `consume_arg` gates on,
+/// grouped into one `Copy` value instead of three trailing `bool`
+/// parameters — `consume_arg` was at the clippy `too_many_arguments` limit
+/// even before S5/S6 added `require_independent_review_allowed`, and a
+/// fourth bare `bool` parameter would have tipped it over rather than
+/// making any one call site easier to read (a `parse_internal(segment,
+/// args, true, false, true)` call site is not self-describing regardless).
+#[derive(Clone, Copy)]
+struct ParseGates {
+    strict_allowed: bool,
+    text_allowed: bool,
+    require_independent_review_allowed: bool,
+}
+
+impl ParseGates {
+    const NONE: Self = Self {
+        strict_allowed: false,
+        text_allowed: false,
+        require_independent_review_allowed: false,
+    };
 }
 
 impl NativeOptions {
@@ -172,21 +200,36 @@ impl NativeOptions {
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(segment, args, false, false)
+        Self::parse_internal(segment, args, ParseGates::NONE)
     }
 
     pub(super) fn parse_with_strict(
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(segment, args, true, false)
+        Self::parse_internal(
+            segment,
+            args,
+            ParseGates {
+                strict_allowed: true,
+                ..ParseGates::NONE
+            },
+        )
     }
 
     pub(super) fn parse_reason(
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(segment, args, true, true)
+        Self::parse_internal(
+            segment,
+            args,
+            ParseGates {
+                strict_allowed: true,
+                text_allowed: true,
+                ..ParseGates::NONE
+            },
+        )
     }
 
     /// `--format text` without `--strict`: `space history` accepts a
@@ -197,27 +240,49 @@ impl NativeOptions {
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, NativeCliError> {
-        Self::parse_internal(segment, args, false, true)
+        Self::parse_internal(
+            segment,
+            args,
+            ParseGates {
+                text_allowed: true,
+                ..ParseGates::NONE
+            },
+        )
+    }
+
+    /// `--strict` (so an unmet `github project --require-independent-review`
+    /// domain finding can map to exit 2 the same way `space reason --strict`
+    /// does, S6) and `--require-independent-review` (S5). The only call
+    /// site is `parse_github`'s `"project"` branch — `github observe`/
+    /// `refresh` never read `require_independent_review`, so they must not
+    /// silently accept and drop it (`parse_text_only`'s doc comment above
+    /// names this exact failure mode); they use `parse_with_strict` instead,
+    /// which accepts `--strict` but still refuses this flag.
+    pub(super) fn parse_with_strict_and_require_independent_review(
+        segment: &'static str,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        Self::parse_internal(
+            segment,
+            args,
+            ParseGates {
+                strict_allowed: true,
+                require_independent_review_allowed: true,
+                ..ParseGates::NONE
+            },
+        )
     }
 
     fn parse_internal(
         segment: &'static str,
         args: impl IntoIterator<Item = OsString>,
-        strict_allowed: bool,
-        text_allowed: bool,
+        gates: ParseGates,
     ) -> Result<Self, NativeCliError> {
         let mut options = Self::default();
         let mut format_seen = false;
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            options.consume_arg(
-                segment,
-                &arg,
-                &mut args,
-                &mut format_seen,
-                strict_allowed,
-                text_allowed,
-            )?;
+            options.consume_arg(segment, &arg, &mut args, &mut format_seen, gates)?;
         }
         if !format_seen {
             return Err(NativeCliError::usage("--format json is required"));
@@ -231,12 +296,11 @@ impl NativeOptions {
         arg: &OsString,
         args: &mut impl Iterator<Item = OsString>,
         format_seen: &mut bool,
-        strict_allowed: bool,
-        text_allowed: bool,
+        gates: ParseGates,
     ) -> Result<(), NativeCliError> {
         match arg.to_str() {
             Some("--format") => {
-                self.format = require_format(args, text_allowed)?;
+                self.format = require_format(args, gates.text_allowed)?;
                 *format_seen = true;
             }
             Some("--store") => self.store = Some(require_path(args, "--store")?),
@@ -264,6 +328,17 @@ impl NativeOptions {
             Some("--index") => self.index = Some(require_path(args, "--index")?),
             Some("--projection") => self.projection = Some(require_path(args, "--projection")?),
             Some("--packet") => self.packet = Some(require_path(args, "--packet")?),
+            Some("--manifest") => self.manifest = Some(require_path(args, "--manifest")?),
+            Some("--capture-dir") => self.capture_dir = Some(require_path(args, "--capture-dir")?),
+            Some("--previous-manifest") => {
+                self.previous_manifest = Some(require_path(args, "--previous-manifest")?)
+            }
+            Some("--previous-capture-dir") => {
+                self.previous_capture_dir = Some(require_path(args, "--previous-capture-dir")?)
+            }
+            Some("--previous-observation") => {
+                self.previous_observation = Some(require_path(args, "--previous-observation")?)
+            }
             Some("--output") => self.output = Some(require_path(args, "--output")?),
             Some("--case-space-id") => {
                 self.case_space_id = Some(require_id(args, "--case-space-id")?)
@@ -361,7 +436,10 @@ impl NativeOptions {
                 self.min_persistence_stages = require_usize(args, "--min-persistence")?;
             }
             Some("--adopt-existing-log") => self.adopt_existing_log = true,
-            Some("--strict") if strict_allowed => self.strict = true,
+            Some("--strict") if gates.strict_allowed => self.strict = true,
+            Some("--require-independent-review") if gates.require_independent_review_allowed => {
+                self.require_independent_review = true
+            }
             Some(_) | None => {
                 return Err(NativeCliError::usage(format!(
                     "unsupported native argument {arg:?} for {segment}"
@@ -491,6 +569,11 @@ impl NativeOptions {
             "--packet" => self.packet.clone(),
             "--left-store" => self.left_store.clone(),
             "--right-store" => self.right_store.clone(),
+            "--manifest" => self.manifest.clone(),
+            "--capture-dir" => self.capture_dir.clone(),
+            "--previous-manifest" => self.previous_manifest.clone(),
+            "--previous-capture-dir" => self.previous_capture_dir.clone(),
+            "--previous-observation" => self.previous_observation.clone(),
             _ => None,
         }
         .ok_or_else(|| NativeCliError::usage(format!("{flag} <path> is required")))

@@ -1,0 +1,537 @@
+{
+  "base": {
+    "ref": "main",
+    "sha": "947f347f219a60775bcf71b226ce778cc8ea21f4"
+  },
+  "captured_at": "2026-08-06T09:00:00Z",
+  "changed_files": [
+    {
+      "additions": 7,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "README.md"
+    },
+    {
+      "additions": 6,
+      "change_type": "MODIFIED",
+      "deletions": 2,
+      "path": "docs/adr/0002-graph-engineering-positioning.md"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "docs/adr/0012-adr-identifier-inventory.md"
+    },
+    {
+      "additions": 8,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "docs/adr/0020-graph-engineering-product-surface.md"
+    },
+    {
+      "additions": 117,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/adr/0028-memory-plane-positioning.md"
+    },
+    {
+      "additions": 46,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/adr/0029-memory-plane-stable-promotion.md"
+    },
+    {
+      "additions": 146,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/design/memory-plane.md"
+    },
+    {
+      "additions": 55,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/design/memory-threat-model.md"
+    },
+    {
+      "additions": 17,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "docs/guides/mcp-operational-host.md"
+    },
+    {
+      "additions": 118,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/guides/memory-plane.md"
+    },
+    {
+      "additions": 55,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/README.md"
+    },
+    {
+      "additions": 13,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/adversarial-corpus.v0.json"
+    },
+    {
+      "additions": 35,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/evaluation-report.v0.json"
+    },
+    {
+      "additions": 23,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/memory.claim.v0.json"
+    },
+    {
+      "additions": 16,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/memory.policy.v0.json"
+    },
+    {
+      "additions": 20,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/memory.query.v0.json"
+    },
+    {
+      "additions": 12,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/memory.source_record.v0.json"
+    },
+    {
+      "additions": 2,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/pilots/issue-92/source/adr-0002-runtime-boundary.txt"
+    },
+    {
+      "additions": 13,
+      "change_type": "MODIFIED",
+      "deletions": 2,
+      "path": "docs/product-surface.v0.json"
+    },
+    {
+      "additions": 45,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "docs/proposals/casegraphen-memory-plane.md"
+    },
+    {
+      "additions": 5,
+      "change_type": "MODIFIED",
+      "deletions": 5,
+      "path": "docs/reviews/graph-engineering-v0-promotion.inventory.json"
+    },
+    {
+      "additions": 8,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "schemas/experimental/README.md"
+    },
+    {
+      "additions": 7,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "schemas/experimental/contracts.v0.json"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "schemas/experimental/control_plane.catalog.v0.example.json"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "schemas/experimental/control_plane.catalog.v0.schema.json"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "schemas/experimental/control_plane.request.v0.schema.json"
+    },
+    {
+      "additions": 16,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.claim.v0.example.json"
+    },
+    {
+      "additions": 52,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.claim.v0.schema.json"
+    },
+    {
+      "additions": 16,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.index.v0.example.json"
+    },
+    {
+      "additions": 31,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.index.v0.schema.json"
+    },
+    {
+      "additions": 16,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.policy.v0.example.json"
+    },
+    {
+      "additions": 37,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.policy.v0.schema.json"
+    },
+    {
+      "additions": 32,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.projection.v0.example.json"
+    },
+    {
+      "additions": 68,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.projection.v0.schema.json"
+    },
+    {
+      "additions": 16,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.query.v0.example.json"
+    },
+    {
+      "additions": 28,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.query.v0.schema.json"
+    },
+    {
+      "additions": 12,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.source_record.v0.example.json"
+    },
+    {
+      "additions": 19,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.source_record.v0.schema.json"
+    },
+    {
+      "additions": 10,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.use_report.v0.example.json"
+    },
+    {
+      "additions": 17,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "schemas/experimental/memory.use_report.v0.schema.json"
+    },
+    {
+      "additions": 8,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "scripts/install-smoke-test.sh"
+    },
+    {
+      "additions": 98,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "scripts/memory-plane-pilot.py"
+    },
+    {
+      "additions": 6,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "scripts/product-surface-conformance.py"
+    },
+    {
+      "additions": 18,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "scripts/skill-conformance.py"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "scripts/static-analysis.sh"
+    },
+    {
+      "additions": 9,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "skills/README.md"
+    },
+    {
+      "additions": 55,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-audit/SKILL.md"
+    },
+    {
+      "additions": 4,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-audit/agents/openai.yaml"
+    },
+    {
+      "additions": 52,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-curate/SKILL.md"
+    },
+    {
+      "additions": 4,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-curate/agents/openai.yaml"
+    },
+    {
+      "additions": 46,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-query/SKILL.md"
+    },
+    {
+      "additions": 4,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "skills/casegraphen-memory-query/agents/openai.yaml"
+    },
+    {
+      "additions": 14,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "skills/casegraphen-operate/capabilities.generated.md"
+    },
+    {
+      "additions": 240,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "src/bin/casegraphen-mcp-host.rs"
+    },
+    {
+      "additions": 4,
+      "change_type": "MODIFIED",
+      "deletions": 4,
+      "path": "src/cli.rs"
+    },
+    {
+      "additions": 11,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "src/cli_usage.txt"
+    },
+    {
+      "additions": 27,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "src/control_plane.rs"
+    },
+    {
+      "additions": 1,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "src/lib.rs"
+    },
+    {
+      "additions": 75,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/authority.rs"
+    },
+    {
+      "additions": 142,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/conflicts.rs"
+    },
+    {
+      "additions": 103,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/index.rs"
+    },
+    {
+      "additions": 30,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/mod.rs"
+    },
+    {
+      "additions": 323,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/model.rs"
+    },
+    {
+      "additions": 207,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/projection.rs"
+    },
+    {
+      "additions": 457,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/query.rs"
+    },
+    {
+      "additions": 144,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/temporal.rs"
+    },
+    {
+      "additions": 544,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/memory/validation.rs"
+    },
+    {
+      "additions": 127,
+      "change_type": "MODIFIED",
+      "deletions": 8,
+      "path": "src/native_cli.rs"
+    },
+    {
+      "additions": 5,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "src/native_cli/ops.rs"
+    },
+    {
+      "additions": 280,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "src/native_cli/ops/memory.rs"
+    },
+    {
+      "additions": 99,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "src/native_cli/parser.rs"
+    },
+    {
+      "additions": 16,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "src/native_cli_options.rs"
+    },
+    {
+      "additions": 6,
+      "change_type": "MODIFIED",
+      "deletions": 1,
+      "path": "tests/control_plane.rs"
+    },
+    {
+      "additions": 11,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "tests/experimental_schema_conformance.rs"
+    },
+    {
+      "additions": 2,
+      "change_type": "MODIFIED",
+      "deletions": 2,
+      "path": "tests/mcp_stdio.rs"
+    },
+    {
+      "additions": 1050,
+      "change_type": "ADDED",
+      "deletions": 0,
+      "path": "tests/memory_plane.rs"
+    },
+    {
+      "additions": 203,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "tests/product_surface.rs"
+    },
+    {
+      "additions": 15,
+      "change_type": "MODIFIED",
+      "deletions": 0,
+      "path": "tests/skill_conformance.rs"
+    }
+  ],
+  "head": {
+    "ref": "feat/issue-92-memory-plane",
+    "sha": "c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b"
+  },
+  "implementation_actors": {
+    "actor_ids": [
+      "MDQ6VXNlcjc5MDUxMQ=="
+    ],
+    "derivation": "pr_author_and_commit_authors_and_committers",
+    "logins": [
+      "rizumita"
+    ]
+  },
+  "issues": [
+    {
+      "body_content_hash": "sha256:1dff68a1503c8cd7ed7a1c1aa5fb334b8642e253f16be716ebd9bcce27908345",
+      "closed_at": "2026-08-06T08:23:00Z",
+      "closed_by_pr_numbers": [
+        101
+      ],
+      "created_at": "2026-08-06T06:25:56Z",
+      "number": 92,
+      "state": "CLOSED",
+      "state_reason": "COMPLETED",
+      "title": "Add an evidence-grounded, temporally governed Memory Plane as an experimental surface",
+      "url": "https://github.com/CAPHTECH/casegraphen/issues/92"
+    }
+  ],
+  "liveness": {
+    "merge_state_status": "UNKNOWN",
+    "mergeable": "UNKNOWN",
+    "merged_at": "2026-08-06T08:22:59Z",
+    "state": "MERGED"
+  },
+  "normalized_content_hash": "sha256:748c176398e9481901f1ecaa07396faab02441faca2aa610586cc70bc2f76004",
+  "observation_id": "github-observation:CAPHTECH/casegraphen#101@c9be9ed6ac51e2b9aeadb2906b990f1b168ee41b",
+  "pr": {
+    "author": {
+      "id": "MDQ6VXNlcjc5MDUxMQ==",
+      "login": "rizumita"
+    },
+    "body_content_hash": "sha256:9ea761d268d55f52263150c69735c18a2a1063c11c7ad7e9c50f719f90b784e0",
+    "created_at": "2026-08-06T07:35:12Z",
+    "number": 101,
+    "state": "MERGED",
+    "title": "Add evidence-grounded experimental Memory Plane",
+    "url": "https://github.com/CAPHTECH/casegraphen/pull/101"
+  },
+  "provider_fields_unmapped": true,
+  "repository": "CAPHTECH/casegraphen",
+  "schema": "casegraphen.experimental.github.pr_observation.v0",
+  "source_record_ids": [
+    "github-source:checks:sha256-216cf7c74bb3a3992d89e8e195a47af9c18cb0f0ac63cdf9c439b771ceb6a82c",
+    "github-source:commits:sha256-a597a0bc8c8682401abe0318c3750985c57570145bea493718b51cb34e8fc36b",
+    "github-source:files:sha256-07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+    "github-source:issue:sha256-e41b2147adbaf76470bba4a14ede3ed816e09dd0568b486a9690c40de1bdd355",
+    "github-source:pr:sha256-07ac47fc5a0c2420ee5f5bb500001e44b6227638cfd2bc59f3e916ef2920ca26",
+    "github-source:review_threads:sha256-03229662f2b7e1b327b5d8d8ef76d7e01d1fd5b883d52d6ea624dc81cff5d918",
+    "github-source:reviews:sha256-ed396eff46cbe15ee2140abf3cc916a2febecd4e0821c8b7a8f1b8752b696348"
+  ]
+}
