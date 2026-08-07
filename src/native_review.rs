@@ -236,6 +236,13 @@ pub fn defer_review_morphism(
     build_review_morphism(case_space, ReviewAction::Defer, request)
 }
 
+pub fn waive_review_morphism(
+    case_space: &CaseSpace,
+    request: NativeReviewRequest,
+) -> NativeReviewResult<CaseMorphism> {
+    build_review_morphism(case_space, ReviewAction::Waive, request)
+}
+
 pub fn execution_topology_review_morphism(
     case_space: &CaseSpace,
     request: ExecutionTopologyReviewRequest,

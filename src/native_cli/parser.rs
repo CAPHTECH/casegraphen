@@ -946,7 +946,7 @@ impl NativeCliCommand {
             Some("accept") => ReviewAction::Accept,
             Some("reject") => ReviewAction::Reject,
             Some("reopen") => ReviewAction::Reopen,
-            Some("waive") => ReviewAction::Defer,
+            Some("waive") => ReviewAction::Waive,
             Some(_) | None => {
                 return Err(NativeCliError::usage("unsupported native review command"))
             }

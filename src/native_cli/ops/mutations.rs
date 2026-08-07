@@ -4,14 +4,15 @@ use super::{
 };
 use crate::evidence_trust::EvidenceTrustBoundary;
 use crate::{
+    native_eval::evaluate_native_case,
     native_model::{
         is_artifact_cell, CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism,
         CaseMorphismType, CaseRelation, CaseRelationType, CaseSpace, MorphismPayload,
         RelationStrength, ReviewAction, ARTIFACT_CELL_TYPE,
     },
     native_review::{
-        accept_review_morphism, defer_review_morphism, reject_review_morphism,
-        reopen_review_morphism, NativeOperationGate, NativeReviewRequest, NativeReviewTargetKind,
+        accept_review_morphism, reject_review_morphism, reopen_review_morphism,
+        waive_review_morphism, NativeOperationGate, NativeReviewRequest, NativeReviewTargetKind,
     },
     native_store::NativeCaseStore,
     path_confinement::path_confined,
@@ -50,8 +51,8 @@ pub(in crate::native_cli) fn review_apply(
         ReviewAction::Accept => accept_review_morphism(&replay.case_space, request)?,
         ReviewAction::Reject => reject_review_morphism(&replay.case_space, request)?,
         ReviewAction::Reopen => reopen_review_morphism(&replay.case_space, request)?,
-        ReviewAction::Defer => defer_review_morphism(&replay.case_space, request)?,
-        ReviewAction::Waive | ReviewAction::Supersede => {
+        ReviewAction::Waive => waive_review_morphism(&replay.case_space, request)?,
+        ReviewAction::Defer | ReviewAction::Supersede => {
             return Err(NativeCliError::invalid("unsupported CLI review action"))
         }
     };
@@ -59,8 +60,8 @@ pub(in crate::native_cli) fn review_apply(
         ReviewAction::Accept => "casegraphen review accept",
         ReviewAction::Reject => "casegraphen review reject",
         ReviewAction::Reopen => "casegraphen review reopen",
-        ReviewAction::Defer => "casegraphen review waive",
-        ReviewAction::Waive | ReviewAction::Supersede => unreachable!("action checked above"),
+        ReviewAction::Waive => "casegraphen review waive",
+        ReviewAction::Defer | ReviewAction::Supersede => unreachable!("action checked above"),
     };
     let operation_gate =
         validated_mutation_gate(&replay.case_space, options.gate_options, "review")?;
@@ -847,6 +848,20 @@ fn review_target_kind(
         .any(|entry| entry.morphism_id == *target_id)
     {
         return Ok(NativeReviewTargetKind::Morphism);
+    }
+    // An obstruction id names neither a cell, a relation, nor a morphism, so
+    // it falls through the three checks above — it is checked last, and
+    // against a derived evaluation rather than stored state, because that is
+    // the only place obstruction ids exist. `ResidualRisk` is the target kind
+    // `require_review_request` (`native_review.rs:871`) already validates an
+    // obstruction id against, via `require_obstruction_target`; this is the
+    // dispatcher route that was missing to reach it (#158).
+    if evaluate_native_case(case_space)?
+        .obstructions
+        .iter()
+        .any(|obstruction| obstruction.id == *target_id)
+    {
+        return Ok(NativeReviewTargetKind::ResidualRisk);
     }
     Err(NativeCliError::invalid(format!(
         "unknown review target {target_id}"

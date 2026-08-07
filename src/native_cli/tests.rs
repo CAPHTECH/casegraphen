@@ -409,7 +409,7 @@ fn parses_native_mutation_command_families() {
     assert!(matches!(
         review,
         NativeCliCommand::Review {
-            action: ReviewAction::Defer,
+            action: ReviewAction::Waive,
             evidence_ids,
             ..
         } if evidence_ids == vec![Id::new("evidence:demo").expect("evidence id")]
