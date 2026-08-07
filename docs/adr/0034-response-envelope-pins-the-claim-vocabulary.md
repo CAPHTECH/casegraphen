@@ -288,7 +288,8 @@ configuration is #118's own triage and is not settled here.
   untouched and this change changes no promotion decision — it does touch
   `docs/reviews/graph-engineering-v0-promotion.inventory.json`'s
   `experimental_contract_count`, a mechanical count of governed schemas that
-  two new contracts (streaming/memory claim-proposal) necessarily moves, but
+  the three new contracts this change registers (streaming reconciliation,
+  memory claim-proposal, memory relation-proposal) necessarily move, but
   `decision`, `required_stable_blockers`, and `completed_local_triggers` are
   untouched. One recommendation is recorded: #118's external-input contracts
   should be settled before this surface is promoted, because integrators
