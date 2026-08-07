@@ -365,17 +365,60 @@ the report payload is unchanged.
 
 ## Verify what you did
 
-```sh
-casegraphen space validate --store "$STORE" --case-space-id "$CS" --format json --output validate-report.json   # log fold reproduces the snapshot
-casegraphen space history  --store "$STORE" --case-space-id "$CS" --format json --output history-report.json    # actor + operation per entry
-casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format json --output obstruction-report.json # derived blockers now
+Start with `space reason --format text` — an agent deciding what to do next
+should read this, not `--format json`. It renders the same derived
+evaluation the JSON report carries (progress, assurance, obstructions,
+unaccepted evidence findings, review gaps, completion candidates) as a read,
+not a document to parse; `render_native_case_evaluation`
+(`native_cli_text.rs`) is what builds it, so nothing here is a second,
+independently-derived opinion. A real sample, measured against a live store:
+
+```
+Progress: active
+Assurance: review_required
+
+Frontier:
+  - case:native-contract-example
+  - goal:native-case-contract
+  - work:review-native-contract
+
+Waiting:
+  (none)
+
+Obstructions:
+  (none)
+
+Unaccepted evidence findings:
+  (none)
+
+Review gaps:
+  - unreviewed_projection_loss: 1 gap(s) — Projection loss must stay visible to reviewers and close checks.
+    targets: projection:native-human-review
+
+Completion candidates:
+  (none)
 ```
 
-Report what the obstructions say, not what you intended. A case space whose
-blockers you have not read is a case space you have not advanced.
+23 lines, 434 bytes. `--format json` on the identical command against the same
+store is 5,272 bytes. Report what it says, not what you intended: a case space
+whose blockers you have not read is a case space you have not advanced.
 
-`space history --format text` reads more easily than the JSON when a step was
-superseded and retried: a dispatch believed dead (`--supersede-trace`, ADR
+Reach for JSON when something genuinely needs it, not as the default read:
+
+```sh
+casegraphen space validate   --store "$STORE" --case-space-id "$CS" --format json --output validate-report.json   # log fold reproduces the snapshot — a boolean-shaped proof, not prose to read
+casegraphen space history    --store "$STORE" --case-space-id "$CS" --format json --output history-report.json    # actor + operation per entry — the source of truth for entries
+casegraphen obstruction list --store "$STORE" --case-space-id "$CS" --format json --output obstruction-report.json # the structured records behind `space reason`'s Obstructions section
+```
+
+`space validate` and `obstruction list` are JSON-only by the CLI, not by
+documentation choice — `--format text` is refused for both. Reach for
+`obstruction list` when something needs the structured obstruction records
+themselves (ids, to script against); re-running it just to see whether
+something blocks is redundant with the text `space reason` you already read.
+`space history` is the exception of the three: it has a real text mode, and
+reads more easily than the JSON when a step was superseded and retried: a
+dispatch believed dead (`--supersede-trace`, ADR
 0014) never gets its own log entry, so the *surviving* entry's line grows a
 `(N attempts: <superseded-trace-id>, ..., <this-trace-id>)` annotation instead
 of leaving the superseded id undiscoverable. That annotation appears only when
