@@ -11,6 +11,13 @@ use std::{
 pub const NATIVE_CASE_SPACE_SCHEMA: &str = "highergraphen.case.space.v1";
 pub const NATIVE_CASE_SPACE_SCHEMA_VERSION: u32 = 1;
 pub const NATIVE_MORPHISM_LOG_ENTRY_SCHEMA: &str = "highergraphen.case.morphism_log_entry.v1";
+/// Identity of the bare `CaseMorphism` document `morphism propose --input`
+/// accepts. Not written into or read from the document itself (`CaseMorphism`
+/// has no `schema` field, matching `case_morphism` in the case-space
+/// contract) — this constant exists so the shape has a checked, shipped
+/// schema id (`tests/schema_ids.rs`) rather than being uncontracted.
+pub const NATIVE_MORPHISM_PROPOSE_INPUT_SCHEMA: &str =
+    "highergraphen.case.morphism_propose_input.v1";
 
 const CUSTOM_PREFIX: &str = "custom:";
 
@@ -265,13 +272,20 @@ pub struct CaseMorphism {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_revision_id: Option<Id>,
     pub target_revision_id: Id,
+    #[serde(default)]
     pub added_ids: Vec<Id>,
+    #[serde(default)]
     pub updated_ids: Vec<Id>,
+    #[serde(default)]
     pub retired_ids: Vec<Id>,
+    #[serde(default)]
     pub preserved_ids: Vec<Id>,
+    #[serde(default)]
     pub violated_invariant_ids: Vec<Id>,
     pub review_status: ReviewStatus,
+    #[serde(default)]
     pub evidence_ids: Vec<Id>,
+    #[serde(default)]
     pub source_ids: Vec<Id>,
     pub metadata: Map<String, Value>,
 }
@@ -337,17 +351,7 @@ pub(crate) fn write_genesis_materialization(
         added_relations: case_space.case_relations.clone(),
         ..MorphismPayload::default()
     };
-    let added_ids = payload
-        .added_cells
-        .iter()
-        .map(|cell| cell.id.clone())
-        .chain(
-            payload
-                .added_relations
-                .iter()
-                .map(|relation| relation.id.clone()),
-        )
-        .collect();
+    let added_ids = derive_added_ids(&payload);
     let materialization = GenesisCaseSpaceMaterialization {
         space_id: case_space.space_id.clone(),
         projections: case_space.projections.clone(),
@@ -729,6 +733,24 @@ pub(crate) fn morphism_payload(
         }),
         None => Ok(MorphismPayload::default()),
     }
+}
+
+/// The single derivation of `added_ids` from a payload's added cells and
+/// relations. Genesis materialization uses this to populate the field it
+/// writes directly; `morphism propose` (`native_cli/ops.rs`) uses it to fill
+/// `added_ids` when an author omits it, so the two paths cannot diverge.
+pub(crate) fn derive_added_ids(payload: &MorphismPayload) -> Vec<Id> {
+    payload
+        .added_cells
+        .iter()
+        .map(|cell| cell.id.clone())
+        .chain(
+            payload
+                .added_relations
+                .iter()
+                .map(|relation| relation.id.clone()),
+        )
+        .collect()
 }
 
 fn validate_declared_morphism_ids(

@@ -1,5 +1,5 @@
 use super::{report, NativeCliError};
-use crate::schema_catalog::catalog;
+use crate::schema_catalog::{catalog, served_schema_content};
 use serde_json::{json, Value};
 
 /// `casegraphen schema list`: every embedded schema/example, its declared
@@ -49,7 +49,16 @@ pub(in crate::native_cli) fn schema_get(
             ))
         }
     };
-    let content: Value = serde_json::from_str(entry.content)?;
+    // Schemas are served with every cross-file `$ref` inlined, so the
+    // content a consumer receives validates standalone (issue #147's
+    // distribution consequence: `--id`/`--file` is all a consumer has,
+    // never a checkout to resolve a relative `$ref` against). Examples
+    // carry data, not `$ref` semantics, so they are parsed as-is.
+    let content: Value = if entry.file.ends_with(".schema.json") {
+        served_schema_content(entry.file).map_err(NativeCliError::invalid)?
+    } else {
+        serde_json::from_str(entry.content)?
+    };
     Ok(report(
         "casegraphen schema get",
         json!({

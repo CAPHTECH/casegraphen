@@ -356,6 +356,37 @@
         }
       }
     },
+    "morphism_payload": {
+      "description": "The `MorphismPayload` shape a morphism's `metadata.payload` carries when present: added/updated cells and relations. Not referenced by `case_morphism` above — `metadata` stays a fully open object there, since `morphism.metadata` is deliberately unconstrained in the stored contract. This definition exists so a schema that *does* want to close `metadata.payload` specifically (native.morphism-propose-input.schema.json) can reference the real shape instead of duplicating it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "added_cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_cell"
+          }
+        },
+        "added_relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_relation"
+          }
+        },
+        "updated_cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_cell"
+          }
+        },
+        "updated_relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_relation"
+          }
+        }
+      }
+    },
     "morphism_log_entry": {
       "type": "object",
       "additionalProperties": false,

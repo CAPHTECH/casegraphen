@@ -1,0 +1,30 @@
+{
+  "morphism_id": "morphism:add-example-cell",
+  "morphism_type": "create",
+  "source_revision_id": "revision:native-contract-v1",
+  "target_revision_id": "revision:native-contract-v2",
+  "review_status": "unreviewed",
+  "metadata": {
+    "payload": {
+      "added_cells": [
+        {
+          "id": "work:example-added-cell",
+          "cell_type": "work",
+          "space_id": "space:higher-graphen-casegraphen",
+          "title": "Example cell added by morphism propose",
+          "lifecycle": "proposed",
+          "source_ids": [],
+          "structure_ids": [],
+          "provenance": {
+            "source": {
+              "kind": "human"
+            },
+            "confidence": 1.0,
+            "review_status": "unreviewed"
+          },
+          "metadata": {}
+        }
+      ]
+    }
+  }
+}

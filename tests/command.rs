@@ -1536,6 +1536,161 @@ fn native_morphism_propose_check_apply_and_reject_flow() {
 }
 
 #[test]
+fn morphism_propose_accepts_the_shipped_example_and_derives_added_ids() {
+    // The shipped `native.morphism-propose-input.example.json` targets
+    // `native_case_fixture()` at exactly this revision, so a caller can feed
+    // it straight through `morphism propose` with zero edits (issue #147:
+    // the shipped example must be directly copyable). It also omits
+    // `added_ids` and the other now-optional arrays, so this doubles as the
+    // integration test for deriving `added_ids` from `metadata.payload` and
+    // defaulting the rest to `[]`.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-contract-v1");
+
+    let example_path = repo_path("schemas/casegraphen/native.morphism-propose-input.example.json");
+    let example_before: Value = serde_json::from_str(
+        &fs::read_to_string(&example_path).expect("read the shipped propose-input example"),
+    )
+    .expect("shipped example parses");
+    for omitted in [
+        "added_ids",
+        "updated_ids",
+        "retired_ids",
+        "preserved_ids",
+        "violated_invariant_ids",
+        "evidence_ids",
+        "source_ids",
+    ] {
+        assert!(
+            example_before.get(omitted).is_none(),
+            "shipped example should omit {omitted} to demonstrate it is optional on input"
+        );
+    }
+
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        example_path.to_str().expect("example path"),
+        "--format",
+        "json",
+    ]);
+    assert!(propose.status.success(), "stderr: {}", stderr(&propose));
+    let morphism = stdout_json(&propose)["result"]["morphism"].clone();
+    assert_eq!(morphism["added_ids"], json!(["work:example-added-cell"]));
+    for defaulted in [
+        "updated_ids",
+        "retired_ids",
+        "preserved_ids",
+        "violated_invariant_ids",
+        "evidence_ids",
+        "source_ids",
+    ] {
+        assert_eq!(
+            morphism[defaulted],
+            json!([]),
+            "{defaulted} should default to [] when omitted from input"
+        );
+    }
+
+    let apply = run_cli_with_mutation_gate(
+        &[
+            "morphism",
+            "apply",
+            "--store",
+            directory.to_str().expect("temp path"),
+            "--case-space-id",
+            native_case_space_id(),
+            "--morphism-id",
+            "morphism:add-example-cell",
+            "--base-revision-id",
+            "revision:native-contract-v1",
+            "--reviewer-id",
+            "reviewer:native-cli",
+            "--reason",
+            "accept the shipped morphism-propose-input example",
+            "--format",
+            "json",
+        ],
+        "actor:native-mutation-cli",
+    );
+    assert!(apply.status.success(), "stderr: {}", stderr(&apply));
+    let applied = stdout_json(&apply);
+    assert_eq!(
+        applied["result"]["record"]["current_revision_id"],
+        json!("revision:native-contract-v2")
+    );
+    let applied_morphism = &applied["result"]["entry"]["morphism"];
+    // The stored record still carries every array field the case-space
+    // contract requires — defaulting on input never changes what gets
+    // written (native.case.space.schema.json's `case_morphism` still
+    // requires all of them).
+    assert_eq!(
+        applied_morphism["added_ids"],
+        json!(["work:example-added-cell"])
+    );
+    for still_present in [
+        "updated_ids",
+        "retired_ids",
+        "preserved_ids",
+        "violated_invariant_ids",
+        "evidence_ids",
+        "source_ids",
+    ] {
+        assert_eq!(applied_morphism[still_present], json!([]));
+    }
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
+fn morphism_propose_still_refuses_a_declared_added_ids_that_disagrees_with_the_payload() {
+    // Deriving `added_ids` when it is omitted must not weaken the existing
+    // cross-check: an author who declares a non-empty, wrong `added_ids`
+    // still gets refused exactly as before (native_model.rs's
+    // `require_matching_ids`). Derivation only fills a gap; it never
+    // overrides a declared value.
+    let directory = unique_temp_dir();
+    fs::create_dir_all(&directory).expect("create temp directory");
+    import_native_case_space(&directory, "revision:native-contract-v1");
+
+    let example_path = repo_path("schemas/casegraphen/native.morphism-propose-input.example.json");
+    let mut morphism: Value = serde_json::from_str(
+        &fs::read_to_string(&example_path).expect("read the shipped propose-input example"),
+    )
+    .expect("shipped example parses");
+    morphism["added_ids"] = json!(["bogus:mismatch"]);
+    let mismatch_path = directory.join("mismatch.case_morphism.json");
+    fs::write(
+        &mismatch_path,
+        serde_json::to_vec_pretty(&morphism).expect("serialize the mismatched morphism"),
+    )
+    .expect("write the mismatched morphism");
+
+    let propose = run_cli(&[
+        "morphism",
+        "propose",
+        "--store",
+        directory.to_str().expect("temp path"),
+        "--case-space-id",
+        native_case_space_id(),
+        "--input",
+        mismatch_path.to_str().expect("mismatch path"),
+        "--format",
+        "json",
+    ]);
+    assert!(!propose.status.success());
+    assert!(stderr(&propose).contains("added_ids [bogus:mismatch] do not match"));
+
+    fs::remove_dir_all(directory).expect("remove temp directory");
+}
+
+#[test]
 fn generic_morphism_refuses_capability_self_grant() {
     let directory = unique_temp_dir();
     fs::create_dir_all(&directory).expect("create temp directory");
@@ -12949,10 +13104,22 @@ fn native_schema_examples_validate_against_json_schemas() {
 }
 
 fn assert_jsonschema_valid(schema: &Path, instance: &Path) {
+    // A base URI resolves the relative cross-file `$ref`s some schemas use to
+    // reuse another schema's `$defs` instead of duplicating them (e.g.
+    // native.morphism-propose-input.schema.json referencing case_morphism
+    // properties in native.case.space.schema.json). Without it, `python3 -m
+    // jsonschema` treats a relative `$ref` as unretrievable.
+    let schema_directory = schema
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .expect("schema file has a canonicalizable parent directory");
+    let base_uri = format!("file://{}/", schema_directory.display());
     let output = Command::new("python3")
         .args([
             "-m",
             "jsonschema",
+            "--base-uri",
+            &base_uri,
             schema.to_str().expect("schema path"),
             "--instance",
             instance.to_str().expect("instance path"),
@@ -15484,6 +15651,8 @@ fn schema_fixture_paths() -> Vec<PathBuf> {
         "schemas/casegraphen/github.issue-snapshot.schema.json",
         "schemas/casegraphen/native.case.space.schema.json",
         "schemas/casegraphen/native.morphism-log-entry.schema.json",
+        "schemas/casegraphen/native.morphism-propose-input.schema.json",
+        "schemas/casegraphen/native.morphism-propose-input.example.json",
         "schemas/casegraphen/native.case.report.schema.json",
         "schemas/casegraphen/execution.plan.schema.json",
         "schemas/casegraphen/worker.binding.schema.json",
@@ -15513,6 +15682,10 @@ fn native_schema_example_pairs() -> Vec<(PathBuf, PathBuf)> {
         (
             "schemas/casegraphen/native.case.report.schema.json",
             "schemas/casegraphen/native.case.report.example.json",
+        ),
+        (
+            "schemas/casegraphen/native.morphism-propose-input.schema.json",
+            "schemas/casegraphen/native.morphism-propose-input.example.json",
         ),
         (
             "schemas/casegraphen/execution.plan.schema.json",

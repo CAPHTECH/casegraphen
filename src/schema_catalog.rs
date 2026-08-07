@@ -69,6 +69,23 @@ macro_rules! entry {
     };
 }
 
+/// Like `entry!`, but for a file outside `schemas/` — `$dir` is a full path
+/// relative to this module rather than a `schemas/` subdirectory name. Used
+/// only for `docs/guides/entry-ladder/mini-genesis.case.space.json` (issue
+/// #153): that file is a published, `tests/entry_ladder_conformance.rs`-
+/// tested guide artifact with its own relative links in `entry-ladder.md`, so
+/// it stays at that one path — embedded from there — rather than being
+/// duplicated or moved into `schemas/`.
+macro_rules! guide_entry {
+    ($dir:literal, $stability:expr, $file:literal) => {
+        (
+            $stability,
+            $file,
+            include_str!(concat!("../", $dir, "/", $file)),
+        )
+    };
+}
+
 /// `(stability, file, content)` for every embedded file. Sorted the way `ls`
 /// lists them (stable tree, then experimental tree, each alphabetical) so a
 /// diff against `ls schemas/*/*.{schema,example}.json` stays easy to read by
@@ -96,6 +113,8 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("casegraphen", SchemaStability::Stable, "native.case.space.example.json"),
     entry!("casegraphen", SchemaStability::Stable, "native.case.space.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "native.morphism-log-entry.schema.json"),
+    entry!("casegraphen", SchemaStability::Stable, "native.morphism-propose-input.example.json"),
+    entry!("casegraphen", SchemaStability::Stable, "native.morphism-propose-input.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "operation-gate-profiles.example.json"),
     entry!("casegraphen", SchemaStability::Stable, "operation-gate-profiles.schema.json"),
     entry!("casegraphen", SchemaStability::Stable, "projection.example.json"),
@@ -247,10 +266,23 @@ const RAW: &[(SchemaStability, &str, &str)] = &[
     entry!("experimental", SchemaStability::Experimental, "verification.policy_result.v0.schema.json"),
 ];
 
+/// Embedded files that live outside `schemas/`, so `tests.rs`'s on-disk
+/// completeness check — which only scans `schemas/casegraphen` and
+/// `schemas/experimental` — does not (and should not) hold them to the same
+/// "every file on disk has an `entry!` line" invariant `RAW` gets. `catalog()`
+/// serves both lists the same way; `include_str!` already fails the build if
+/// one of these files moves or is deleted, which is the guarantee that
+/// matters here.
+#[rustfmt::skip]
+const EXTRA: &[(SchemaStability, &str, &str)] = &[
+    guide_entry!("docs/guides/entry-ladder", SchemaStability::Stable, "mini-genesis.case.space.json"),
+];
+
 /// Reads a file's own declared identity back out of its content: `$id` for a
 /// `*.schema.json`, the fixture's own `schema` field for a `*.example.json`.
 /// Never hand-copied, so the catalog cannot assert an identity a file does
-/// not itself carry.
+/// not itself carry. A file matching neither suffix (`EXTRA`'s guide
+/// fixtures) has no declared id and is reachable only through `--file`.
 fn declared_id(file: &str, content: &str) -> Option<String> {
     let key = if file.ends_with(".schema.json") {
         "$id"
@@ -263,13 +295,14 @@ fn declared_id(file: &str, content: &str) -> Option<String> {
     value.get(key)?.as_str().map(str::to_owned)
 }
 
-/// The full catalog, built once from `RAW` and cached: `declared_id` reparses
-/// JSON, which is unnecessary work to repeat on every `schema list`/`schema
-/// get` call within one process.
+/// The full catalog, built once from `RAW` and `EXTRA` and cached:
+/// `declared_id` reparses JSON, which is unnecessary work to repeat on every
+/// `schema list`/`schema get` call within one process.
 pub(crate) fn catalog() -> &'static [SchemaCatalogEntry] {
     static CATALOG: OnceLock<Vec<SchemaCatalogEntry>> = OnceLock::new();
     CATALOG.get_or_init(|| {
         RAW.iter()
+            .chain(EXTRA.iter())
             .map(|(stability, file, content)| SchemaCatalogEntry {
                 file,
                 stability: *stability,
@@ -278,6 +311,144 @@ pub(crate) fn catalog() -> &'static [SchemaCatalogEntry] {
             })
             .collect()
     })
+}
+
+/// Looks up a schema's own JSON content by the string a `$ref` used to name
+/// it. This repository's cross-file `$ref`s use two conventions — the
+/// `casegraphen` tree names a literal filename
+/// (`"native.case.space.schema.json#/..."`), the `experimental` tree mostly
+/// names the target's own `$id`
+/// (`"casegraphen.experimental.github.pr_observation.v0#/..."`) — so a match
+/// on either is accepted rather than guessing which convention a given ref
+/// uses. Cross-file `$ref`s in this repository never target an example, so
+/// this only searches `*.schema.json` entries; filenames and ids are each
+/// unique across the whole catalog (`tests.rs` proves both).
+fn schema_content_by_target(target: &str) -> Result<Value, String> {
+    let entry = catalog()
+        .iter()
+        .find(|entry| {
+            entry.file.ends_with(".schema.json")
+                && (entry.file == target || entry.id.as_deref() == Some(target))
+        })
+        .ok_or_else(|| format!("$ref names unknown schema {target:?} (tried filename and $id)"))?;
+    serde_json::from_str(entry.content)
+        .map_err(|error| format!("{target} does not parse as JSON: {error}"))
+}
+
+/// Resolves a JSON Pointer (RFC 6901), without its leading `#`, against
+/// `document`.
+fn resolve_pointer<'a>(document: &'a Value, pointer: &str) -> Result<&'a Value, String> {
+    if pointer.is_empty() {
+        return Ok(document);
+    }
+    let mut current = document;
+    for raw_segment in pointer.trim_start_matches('/').split('/') {
+        let segment = raw_segment.replace("~1", "/").replace("~0", "~");
+        current = match current {
+            Value::Object(map) => map
+                .get(&segment)
+                .ok_or_else(|| format!("pointer segment {segment:?} not found in {pointer:?}"))?,
+            Value::Array(items) => {
+                let index: usize = segment.parse().map_err(|_| {
+                    format!("pointer segment {segment:?} is not an array index in {pointer:?}")
+                })?;
+                items
+                    .get(index)
+                    .ok_or_else(|| format!("pointer index {index} out of range in {pointer:?}"))?
+            }
+            _ => {
+                return Err(format!(
+                    "cannot descend into {segment:?}: not an object or array"
+                ))
+            }
+        };
+    }
+    Ok(current)
+}
+
+/// Splits a `$ref` string into `(file, pointer)`. A ref with no file
+/// component (`"#/..."`) resolves against `current_file`.
+fn split_ref(reference: &str, current_file: &str) -> (String, String) {
+    match reference.split_once('#') {
+        Some(("", pointer)) => (current_file.to_owned(), pointer.to_owned()),
+        Some((file, pointer)) => (file.to_owned(), pointer.to_owned()),
+        None => (reference.to_owned(), String::new()),
+    }
+}
+
+const MAX_REF_DEPTH: usize = 64;
+
+/// Inlines every `$ref` that crosses a file boundary, so a schema served by
+/// `schema get` is self-contained and validates with a bare `python3 -m
+/// jsonschema` — no `--base-uri`, no local checkout. Issue #147 shipped the
+/// first schema with a cross-file `$ref` (reusing case_morphism's property
+/// definitions instead of duplicating them) without noticing that
+/// `jsonschema`'s CLI cannot resolve a relative cross-file `$ref` at all
+/// without a base URI a served, standalone document has no way to carry.
+///
+/// A `$ref` that stays inside `served_file` is left exactly as written:
+/// same-document fragment refs already resolve correctly with no base URI,
+/// and leaving them alone keeps every schema with no cross-file `$ref`
+/// byte-identical to its source file, which
+/// `get_by_id_returns_the_gate_profiles_schema_matching_the_source_file`
+/// (`tests/schema_command.rs`) depends on. Once a `$ref` has crossed into a
+/// foreign file, though, that file's own "local" refs are foreign to
+/// `served_file` too — a `$ref` copied verbatim would dangle — so they get
+/// inlined recursively all the way down.
+fn dereference_cross_file_refs(
+    served_file: &str,
+    current_file: &str,
+    value: Value,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_REF_DEPTH {
+        return Err(format!(
+            "$ref depth exceeded {MAX_REF_DEPTH} while serving {served_file} (cycle?)"
+        ));
+    }
+    match value {
+        Value::Object(map) => {
+            if let Some(reference) = map.get("$ref").and_then(Value::as_str) {
+                if reference.starts_with('#') && current_file == served_file {
+                    return Ok(Value::Object(map));
+                }
+                if map.len() > 1 {
+                    return Err(format!(
+                        "{served_file}: a cross-file $ref ({reference}) has sibling keywords, \
+                         which this resolver does not merge — give it no siblings or extend the resolver"
+                    ));
+                }
+                let (target_file, pointer) = split_ref(reference, current_file);
+                let target_document = schema_content_by_target(&target_file)?;
+                let resolved = resolve_pointer(&target_document, &pointer)?.clone();
+                return dereference_cross_file_refs(served_file, &target_file, resolved, depth + 1);
+            }
+            let mut resolved_map = serde_json::Map::with_capacity(map.len());
+            for (key, member) in map {
+                resolved_map.insert(
+                    key,
+                    dereference_cross_file_refs(served_file, current_file, member, depth + 1)?,
+                );
+            }
+            Ok(Value::Object(resolved_map))
+        }
+        Value::Array(items) => items
+            .into_iter()
+            .map(|item| dereference_cross_file_refs(served_file, current_file, item, depth + 1))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        other => Ok(other),
+    }
+}
+
+/// The content `schema get` serves for a `*.schema.json` entry: the file's
+/// own JSON with every cross-file `$ref` inlined, so what a consumer
+/// receives is self-contained. Not applied to `*.example.json` entries —
+/// examples carry data, not `$ref` semantics, and this repository's
+/// cross-file refs never target one.
+pub(crate) fn served_schema_content(file: &str) -> Result<Value, String> {
+    let content = schema_content_by_target(file)?;
+    dereference_cross_file_refs(file, file, content, 0)
 }
 
 #[cfg(test)]
@@ -377,6 +548,57 @@ mod tests {
             if let Some(previous) = seen.insert(id.clone(), entry.file) {
                 panic!("{} and {previous} both declare $id {id:?}", entry.file);
             }
+        }
+    }
+
+    /// Collects every `$ref` string reachable from `value`.
+    fn collect_refs(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(reference) = map.get("$ref").and_then(Value::as_str) {
+                    out.push(reference.to_owned());
+                }
+                for member in map.values() {
+                    collect_refs(member, out);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    collect_refs(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Issue #147 shipped a schema with a cross-file `$ref` and only later
+    /// discovered that a bare `python3 -m jsonschema` — what a consumer
+    /// actually runs, per `SKILL.md`'s own recipe — cannot resolve one
+    /// without a base URI a served document has no way to carry. This is the
+    /// regression guard for the fix: every `*.schema.json` entry, served the
+    /// way `schema get` serves it, must contain no `$ref` naming a file
+    /// other than itself. A same-document `$ref` (`"#/..."`) is fine — it
+    /// needs no base URI — and is the only kind this should ever find, since
+    /// `served_schema_content` inlines every other kind.
+    #[test]
+    fn served_schemas_carry_no_cross_file_ref() {
+        for entry in catalog()
+            .iter()
+            .filter(|entry| entry.file.ends_with(".schema.json"))
+        {
+            let served = served_schema_content(entry.file)
+                .unwrap_or_else(|error| panic!("serve {}: {error}", entry.file));
+            let mut refs = Vec::new();
+            collect_refs(&served, &mut refs);
+            let cross_file: Vec<_> = refs
+                .iter()
+                .filter(|reference| !reference.starts_with('#'))
+                .collect();
+            assert!(
+                cross_file.is_empty(),
+                "{} still carries a cross-file $ref after serving: {cross_file:?}",
+                entry.file
+            );
         }
     }
 }

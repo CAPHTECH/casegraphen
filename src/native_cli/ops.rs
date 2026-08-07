@@ -14,10 +14,10 @@ use crate::{
     native_eval::{evaluate_native_case, NativeCaseEvaluation},
     native_halt::HaltReport,
     native_model::{
-        apply_morphism, write_genesis_materialization, CaseCell, CaseCellLifecycle, CaseCellType,
-        CaseMorphism, CaseMorphismType, CaseSpace, MorphismLogEntry, ProjectionAudience,
-        ReviewAction, Revision, NATIVE_CASE_SPACE_SCHEMA, NATIVE_CASE_SPACE_SCHEMA_VERSION,
-        NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
+        apply_morphism, derive_added_ids, morphism_payload, write_genesis_materialization,
+        CaseCell, CaseCellLifecycle, CaseCellType, CaseMorphism, CaseMorphismType, CaseSpace,
+        MorphismLogEntry, ProjectionAudience, ReviewAction, Revision, NATIVE_CASE_SPACE_SCHEMA,
+        NATIVE_CASE_SPACE_SCHEMA_VERSION, NATIVE_MORPHISM_LOG_ENTRY_SCHEMA,
     },
     native_review::{
         check_native_close_with_finding, check_operation_gate, declared_source_boundary_id,
@@ -472,7 +472,12 @@ pub(super) fn morphism_propose(
 ) -> Result<Value, NativeCliError> {
     let replay =
         NativeCaseStore::new(store.to_path_buf()).replay_current_case_space(case_space_id)?;
-    let morphism = read_morphism(input)?;
+    let mut morphism = read_morphism(input)?;
+    if morphism.added_ids.is_empty() {
+        let payload = morphism_payload(&morphism)
+            .map_err(|error| NativeCliError::invalid(error.to_string()))?;
+        morphism.added_ids = derive_added_ids(&payload);
+    }
     validate_generic_morphism_metadata(&morphism)?;
     validate_candidate_morphism(&replay.case_space, &morphism)?;
     let proposal = proposal_value(case_space_id, &morphism);
