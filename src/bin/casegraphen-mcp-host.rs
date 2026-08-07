@@ -1339,6 +1339,11 @@ fn refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
     }
 }
 
+/// The embedded `cli_usage.txt`'s `casegraphen-mcp-host` line — the same
+/// source the `casegraphen` binary's `--help` reads from, so this host's
+/// usage can never drift from what that text documents.
+const USAGE: &str = include_str!("../cli_usage.txt");
+
 fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
     let mut args = env::args().skip(1);
     if args.len() == 1 && args.next().as_deref() == Some("--health-check") {
@@ -1346,6 +1351,15 @@ fn parse_configuration() -> Result<Option<HostConfiguration>, String> {
             "{}",
             json!({"status":"ok","schedules_agents":false,"calls_models":false,"automatic_retry":false})
         );
+        return Ok(None);
+    }
+    let mut args = env::args().skip(1);
+    if args.len() == 1 && args.next().as_deref() == Some("--help") {
+        let usage = USAGE
+            .lines()
+            .find(|line| line.trim_start().starts_with("casegraphen-mcp-host "))
+            .expect("cli_usage.txt documents casegraphen-mcp-host");
+        println!("{}", usage.trim_start());
         return Ok(None);
     }
     let mut state_path = None;

@@ -10,7 +10,7 @@ use casegraphen::{
     mcp_stdio::{serve_stdio, McpStdioServer},
 };
 use serde_json::Value;
-use std::io;
+use std::{env, io};
 
 struct ReferenceExternalDelegate;
 
@@ -62,7 +62,19 @@ fn refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
     }
 }
 
+/// This reference adapter takes no configuration flags (ADR 0019: it is a
+/// stateless child-process transport, not a daemon), so `--help` is the one
+/// argument worth recognizing at all — printed and exited 0 rather than
+/// silently falling through to `serve_stdio`, which would otherwise start
+/// the stdio server without ever explaining what it does.
+const USAGE: &str = "casegraphen-mcp reads newline-delimited JSON-RPC 2.0 requests on stdin and \
+writes responses on stdout; it takes no arguments and exits at stdin EOF (ADR 0019).";
+
 fn main() -> io::Result<()> {
+    if env::args().skip(1).any(|argument| argument == "--help") {
+        println!("{USAGE}");
+        return Ok(());
+    }
     let mut server = McpStdioServer::new(ReferenceExternalDelegate);
     serve_stdio(&mut server, io::stdin().lock(), io::stdout().lock())
 }

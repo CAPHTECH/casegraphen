@@ -10,7 +10,12 @@ mod cli_required;
 use crate::exec::worker::CliExitCode;
 use cli_error::CliError;
 use cli_required::required_segment;
-use std::{env, ffi::OsString, fs, path::PathBuf};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    fs,
+    path::PathBuf,
+};
 
 const USAGE: &str = include_str!("cli_usage.txt");
 const REFUSAL_SCHEMA: &str = "highergraphen.case.native_cli.refusal.v1";
@@ -243,6 +248,17 @@ fn exit_code_value(outcome: CliOutcome, strict: bool) -> u8 {
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
     Version,
+    /// `casegraphen --help` (or no group at all): the whole embedded usage
+    /// dump, exit 0. Distinct from the no-argument case, which still goes
+    /// through `required_segment`'s "missing command segment" refusal
+    /// unchanged (#108's non-goal) — this variant is only reached when the
+    /// first segment is literally `--help`.
+    Help,
+    /// `casegraphen <group> --help`: the subset of the embedded usage text
+    /// whose command path starts with that group, exit 0. Rendered once at
+    /// parse time (see `group_usage_lines`) rather than carrying the group
+    /// name forward, so this needs no lifetime tied to argv.
+    GroupHelp(String),
     Native(Box<NativeCliCommand>),
 }
 
@@ -250,15 +266,31 @@ impl Command {
     fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, CliError> {
         let mut args = args.into_iter();
         match required_segment(&mut args, "command")?.to_str() {
+            Some("--help") => Ok(Self::Help),
             Some("version") | Some("--version") | Some("-V") => Ok(Self::Version),
             Some(
                 segment @ ("lift" | "graph" | "schema" | "memory" | "space" | "obstruction"
                 | "completion" | "projection" | "equivalence" | "invariant" | "morphism"
                 | "plan" | "binding" | "run" | "operate" | "review" | "topology-review"
                 | "evidence" | "cell" | "packet" | "github"),
-            ) => NativeCliCommand::parse(segment, args)
-                .map(|command| Self::Native(Box::new(command)))
-                .map_err(CliError::from),
+            ) => {
+                // Checked here, before delegating to `NativeCliCommand::parse`,
+                // so `--help` never reaches the shared option parser — which
+                // treats every unrecognized `--flag` as one needing a value
+                // (see `NativeOptions`) and would otherwise answer a help
+                // request with "--help requires a value" or a missing
+                // `--format`. This peek is the only new thing the shared
+                // parser sees; it doesn't change what that parser accepts
+                // for any other flag or command.
+                let mut args = args.peekable();
+                if args.peek().map(OsString::as_os_str) == Some(OsStr::new("--help")) {
+                    Ok(Self::GroupHelp(group_usage_lines(segment)))
+                } else {
+                    NativeCliCommand::parse(segment, args)
+                        .map(|command| Self::Native(Box::new(command)))
+                        .map_err(CliError::from)
+                }
+            }
             Some("workflow") | Some("cg") => Err(CliError::usage(
                 "the workflow evaluator surface was removed (ADR 0003); lift the graph with \
                  `lift workflow` and use the native derived commands",
@@ -269,14 +301,14 @@ impl Command {
 
     fn output(&self) -> Option<&PathBuf> {
         match self {
-            Self::Version => None,
+            Self::Version | Self::Help | Self::GroupHelp(_) => None,
             Self::Native(command) => command.output(),
         }
     }
 
     fn strict(&self) -> bool {
         match self {
-            Self::Version => false,
+            Self::Version | Self::Help | Self::GroupHelp(_) => false,
             Self::Native(command) => command.strict(),
         }
     }
@@ -291,16 +323,36 @@ impl Command {
                     None => String::new(),
                 }
             ))),
+            Self::Help => Ok(NativeCommandResult::success(USAGE.trim_end().to_owned())),
+            Self::GroupHelp(text) => Ok(NativeCommandResult::success(text.clone())),
             Self::Native(command) => command.run_rendered().map_err(CliError::from),
         }
     }
 
     fn format(&self) -> NativeOutputFormat {
         match self {
-            Self::Version => NativeOutputFormat::Text,
+            Self::Version | Self::Help | Self::GroupHelp(_) => NativeOutputFormat::Text,
             Self::Native(command) => command.format(),
         }
     }
+}
+
+/// The embedded usage lines whose command path starts with `casegraphen
+/// <group> `, joined back into one block. A line belongs to `group` when its
+/// first two whitespace-separated tokens are exactly `casegraphen` and
+/// `group` — every documented command family in `cli_usage.txt` writes its
+/// lines this way (e.g. every `memory` line starts `casegraphen memory `),
+/// so this needs no separate table of group boundaries that could drift from
+/// the usage text itself.
+fn group_usage_lines(group: &str) -> String {
+    let lines: Vec<&str> = USAGE
+        .lines()
+        .filter(|line| {
+            let mut tokens = line.split_whitespace();
+            tokens.next() == Some("casegraphen") && tokens.next() == Some(group)
+        })
+        .collect();
+    lines.join("\n")
 }
 
 #[cfg(test)]
