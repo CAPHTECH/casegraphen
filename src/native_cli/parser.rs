@@ -770,19 +770,31 @@ impl NativeCliCommand {
                 claim_cell_id: options.require_id("--target-id")?,
                 output: options.output,
             }),
-            "accept" | "reject" | "reopen" => {
+            // Which topology-review operations exist beyond "inspect" is
+            // answered once, by this inner match — the outer arm no longer
+            // repeats "accept" | "reject" | "reopen" just to justify
+            // reaching this branch, so it cannot drift from the action
+            // conversion below the way it did before (adding a fourth
+            // action here without also adding it above used to compile and
+            // then panic on `_ => unreachable!()`).
+            _ => {
+                let action = match operation {
+                    "accept" => ReviewAction::Accept,
+                    "reject" => ReviewAction::Reject,
+                    "reopen" => ReviewAction::Reopen,
+                    _ => {
+                        return Err(NativeCliError::usage(
+                            "unsupported native topology-review command",
+                        ))
+                    }
+                };
                 let gate_options =
                     options.resolve_operation_gate_options(OperationGateRequirement::Required {
                         command: "execution topology review",
                         actor_command: Some("execution topology review"),
                     })?;
                 Ok(Self::TopologyReview {
-                    action: match operation {
-                        "accept" => ReviewAction::Accept,
-                        "reject" => ReviewAction::Reject,
-                        "reopen" => ReviewAction::Reopen,
-                        _ => unreachable!(),
-                    },
+                    action,
                     store: options.require_store()?,
                     case_space_id: options.require_id("--case-space-id")?,
                     claim_cell_id: options.require_id("--target-id")?,
@@ -799,9 +811,6 @@ impl NativeCliCommand {
                     output: options.output,
                 })
             }
-            _ => Err(NativeCliError::usage(
-                "unsupported native topology-review command",
-            )),
         }
     }
 

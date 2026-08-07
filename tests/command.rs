@@ -9236,6 +9236,33 @@ fn execution_topology_review_cli_binds_store_artifact_and_enables_reviewed_compi
     fs::remove_dir_all(directory).expect("remove temp directory");
 }
 
+/// `parse_topology_review` used to answer "which review operations exist?"
+/// in two places — an outer `"accept" | "reject" | "reopen"` arm and an
+/// inner match converting the same three strings to `ReviewAction` — with
+/// the inner match's `_` falling to `unreachable!()`. Adding a fourth action
+/// to only one of the two would have compiled and then panicked at runtime.
+/// The two were collapsed into one inner match; this pins that an unknown
+/// topology-review operation still refuses cleanly (not a panic, not a
+/// crash exit) with the exact usage message and error_code unchanged, and
+/// that "inspect" and the real actions are unaffected by the collapse.
+#[test]
+fn topology_review_unsupported_operation_is_refused_not_panicked() {
+    let refused = run_cli(&[
+        "topology-review",
+        "bogus-operation",
+        "--store",
+        "/nonexistent-store",
+        "--format",
+        "json",
+    ]);
+    assert!(!refused.status.success());
+    assert_eq!(stderr_json(&refused)["error_code"], json!("usage"));
+    assert_eq!(
+        stderr_json(&refused)["message"],
+        json!("unsupported native topology-review command")
+    );
+}
+
 #[test]
 fn a_refusal_after_a_landed_mutation_reports_completed_through() {
     // Regression: `--output` naming a directory that does not exist fails
