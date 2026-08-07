@@ -643,6 +643,50 @@ mod tests {
 
     /// The property `docs/specs/case-lock.fsl` proves
     /// (`MODEL-LOCK-009`/`INV-LOCK-001`): nothing removes or replaces a lock
+    /// file that is not the exact token it was given. This drives the
+    /// displaced-release case directly — acquire, have something else
+    /// overwrite the lock file, then drop — the same interleaving
+    /// `a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer`
+    /// below explores by chance rather than by construction.
+    ///
+    /// Issue #112: that property test used to count how many of its
+    /// arbtest-chosen interleavings actually hit this case and fail the
+    /// whole run if the count was zero, because a property test that never
+    /// exercises its subject passes vacuously. But arbtest's default budget
+    /// is a wall-clock 100 ms (`ARBTEST_BUDGET_MS`), not an iteration count,
+    /// so a busier CI runner fits fewer iterations into that window than a
+    /// quiet one — confirmed locally: 0/3000 failures at the real 100 ms
+    /// budget, 76/500 at a throttled 10 ms budget, same assertion, same
+    /// line. The exploration missing its own subject was real; the fix is
+    /// to stop depending on a random run to reach it and prove it here
+    /// instead. The property test goes back to only asserting the property.
+    #[test]
+    fn a_live_guards_lock_file_survives_a_displaced_release() {
+        let dir = lock_guard_test_dir("displaced-release");
+        let lock_path = dir.join(".lock");
+
+        let guard = CaseLockGuard::acquire(&dir).expect("acquire a free lock");
+
+        // Stands in for a second process's lock file, exactly as
+        // `Step::ForeignWrite` does below: something no two real `acquire`
+        // calls in one process could produce concurrently, since
+        // `create_new` is atomic.
+        let foreign_contents = "token=foreign-displaced-release\n";
+        fs::write(&lock_path, foreign_contents).expect("forge a foreign lock file's content");
+
+        drop(guard);
+
+        assert_eq!(
+            fs::read_to_string(&lock_path).expect("read lock file after displaced release"),
+            foreign_contents,
+            "a guard must never remove or replace a lock file it does not own"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The property `docs/specs/case-lock.fsl` proves
+    /// (`MODEL-LOCK-009`/`INV-LOCK-001`): nothing removes or replaces a lock
     /// file that is not the exact token it was given. Driving genuine OS
     /// concurrency here would mean real threads racing on `create_new`, and
     /// a contended `acquire` waits out the real 30 s `LOCK_WAIT_BUDGET`
@@ -665,19 +709,22 @@ mod tests {
     /// model states. It does not exercise the wait-then-refuse timing path;
     /// `acquire_refuses_an_aged_lock_and_leaves_it_byte_identical` above
     /// covers that deterministically instead.
+    ///
+    /// `Step::AcquireIfFree` skips whenever `on_disk.is_some()`, and nothing
+    /// in this model ever clears a foreign write back to `None` except a
+    /// genuine own-guard release. So a scenario that opens with
+    /// `ForeignWrite` can spend every remaining step as a no-op `continue`
+    /// and assert nothing at all — this is the vacuous-pass risk any
+    /// property test with a skippable branch carries. Issue #112: rather
+    /// than counting how many of this run's arbtest-chosen interleavings
+    /// actually reach that branch and failing the run if none did, coverage
+    /// of the displaced-release case is proven separately and
+    /// deterministically by
+    /// `a_live_guards_lock_file_survives_a_displaced_release` above, so this
+    /// property test only has to assert the property on whatever
+    /// interleavings it happens to explore.
     #[test]
     fn a_live_guards_lock_file_is_never_removed_or_replaced_by_another_acquirer() {
-        // Coverage witness (adversarial-review finding on this test itself):
-        // `Step::AcquireIfFree` skips whenever `on_disk.is_some()`, and
-        // nothing in this model ever clears a foreign write back to `None`
-        // except a genuine own-guard release. So a scenario that opens with
-        // `ForeignWrite` can spend every remaining step as a no-op `continue`
-        // and assert nothing at all — this repo has already shipped one test
-        // that silently degraded to asserting nothing, and this must not be
-        // a second. Counts executions of the "not owned" branch (the one
-        // that actually exercises displacement) across the whole arbtest
-        // run, asserted `> 0` afterwards.
-        let displaced_release_witnessed = std::cell::Cell::new(0_usize);
         arbtest::arbtest(
             |u: &mut arbtest::arbitrary::Unstructured<'_>| -> arbtest::arbitrary::Result<()> {
                 let dir = lock_guard_test_dir("pbt-interleaving");
@@ -748,8 +795,6 @@ mod tests {
                                 );
                                 on_disk = None;
                             } else {
-                                displaced_release_witnessed
-                                    .set(displaced_release_witnessed.get() + 1);
                                 assert_eq!(
                                     after_drop, before_drop,
                                     "a guard must never remove or replace a lock file \
@@ -767,7 +812,6 @@ mod tests {
                     if on_disk.as_deref() == Some(owned_token.as_str()) {
                         assert!(after_drop.is_none());
                     } else {
-                        displaced_release_witnessed.set(displaced_release_witnessed.get() + 1);
                         assert_eq!(after_drop, on_disk);
                     }
                 }
@@ -775,11 +819,6 @@ mod tests {
                 let _ = fs::remove_dir_all(&dir);
                 Ok(())
             },
-        );
-        assert!(
-            displaced_release_witnessed.get() > 0,
-            "the whole arbtest run never exercised a displaced release — this property test \
-             would pass even if displacement handling were broken"
         );
     }
 }
