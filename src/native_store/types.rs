@@ -51,6 +51,17 @@ pub enum NativeStoreError {
         path: PathBuf,
         reason: String,
     },
+    /// The evaluator refused the imported case space. Issue #145: kept
+    /// distinct from `InvalidMorphism` only so the violations survive as
+    /// data. They are already accumulated — one refusal reports every rule
+    /// the document breaks — and used to be rendered with `{error:?}` into
+    /// the message, which left an agent regexing Rust debug syntax out of
+    /// prose for the most common first-run failure. Shares
+    /// `store_integrity`: the answer is still "stop and fix the document".
+    NotEvaluable {
+        path: PathBuf,
+        violations: Vec<crate::native_eval::NativeEvalViolation>,
+    },
     /// A durable-write entry's `source_revision_id` — what its caller
     /// asserted the case space's current revision was when the entry was
     /// built — no longer names `current_revision_id`. Issue #39: kept
@@ -202,7 +213,9 @@ impl NativeStoreError {
             Self::MissingCase { .. } => "missing_case_space",
             Self::ExistingCase { .. } => "existing_case_space",
             Self::LockUnavailable { .. } => "lock_unavailable",
-            Self::ReplayMismatch { .. } | Self::InvalidMorphism { .. } => "store_integrity",
+            Self::ReplayMismatch { .. }
+            | Self::InvalidMorphism { .. }
+            | Self::NotEvaluable { .. } => "store_integrity",
             Self::StaleSourceRevision { .. } => "stale_revision",
         }
     }
@@ -254,6 +267,22 @@ impl std::fmt::Display for NativeStoreError {
             }
             Self::InvalidMorphism { path, reason } => {
                 write!(formatter, "{}: {reason}", path.display())
+            }
+            Self::NotEvaluable { path, violations } => {
+                // Prose, not a `Debug` dump: the machine-readable form of the
+                // same list is the refusal's `data` (issue #145).
+                write!(
+                    formatter,
+                    "{}: imported case space is not evaluable ({} violation{}): {}",
+                    path.display(),
+                    violations.len(),
+                    if violations.len() == 1 { "" } else { "s" },
+                    violations
+                        .iter()
+                        .map(|violation| format!("{}: {}", violation.field, violation.message))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
             }
             Self::StaleSourceRevision {
                 path,

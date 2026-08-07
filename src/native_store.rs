@@ -54,10 +54,10 @@ impl NativeCaseStore {
         // whose cell collides with one of those imports cleanly and then makes
         // every derived command fail permanently, with no repair path.
         crate::native_eval::validate_native_case_space(case_space).map_err(|error| {
-            invalid_morphism(
-                &self.root,
-                format!("imported case space is not evaluable: {error:?}"),
-            )
+            NativeStoreError::NotEvaluable {
+                path: self.root.clone(),
+                violations: error.violations,
+            }
         })?;
         let latest = latest_entry(&case_space.morphism_log, &self.root)?;
         require_snapshot_checksum(&self.root, case_space, latest)?;

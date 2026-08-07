@@ -1632,6 +1632,14 @@ impl NativeCliError {
                 "source_revision_id": source_revision_id,
                 "current_revision_id": current_revision_id,
             })),
+            // Issue #145: the evaluator accumulates every rule the document
+            // breaks and runs before anything is written, so one refusal is
+            // already the whole answer — it was just rendered with `{:?}` into
+            // the message, leaving an agent to regex Rust debug syntax out of
+            // prose. The list is what an author acts on, so it belongs here.
+            Self::Store(NativeStoreError::NotEvaluable { violations, .. }) => Some(json!({
+                "violations": violations,
+            })),
             _ => None,
         }
     }
