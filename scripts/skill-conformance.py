@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import pathlib
 import re
@@ -86,8 +87,38 @@ ROLE_CONTRACTS = {
 }
 
 TASK_SKILLS = set(SKILLS) - {"casegraphen-orchestrate"}
-ORCHESTRATION_SCHEMA = ROOT / "schemas/experimental/skill.orchestration_handoff.v0.schema.json"
-ORCHESTRATION_EXAMPLE = ROOT / "schemas/experimental/skill.orchestration_handoff.v0.example.json"
+
+SCHEMA_TREES = (ROOT / "schemas/casegraphen", ROOT / "schemas/experimental")
+SCHEMA_ID_PATTERN = re.compile(
+    r"\b(?:highergraphen|casegraphen\.experimental)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.v[0-9]+\b"
+)
+SCHEMA_FILE_PATTERN = re.compile(r"\b[A-Za-z0-9_.-]+\.(?:schema|example)\.json\b")
+
+
+@functools.lru_cache(maxsize=None)
+def available_schema_identity() -> "tuple[frozenset[str], frozenset[str]]":
+    """Issue #111: every schema `$id` and every `*.schema.json` /
+    `*.example.json` filename under both schema trees — exactly what
+    `casegraphen schema get --id|--file` can now emit, since
+    `src/schema_catalog.rs` embeds every file these two directories
+    contain. This does not read the Rust catalog itself; it reads the same
+    directories that catalog is built from and whose completeness against
+    it `schema_catalog.rs::tests::catalog_matches_the_schema_trees_on_disk_exactly`
+    already proves. A skill can therefore never cite a schema the installed
+    binary cannot produce without failing here.
+    """
+    ids: set[str] = set()
+    files: set[str] = set()
+    for directory in SCHEMA_TREES:
+        for path in directory.glob("*.schema.json"):
+            files.add(path.name)
+            declared = json.loads(path.read_text()).get("$id")
+            if isinstance(declared, str):
+                ids.add(declared)
+        for path in directory.glob("*.example.json"):
+            files.add(path.name)
+    return frozenset(ids), frozenset(files)
+
 
 OVERCLAIMS = (
     "MCP support is complete",
@@ -256,6 +287,32 @@ def validate_document(path: pathlib.Path) -> list[str]:
                 )
             )
 
+    # Issue #111: a skill may name a contract identifier or schema filename
+    # only if `casegraphen schema get` can actually produce it. Without this,
+    # a skill can instruct a reader to author against a contract the
+    # installation never ships — the failure #111 exists to close.
+    schema_ids, schema_files = available_schema_identity()
+    for match in SCHEMA_ID_PATTERN.finditer(text):
+        identity = match.group(0)
+        if identity not in schema_ids:
+            errors.append(
+                line_error(
+                    path,
+                    text.count("\n", 0, match.start()) + 1,
+                    f"schema id {identity!r} is not provided by `casegraphen schema get`",
+                )
+            )
+    for match in SCHEMA_FILE_PATTERN.finditer(text):
+        filename = match.group(0)
+        if filename not in schema_files:
+            errors.append(
+                line_error(
+                    path,
+                    text.count("\n", 0, match.start()) + 1,
+                    f"schema file {filename!r} is not provided by `casegraphen schema get`",
+                )
+            )
+
     for match in re.finditer(r"`(--[a-z][a-z0-9-]*)[^`]*`", text):
         flag = match.group(1)
         if flag not in all_flags:
@@ -377,13 +434,13 @@ def check() -> list[str]:
             for required in ("interface:", "display_name:", "short_description:", "default_prompt:", f"${name}"):
                 if required not in metadata_text:
                     errors.append(f"{metadata.relative_to(ROOT)}: missing metadata field or Skill reference {required!r}")
-    orchestration_refs = SKILLS["casegraphen-orchestrate"] / "references"
-    for canonical, bundled in (
-        (ORCHESTRATION_SCHEMA, orchestration_refs / ORCHESTRATION_SCHEMA.name),
-        (ORCHESTRATION_EXAMPLE, orchestration_refs / ORCHESTRATION_EXAMPLE.name),
-    ):
-        if not bundled.is_file() or canonical.read_bytes() != bundled.read_bytes():
-            errors.append(f"{bundled.relative_to(ROOT)}: bundled handoff contract must match {canonical.relative_to(ROOT)}")
+    # Issue #111: `casegraphen-orchestrate` used to bundle its own copy of
+    # the handoff schema/example under `references/`, checked here for a
+    # byte-for-byte match against `schemas/experimental/`. That copy is gone
+    # — `casegraphen schema get` serves the canonical files directly, so
+    # there is no second copy left to drift, and `available_schema_identity`
+    # above already proves every skill (including this one) only cites
+    # schemas that command can produce.
     errors.extend(validate_document(ROOT / "README.md"))
     return errors
 

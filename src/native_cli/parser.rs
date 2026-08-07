@@ -77,6 +77,7 @@ impl NativeCliCommand {
             "space" => Self::parse_space(required_segment(&mut args, "space operation")?, args),
             "lift" => Self::parse_lift(required_segment(&mut args, "lift adapter")?, args),
             "graph" => Self::parse_graph(required_segment(&mut args, "graph operation")?, args),
+            "schema" => Self::parse_schema(required_segment(&mut args, "schema operation")?, args),
             "memory" => Self::parse_memory(required_segment(&mut args, "memory operation")?, args),
             "github" => Self::parse_github(required_segment(&mut args, "github operation")?, args),
             "obstruction" => {
@@ -281,6 +282,36 @@ impl NativeCliCommand {
                 output: options.output,
             }),
             Some(_) | None => Err(NativeCliError::usage("unsupported graph command")),
+        }
+    }
+
+    /// `casegraphen schema list|get`: read-only lookups against the compiled-in
+    /// catalog (`schema_catalog.rs`), so — unlike every other native
+    /// namespace — neither operation touches `--store`. `list` takes no
+    /// selector; `get` takes exactly one of `--id`/`--file`, checked here
+    /// rather than left for `ops/schema.rs` to refuse, so the usage error
+    /// names the flag before any catalog lookup runs.
+    fn parse_schema(
+        operation: OsString,
+        args: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, NativeCliError> {
+        let options = NativeOptions::parse("schema", args)?;
+        match operation.to_str() {
+            Some("list") => Ok(Self::SchemaList {
+                output: options.output,
+            }),
+            Some("get") => match (&options.schema_id, &options.schema_file) {
+                (Some(_), Some(_)) => Err(NativeCliError::usage(
+                    "schema get accepts only one of --id or --file",
+                )),
+                (None, None) => Err(NativeCliError::usage("schema get requires --id or --file")),
+                _ => Ok(Self::SchemaGet {
+                    id: options.schema_id,
+                    file: options.schema_file,
+                    output: options.output,
+                }),
+            },
+            Some(_) | None => Err(NativeCliError::usage("unsupported schema command")),
         }
     }
 
