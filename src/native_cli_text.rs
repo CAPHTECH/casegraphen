@@ -315,7 +315,7 @@ fn push_changes_since(output: &mut String, entries: &[MorphismLogEntry]) {
     for entry in entries {
         writeln!(
             output,
-            "  - {}: {} [actor={}] [recorded_at={}]",
+            "  - [{}]: {} [actor={}] [recorded_at={}]",
             entry.target_revision_id,
             entry.morphism.morphism_type,
             entry.actor_id,
