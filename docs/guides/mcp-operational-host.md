@@ -143,10 +143,17 @@ reconciliation, simulation, resource reservation/reconciliation, bounded
 expansion, streaming reconciliation, verification lineage reconciliation, and
 redesign proposals, plus revision-bound Memory Plane reads and proposals.
 Acceptance-ledger
-mutations refuse `unsupported_operational_host_tool` and remain owned by the
-main CLI. Host requests still require the client-observed base revision and
-caller audit context where applicable. An actual acceptance-ledger mutation is
-separately authorized by the CLI/store's canonical operation gate; the host
+mutations (`apply_evidence_packet`, `review_accept`, `review_reject`,
+`resume`, `supersede_dispatch`) refuse `unsupported_operational_host_tool`
+and remain owned by the main CLI (`casegraphen packet apply`,
+`casegraphen review accept`/`reject`, `casegraphen packet resume`,
+`casegraphen run`/`operate --supersede-trace`, respectively). The refusal
+states that this is permanent for this host release, not a transient
+condition worth retrying — `suggested_next_operation` does not suggest a
+retry that can never succeed here. Host requests still require the
+client-observed base revision and caller audit context where applicable. An
+actual acceptance-ledger mutation is separately authorized by the CLI/store's
+canonical operation gate; the host
 context cannot substitute for it.
 
 `casegraphen-mcp-host --health-check` reports process capability without

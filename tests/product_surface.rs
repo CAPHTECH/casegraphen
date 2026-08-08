@@ -550,6 +550,18 @@ fn unsupported_acceptance_mutation_fails_closed_at_the_host() {
         "unsupported_operational_host_tool"
     );
     assert_eq!(responses[1]["result"]["isError"], true);
+    // Issue #166: the refusal must say the outcome is permanent for this
+    // release and name where the operation actually lives, and
+    // `suggested_next_operation` must not suggest a retry that can never
+    // succeed on this host.
+    let refusal = &response["refusal"];
+    assert_ne!(
+        refusal["suggested_next_operation"], "inspect_host_state_and_retry_explicitly",
+        "{refusal}"
+    );
+    let detail = refusal["detail"].as_str().unwrap();
+    assert!(detail.contains("permanent"), "{detail}");
+    assert!(detail.contains("casegraphen review accept"), "{detail}");
     assert!(
         validates_against_control_plane_response_schema(response),
         "a real, live refusal response failed to validate against control_plane.response.v0"
@@ -579,16 +591,19 @@ fn remaining_unsupported_mutation_tools_fail_closed_at_the_host() {
         "declared_source_boundary_id":"boundary:mcp"
     });
     let tools = [
-        "apply_evidence_packet",
-        "review_reject",
-        "supersede_dispatch",
-        "resume",
+        ("apply_evidence_packet", "casegraphen packet apply"),
+        ("review_reject", "casegraphen review reject"),
+        (
+            "supersede_dispatch",
+            "casegraphen run/operate --supersede-trace",
+        ),
+        ("resume", "casegraphen packet resume"),
     ];
     let mut messages = vec![
         rpc(1, "initialize", json!({"protocolVersion":"2025-06-18"})),
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
     ];
-    for (index, tool) in tools.iter().enumerate() {
+    for (index, (tool, _cli_command)) in tools.iter().enumerate() {
         messages.push(rpc(
             2 + index as u64,
             "tools/call",
@@ -606,7 +621,7 @@ fn remaining_unsupported_mutation_tools_fail_closed_at_the_host() {
         ));
     }
     let responses = run_host(&directory, &messages);
-    for (index, tool) in tools.iter().enumerate() {
+    for (index, (tool, cli_command)) in tools.iter().enumerate() {
         let response = &responses[index + 1]["result"]["structuredContent"];
         assert_eq!(
             response["result"],
@@ -622,6 +637,17 @@ fn remaining_unsupported_mutation_tools_fail_closed_at_the_host() {
             true,
             "{tool} did not report isError"
         );
+        // Issue #166: same permanence/no-retry checks as the sibling
+        // `review_accept` test, driven per tool name so a fix that only
+        // updates one of the five cannot pass silently.
+        let refusal = &response["refusal"];
+        assert_ne!(
+            refusal["suggested_next_operation"], "inspect_host_state_and_retry_explicitly",
+            "{tool}: {refusal}"
+        );
+        let detail = refusal["detail"].as_str().unwrap();
+        assert!(detail.contains("permanent"), "{tool}: {detail}");
+        assert!(detail.contains(cli_command), "{tool}: {detail}");
         assert!(
             validates_against_control_plane_response_schema(response),
             "a real, live {tool} refusal response failed to validate against \
