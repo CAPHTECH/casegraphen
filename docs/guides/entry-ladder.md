@@ -153,18 +153,18 @@ Waiting:
   (none)
 
 Obstructions:
-  - obstruction:unresolved-dependency:work-item-implement:work-item-design: work_item:implement depends on unresolved cell work_item:design.
+  - [obstruction:unresolved-dependency:work-item-implement:work-item-design]: work_item:implement depends on unresolved cell work_item:design.
     witnesses: work_item:design
 
 Unaccepted evidence findings:
   (none)
 
 Review gaps:
-  - unreviewed_completion: 1 gap(s) — Completion candidates remain reviewable findings until explicitly accepted or rejected.
+  - [unreviewed_completion]: 1 gap(s) — Completion candidates remain reviewable findings until explicitly accepted or rejected.
     targets: completion_candidate:missing-dependency-resolution:obstruction-unresolved-dependency-work-item-implement-work-item-design
 
 Completion candidates:
-  - completion_candidate:missing-dependency-resolution:obstruction-unresolved-dependency-work-item-implement-work-item-design: A hard dependency must be resolved before downstream readiness.
+  - [completion_candidate:missing-dependency-resolution:obstruction-unresolved-dependency-work-item-implement-work-item-design]: A hard dependency must be resolved before downstream readiness.
     targets: work_item:design, work_item:implement
 ```
 

@@ -93,7 +93,7 @@ fn push_obstructions(output: &mut String, obstructions: &[NativeObstruction]) {
     for obstruction in obstructions {
         writeln!(
             output,
-            "  - {}: {}",
+            "  - [{}]: {}",
             obstruction.id, obstruction.explanation
         )
         .expect("writing to String cannot fail");
@@ -191,12 +191,12 @@ fn push_evidence_finding(
     match requirement_satisfied {
         Some(satisfied) => writeln!(
             output,
-            "  - {}: {} [review_status={}] [requirement_satisfied={satisfied}]",
+            "  - [{}]: {} [review_status={}] [requirement_satisfied={satisfied}]",
             finding.id, finding.summary, finding.review_status
         ),
         None => writeln!(
             output,
-            "  - {}: {} [review_status={}]",
+            "  - [{}]: {} [review_status={}]",
             finding.id, finding.summary, finding.review_status
         ),
     }
@@ -207,7 +207,7 @@ fn push_evidence_finding(
 fn push_evidence_violation(output: &mut String, violation: &NativeEvidenceBoundaryViolation) {
     writeln!(
         output,
-        "  - {}: {} [evidence={}]",
+        "  - [{}]: {} [evidence={}]",
         violation.id, violation.explanation, violation.evidence_id
     )
     .expect("writing to String cannot fail");
@@ -260,7 +260,7 @@ fn push_review_gaps(output: &mut String, review_gaps: &[NativeReviewGap]) {
             .as_str();
         writeln!(
             output,
-            "  - {}: {} gap(s) — {explanation}",
+            "  - [{}]: {} gap(s) — {explanation}",
             review_gap_type_name(*gap_type),
             gaps.len(),
         )
@@ -276,7 +276,7 @@ fn push_review_gaps(output: &mut String, review_gaps: &[NativeReviewGap]) {
 fn push_review_gap(output: &mut String, gap: &NativeReviewGap) {
     writeln!(
         output,
-        "  - {}: {} [target={}] [gap_type={}] [requirement_satisfied={}]",
+        "  - [{}]: {} [target={}] [gap_type={}] [requirement_satisfied={}]",
         gap.id,
         gap.explanation,
         gap.target_id,
@@ -295,7 +295,7 @@ fn push_completion_candidates(output: &mut String, candidates: &[NativeCompletio
     let mut candidates = candidates.iter().collect::<Vec<_>>();
     candidates.sort_by(|left, right| left.id.cmp(&right.id));
     for candidate in candidates {
-        writeln!(output, "  - {}: {}", candidate.id, candidate.rationale)
+        writeln!(output, "  - [{}]: {}", candidate.id, candidate.rationale)
             .expect("writing to String cannot fail");
         push_ids(output, "targets", &candidate.target_ids);
     }
@@ -566,7 +566,7 @@ fn push_history_entry(
                 .join(", ");
             writeln!(
                 output,
-                "  - {}: {} ({} attempts: {listed}) [actor={}] [recorded_at={}]",
+                "  - [{}]: {} ({} attempts: {listed}) [actor={}] [recorded_at={}]",
                 entry.target_revision_id,
                 entry.morphism.morphism_type,
                 attempts.len(),
@@ -576,7 +576,7 @@ fn push_history_entry(
         }
         (Some(trace_id), None) => writeln!(
             output,
-            "  - {}: {} [trace_id={trace_id}] [actor={}] [recorded_at={}]",
+            "  - [{}]: {} [trace_id={trace_id}] [actor={}] [recorded_at={}]",
             entry.target_revision_id,
             entry.morphism.morphism_type,
             entry.actor_id,
@@ -584,7 +584,7 @@ fn push_history_entry(
         ),
         (None, None) => writeln!(
             output,
-            "  - {}: {} [actor={}] [recorded_at={}]",
+            "  - [{}]: {} [actor={}] [recorded_at={}]",
             entry.target_revision_id,
             entry.morphism.morphism_type,
             entry.actor_id,
@@ -786,7 +786,7 @@ mod tests {
                         assert!(rendered.contains(gap.target_id.as_str()));
                     }
                     assert!(
-                        rendered.contains(&format!("{gap_type_name}: {count} gap(s)")),
+                        rendered.contains(&format!("[{gap_type_name}]: {count} gap(s)")),
                         "expected an exact count for {gap_type_name}: {rendered}"
                     );
                 }
@@ -911,7 +911,7 @@ mod tests {
         // different subject, so this checks the finding's line specifically
         // rather than the whole rendered text.)
         assert!(rendered.contains(&format!(
-            "  - finding:work-w2-evidence-missing: work:w2 requires source-backed or accepted \
+            "  - [finding:work-w2-evidence-missing]: work:w2 requires source-backed or accepted \
              evidence {requirement_id}, but none is available. [review_status=unreviewed]\n"
         )));
     }
