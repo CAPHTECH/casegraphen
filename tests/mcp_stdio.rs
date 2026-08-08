@@ -553,6 +553,104 @@ fn operational_host_projects_real_store_state_and_compiles_without_a_custom_rust
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Issue #165: before this, every one of the 28 catalog tools published the
+/// identical description and an unconstrained `"payload": {}`, even though
+/// ten registered `casegraphen.experimental.mcp.*_input.v0` contracts were
+/// already enforced server-side for seventeen of them. Driven against the
+/// real, live `casegraphen-mcp-host`, not asserted in the abstract: every
+/// tool gets a distinct description, each of the seventeen contracted tools
+/// publishes the exact schema id `invoke` deserializes against (so the
+/// published contract and the enforced one cannot silently drift apart),
+/// and the eleven tools with no registered type (five that always refuse,
+/// six that parse `payload` ad hoc) stay honestly unconstrained.
+#[test]
+fn tools_list_publishes_the_real_contracted_payload_schemas_and_distinct_descriptions() {
+    let directory = std::env::temp_dir().join(format!(
+        "casegraphen-mcp-host-tools-list-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    let store = directory.join("store");
+    let artifacts = directory.join("artifacts");
+    let state = directory.join("protocol-state.json");
+    fs::create_dir_all(&directory).unwrap();
+
+    let responses = run_operational_host(
+        &state,
+        &store,
+        &artifacts,
+        &[
+            request(1, "initialize", json!({"protocolVersion":"2025-06-18"})),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+            request(2, "tools/list", json!({"authorization":"token:e2e"})),
+        ],
+    );
+    let tools = responses[1]["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 28);
+
+    let descriptions: std::collections::HashSet<&str> = tools
+        .iter()
+        .map(|tool| tool["description"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        descriptions.len(),
+        28,
+        "every tool must publish a distinct description: {tools:?}"
+    );
+
+    let payload_schema = |name: &str| -> Value {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("tool {name} not in catalog: {tools:?}"))["inputSchema"]
+            ["properties"]["payload"]
+            .clone()
+    };
+
+    // Representative of the seventeen: the published `$ref` names the exact
+    // schema id `invoke` deserializes `payload.compiler_request` against.
+    let compile = payload_schema("compile_deployment_bundle");
+    assert_eq!(
+        compile["properties"]["compiler_request"]["$ref"],
+        "casegraphen.experimental.mcp.proposal_compiler_input.v0",
+        "{compile}"
+    );
+    assert_eq!(
+        compile["required"],
+        json!(["topology_json", "compiler_request"]),
+        "{compile}"
+    );
+
+    // A memory-read tool shares one contract across five tool names.
+    assert_eq!(
+        payload_schema("memory_query")["properties"]["memory_request"]["$ref"],
+        "casegraphen.experimental.mcp.memory_read_input.v0"
+    );
+
+    // A memory-proposal tool: distinct wrapper key and contract from reads.
+    assert_eq!(
+        payload_schema("memory_propose_supersession")["properties"]["memory_proposal"]["$ref"],
+        "casegraphen.experimental.mcp.memory_proposal_input.v0"
+    );
+
+    // The eleven tools with no registered payload type stay unconstrained:
+    // publishing a schema for a shape nothing enforces would be a claim
+    // this delegate cannot back up.
+    for name in [
+        "reconcile_run",
+        "propose_execution_topology",
+        "review_accept",
+    ] {
+        assert_eq!(
+            payload_schema(name),
+            json!({}),
+            "{name} has no registered contract and must stay unconstrained"
+        );
+    }
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejects_a_forged_claim()
 {

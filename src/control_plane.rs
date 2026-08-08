@@ -4,7 +4,7 @@
 //! CaseGraphen, compiler, runtime, verification, and resource decision.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -135,6 +135,46 @@ impl ControlPlaneTool {
                 | Self::ReleaseResources
         )
     }
+
+    /// Per-tool `tools/list` description (#165). What a tool means is a fact
+    /// about the transport-neutral catalog, true regardless of which
+    /// concrete delegate answers a request, so it lives here rather than
+    /// with any one delegate's `payload_schema` (which does vary by
+    /// delegate). Deliberately does not restate a payload's field shape —
+    /// that is `payload_schema`'s job, and copying it into prose would give
+    /// the same fact two implementations that could drift.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::ProposeExecutionTopology => "Lints a candidate execution topology for structural and policy issues before compilation. Read-only: nothing is persisted, reviewed, or accepted. On this host release its behavior is identical to lint_execution_topology. Use compile_deployment_bundle once the topology is ready to compile.",
+            Self::LintExecutionTopology => "Lints a candidate execution topology for structural and policy issues. Read-only: nothing is persisted, reviewed, or accepted. On this host release its behavior is identical to propose_execution_topology. Use compile_deployment_bundle once the topology is ready to compile.",
+            Self::CompileDeploymentBundle => "Compiles a proposal-mode deployment bundle from a topology and compiler request, before any topology or policy review. The result is unreviewed and unaccepted. Once topology and policy artifacts are accepted through `casegraphen topology-review`, use compile_reviewed_deployment_bundle instead.",
+            Self::CompileReviewedDeploymentBundle => "Compiles a deployment bundle under the reviewed-compilation mode the host derives from an accepted topology review at the exact client-observed revision. Refuses if that topology/policy review has not been accepted through `casegraphen topology-review`. Use compile_deployment_bundle instead for a pre-review, proposal-only compile.",
+            Self::AttachRuntimeReport => "Stores one runtime JSONL record content-addressed by its SHA-256 digest and returns its artifact id and hash. Does not parse, validate, or reconcile the record against a topology or case space; use reconcile_run for that. Idempotent on identical bytes, refuses on a hash collision with different bytes.",
+            Self::ReconcileRun => "Reconciles a complete batch of runtime JSONL records against a topology at an exact base revision, deriving per-node completeness. Never itself sets acceptance to true. Optionally validates resource claims against the allocator journal when a resource expectation bundle is supplied. Use reconcile_streaming_run instead for an in-flight run with a live event stream.",
+            Self::ApplyEvidencePacket => "Always refuses on this host release with unsupported_operational_host_tool: evidence-packet application is not implemented here and is permanently delegated to the CaseGraphen CLI (`casegraphen packet apply`). Do not call this tool expecting it to succeed on this host.",
+            Self::ReviewAccept => "Always refuses on this host release with unsupported_operational_host_tool: review acceptance is not implemented here and is permanently delegated to the CaseGraphen CLI (`casegraphen review accept`). Do not call this tool expecting it to succeed on this host.",
+            Self::ReviewReject => "Always refuses on this host release with unsupported_operational_host_tool: review rejection is not implemented here and is permanently delegated to the CaseGraphen CLI (`casegraphen review reject`). Do not call this tool expecting it to succeed on this host.",
+            Self::Resume => "Always refuses on this host release with unsupported_operational_host_tool: dispatch resume is not implemented here and is permanently delegated to the CaseGraphen CLI (`casegraphen packet resume`). Do not call this tool expecting it to succeed on this host.",
+            Self::SupersedeDispatch => "Always refuses on this host release with unsupported_operational_host_tool: superseding a stalled dispatch trace is not implemented here and is permanently delegated to the CaseGraphen CLI (`casegraphen run`/`operate --supersede-trace`). Do not call this tool expecting it to succeed on this host.",
+            Self::ReserveResources => "Reserves resource capacity against a reviewed, verified deployment bundle's declared claims. Authority is derived from the CaseGraphen store, never trusted from the caller. Requires a persisted reviewed deployment bundle, claim cell, and exact accepted-review revision. Use release_resources to record a disposition against an existing reservation.",
+            Self::ReconcileResources => "Reconciles a declared resource request, an existing reservation, and observed runtime allocations into a resource reconciliation report. Read-only against the allocator journal; does not itself reserve or dispose of resources.",
+            Self::ReleaseResources => "Records an explicit disposition (release, expiry, or supersede) against an existing resource reservation in the allocator journal. Requires the reservation and attempt id of a reservation reserve_resources already created.",
+            Self::SimulateExecutionTopology => "Runs a deterministic, seeded simulation of a topology's expected execution shape (fan-out, budgets, expansion) without touching any case space, store, or runtime artifact. Read-only and exploratory; does not compile, reconcile, or reserve anything.",
+            Self::EvaluateExpansionRound => "Evaluates one or more bounded dynamic-expansion rounds against an expansion policy and topology, returning per-round accept/halt decisions. Does not persist an expanded topology, and halts at the first non-continue round.",
+            Self::ReconcileStreamingRun => "Reconciles an in-flight runtime run against a topology using a live event stream, terminal reports, and resource expectations at an exact base revision. Use reconcile_run instead once the run is complete and you have one finished batch of records.",
+            Self::ReconcileVerificationLineage => "Derives producer, verifier, and anchor proofs for the native CLI shell-worker lineage chain from retained artifact-root-relative report, trace, stdout, and stderr files, and evaluates them against a verification policy. Read-only: acceptance stays false and no proof is serialized to the ledger.",
+            Self::ProposeTopologyRedesign => "Diffs a proposed replacement topology against the current one and produces an unreviewed redesign proposal with lint and simulation findings attached. Does not replace or accept the existing topology; topology acceptance remains a CLI/review operation.",
+            Self::MemoryQuery => "Runs a scoped, revision-bound query over the optional Memory Plane and returns ranked, relevance-filtered claims. Read-only.",
+            Self::MemoryExplain => "Returns the full historical and contested context for one memory claim, identified by claim_id: superseding and retracting relations included. Read-only.",
+            Self::MemoryHistory => "Returns the historical and contested timeline for a memory query's scope, including superseded and retracted claims. Read-only.",
+            Self::MemoryConflicts => "Runs a Memory Plane query restricted to contested claims only. Read-only.",
+            Self::MemorySources => "Returns the source records backing memory claims in scope, or one claim's sources when claim_id is given. Read-only.",
+            Self::MemoryProposeClaim => "Reads an artifact-root-relative source file and emits a strict, unreviewed proposal for a new memory claim. Sets acceptance to false; the CLI's review and morphism gates own acceptance.",
+            Self::MemoryProposeSupersession => "Reads an artifact-root-relative source file and emits a strict, unreviewed proposal that one memory claim supersedes another, named by target_claim_id. Sets acceptance to false and does not itself supersede anything.",
+            Self::MemoryProposeRetraction => "Reads an artifact-root-relative source file and emits a strict, unreviewed proposal to retract an existing memory claim, named by target_claim_id. Sets acceptance to false and does not itself retract anything.",
+            Self::MemoryProposeProcedure => "Reads an artifact-root-relative source file and emits a strict, unreviewed proposal for a memory claim of kind procedure. Sets acceptance to false; the CLI's review and morphism gates own acceptance.",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -249,6 +289,18 @@ pub struct ControlPlaneNotification {
 
 pub trait DecisionDelegate {
     fn invoke(&mut self, request: &ControlPlaneRequest) -> Result<Value, ControlPlaneRefusal>;
+
+    /// Wire schema this delegate publishes for one catalog tool's `payload`
+    /// property in `tools/list` (#165). Defaults to fully unconstrained
+    /// (`{}`) — honest for a delegate, like the minimal stdio reference
+    /// adapter, that does not itself define or enforce a registered payload
+    /// shape for the tool. A delegate that does enforce one (deserializing
+    /// straight into a registered `casegraphen.experimental.mcp.*_input.v0`
+    /// type) overrides this to publish that same schema id, so the published
+    /// contract and the enforced one cannot drift apart.
+    fn payload_schema(&self, _tool: ControlPlaneTool) -> Value {
+        json!({})
+    }
 }
 
 pub trait ResourceDelegate {

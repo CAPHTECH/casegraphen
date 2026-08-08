@@ -876,6 +876,116 @@ impl DecisionDelegate for OperationalDelegate {
             )),
         }
     }
+
+    /// Publishes the seventeen registered `casegraphen.experimental.mcp.*_input.v0`
+    /// contracts this delegate actually deserializes `payload` fields into
+    /// (#165). Each `$ref` names the same `..._SCHEMA` constant `invoke`
+    /// deserializes against, so the published contract and the enforced one
+    /// share one source and cannot drift apart. The remaining eleven tools
+    /// (five that always refuse, six that pull fields out of `payload` ad
+    /// hoc with no registered type) keep the trait's unconstrained default:
+    /// publishing a schema for a shape nothing enforces would be a claim
+    /// this delegate cannot back up.
+    fn payload_schema(&self, tool: ControlPlaneTool) -> Value {
+        match tool {
+            ControlPlaneTool::CompileDeploymentBundle => json!({
+                "type": "object",
+                "required": ["topology_json", "compiler_request"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "compiler_request": {"$ref": PROPOSAL_COMPILER_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::CompileReviewedDeploymentBundle => json!({
+                "type": "object",
+                "required": ["topology_json", "compiler_request"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "compiler_request": {"$ref": REVIEWED_COMPILER_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReserveResources => json!({
+                "type": "object",
+                "required": ["resource_request"],
+                "properties": {"resource_request": {"$ref": RESOURCE_RESERVATION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ReleaseResources => json!({
+                "type": "object",
+                "required": ["resource_disposition"],
+                "properties": {"resource_disposition": {"$ref": RESOURCE_DISPOSITION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ReconcileResources => json!({
+                "type": "object",
+                "required": ["resource_reconciliation"],
+                "properties": {"resource_reconciliation": {"$ref": RESOURCE_RECONCILIATION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::EvaluateExpansionRound => json!({
+                "type": "object",
+                "required": ["topology_json", "expansion_round"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "expansion_round": {"$ref": EXPANSION_EVALUATION_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReconcileStreamingRun => json!({
+                "type": "object",
+                "required": ["topology_json", "streaming_run"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "streaming_run": {"$ref": STREAMING_RUN_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReconcileVerificationLineage => json!({
+                "type": "object",
+                "required": ["verification_lineage"],
+                "properties": {"verification_lineage": {"$ref": VERIFICATION_LINEAGE_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::MemoryQuery
+            | ControlPlaneTool::MemoryExplain
+            | ControlPlaneTool::MemoryHistory
+            | ControlPlaneTool::MemoryConflicts
+            | ControlPlaneTool::MemorySources => json!({
+                "type": "object",
+                "required": ["memory_request"],
+                "properties": {"memory_request": {"$ref": MEMORY_READ_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::MemoryProposeClaim
+            | ControlPlaneTool::MemoryProposeSupersession
+            | ControlPlaneTool::MemoryProposeRetraction
+            | ControlPlaneTool::MemoryProposeProcedure => json!({
+                "type": "object",
+                "required": ["memory_proposal"],
+                "properties": {"memory_proposal": {"$ref": MEMORY_PROPOSAL_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ProposeExecutionTopology
+            | ControlPlaneTool::LintExecutionTopology
+            | ControlPlaneTool::AttachRuntimeReport
+            | ControlPlaneTool::ReconcileRun
+            | ControlPlaneTool::SimulateExecutionTopology
+            | ControlPlaneTool::ProposeTopologyRedesign
+            | ControlPlaneTool::ApplyEvidencePacket
+            | ControlPlaneTool::ReviewAccept
+            | ControlPlaneTool::ReviewReject
+            | ControlPlaneTool::Resume
+            | ControlPlaneTool::SupersedeDispatch => json!({}),
+        }
+    }
+}
+
+/// The `topology_json` property shared by every payload schema below that
+/// requires one. Not itself a registered contract: `topology_json` carries
+/// JSON text, not a nested object, and `topology_from_payload` parses it with
+/// `parse_execution_topology` rather than `serde_json::from_value`, so there
+/// is no deserialized Rust type here to own a `..._SCHEMA` constant the
+/// `mcp_input_type_without_contract` gate would look for. The referenced
+/// schema id documents what the text must parse as without this transport
+/// layer validating it as embedded JSON.
+fn topology_json_property() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "JSON text parsed as casegraphen.experimental.execution.topology.v0"
+    })
 }
 
 fn memory_read_tool(
