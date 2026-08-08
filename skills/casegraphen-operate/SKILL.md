@@ -234,8 +234,9 @@ profile and let the reference files below pass its argv selection as
 `"${GATE[@]}"`:
 
 ```sh
+GATE_PROFILE_NAME="<name>"
 GATE_PROFILE_FILE="<path-to-operation-gate-profiles.json>"
-GATE=(--gate-profile <name> --gate-profile-file "$GATE_PROFILE_FILE")
+GATE=(--gate-profile "$GATE_PROFILE_NAME" --gate-profile-file "$GATE_PROFILE_FILE")
 ```
 
 `GATE` is a shell array, expanded at each call site as `"${GATE[@]}"` — quoted,
