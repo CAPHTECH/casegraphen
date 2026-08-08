@@ -11,6 +11,7 @@ use std::{
     fs,
     io::{self, Write},
     path::Path,
+    sync::LazyLock,
 };
 
 pub const CONTROL_PLANE_REQUEST_SCHEMA: &str = "casegraphen.experimental.control_plane.request.v0";
@@ -30,6 +31,34 @@ pub const RESOURCE_TEMPLATES: &[&str] = &[
     "casegraphen://runs/{run_id}",
     "casegraphen://topologies/{topology_id}",
 ];
+
+/// ADR 0034's seven-key claim vocabulary, layer 2 (the host's Rust check),
+/// exported so nothing else in this crate needs its own copy of the key
+/// list — `tests/mcp_stdio.rs`'s `assert_pure_echo` reads the keys from
+/// here, and `tests/control_plane.rs` asserts this key set is exactly
+/// layer 1's (`control_plane.response.v0.schema.json`'s
+/// `properties.result.oneOf[1].properties`). `scripts/independent-mcp-client.py`'s
+/// copy is the deliberate exception: that script is a from-scratch
+/// stdlib-only client written to check the host from outside, so it must
+/// keep restating the vocabulary by hand rather than import anything from
+/// this crate.
+///
+/// `Value` cannot appear in a `const` (`Value::String` allocates), hence
+/// `LazyLock` rather than `pub const` like `RESOURCE_TEMPLATES` above.
+pub static CLAIM_VOCABULARY: LazyLock<Vec<(&'static str, Value)>> = LazyLock::new(|| {
+    vec![
+        ("accepted", Value::Bool(false)),
+        ("mutation_performed", Value::Bool(false)),
+        ("read_only", Value::Bool(true)),
+        ("accepted_runtime_output", Value::Bool(false)),
+        ("proofs_serialized", Value::Bool(false)),
+        ("review_status", Value::String("unreviewed".to_owned())),
+        (
+            "generated_plan_review_status",
+            Value::String("unreviewed".to_owned()),
+        ),
+    ]
+});
 pub const TOOLS: &[ControlPlaneTool] = &[
     ControlPlaneTool::ProposeExecutionTopology,
     ControlPlaneTool::LintExecutionTopology,
@@ -682,19 +711,7 @@ fn wire_claim_violation(result: &Value) -> Option<String> {
 /// wrapper and refusal construction rather than a single function trying to
 /// serve both.
 fn claim_vocabulary_violation(object: &serde_json::Map<String, Value>) -> Option<String> {
-    let pinned_values: &[(&str, Value)] = &[
-        ("accepted", Value::Bool(false)),
-        ("mutation_performed", Value::Bool(false)),
-        ("read_only", Value::Bool(true)),
-        ("accepted_runtime_output", Value::Bool(false)),
-        ("proofs_serialized", Value::Bool(false)),
-        ("review_status", Value::String("unreviewed".to_owned())),
-        (
-            "generated_plan_review_status",
-            Value::String("unreviewed".to_owned()),
-        ),
-    ];
-    for (key, pinned) in pinned_values {
+    for (key, pinned) in CLAIM_VOCABULARY.iter() {
         if let Some(actual) = object.get(*key) {
             if actual != pinned {
                 return Some(format!("{key} = {actual}, but only {pinned} is truthful"));

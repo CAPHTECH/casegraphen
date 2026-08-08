@@ -4,7 +4,7 @@ use casegraphen::{
     control_plane::{
         read_resource, CallerDeclaredAuditContext, ControlPlaneNotification, ControlPlaneRefusal,
         ControlPlaneRequest, ControlPlaneState, ControlPlaneTool, DecisionDelegate,
-        NotificationKind, ResourceDelegate, CONTROL_PLANE_NOTIFICATION_SCHEMA,
+        NotificationKind, ResourceDelegate, CLAIM_VOCABULARY, CONTROL_PLANE_NOTIFICATION_SCHEMA,
         CONTROL_PLANE_REQUEST_SCHEMA, NOTIFICATIONS, RESOURCE_TEMPLATES, TOOLS,
     },
     execution_topology::parse_execution_topology,
@@ -12,6 +12,7 @@ use casegraphen::{
 };
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -159,6 +160,38 @@ fn wire_schema_catalog_is_exactly_compatible_with_the_rust_catalog() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn claim_vocabulary_keys_match_between_the_schema_and_the_rust_check() {
+    // ADR 0034 pins the same seven claim keys at two independent layers:
+    // layer 1 is this schema's `properties.result.oneOf[1].properties`,
+    // layer 2 is `CLAIM_VOCABULARY` (`src/control_plane.rs`), the host's
+    // Rust check. Nothing else compares the two, so a key added to one and
+    // not the other would leave one layer silently weaker than ADR 0034
+    // says it is: a consumer validating against the published schema
+    // couldn't catch a forgery the host would refuse, or the host could
+    // serve what its own published contract forbids.
+    //
+    // `scripts/independent-mcp-client.py`'s `WIRE_CLAIM_VOCABULARY` is
+    // deliberately excluded from this check: it is a from-scratch,
+    // stdlib-only client written to audit the host from outside, and
+    // sharing code with the thing it audits would defeat that purpose.
+    let schema: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root().join("schemas/experimental/control_plane.response.v0.schema.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let schema_keys: BTreeSet<&str> = schema["properties"]["result"]["oneOf"][1]["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let rust_keys: BTreeSet<&str> = CLAIM_VOCABULARY.iter().map(|(key, _)| *key).collect();
+    assert_eq!(schema_keys, rust_keys);
 }
 
 #[test]
@@ -385,6 +418,13 @@ impl DecisionDelegate for FixedResultDelegate {
 }
 
 #[test]
+// Deliberately not built from `CLAIM_VOCABULARY`: that list pairs each key
+// with the one truthful value, while this table pairs each key with a
+// *forbidden* value chosen to exercise the refusal — data `CLAIM_VOCABULARY`
+// does not carry and that collapsing this table would only re-derive the
+// keys from, not the values under test. Keeping it spelled out here also
+// keeps this test readable as "here is what a forgery of each key looks
+// like", which a derived table would obscure.
 fn a_delegate_claiming_a_forbidden_wire_value_is_refused_not_journaled_as_a_result() {
     for (key, forbidden) in [
         ("accepted", json!(true)),

@@ -3,7 +3,7 @@
 use casegraphen::{
     control_plane::{
         ControlPlaneRefusal, ControlPlaneRequest, DecisionDelegate, ResourceDelegate,
-        CONTROL_PLANE_NOTIFICATION_SCHEMA,
+        CLAIM_VOCABULARY, CONTROL_PLANE_NOTIFICATION_SCHEMA,
     },
     mcp_stdio::McpStdioServer,
 };
@@ -716,20 +716,6 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// The seven-key claim vocabulary `claim_vocabulary_violation`
-/// (`src/control_plane.rs`) checks at the top level of a response — kept in
-/// sync with that Rust list by inspection, since this asserts the absence of
-/// the whole vocabulary rather than any particular truthful/forbidden value.
-const CLAIM_VOCABULARY_KEYS: [&str; 7] = [
-    "accepted",
-    "mutation_performed",
-    "read_only",
-    "accepted_runtime_output",
-    "proofs_serialized",
-    "review_status",
-    "generated_plan_review_status",
-];
-
 /// Makes `product-surface.v0.json`'s `pure_echo` classification executable
 /// (ADR 0036 / #122). That classification is the entire reason a top-level
 /// vocabulary pin is safe on `resources/read` at all: the pin *permits* any
@@ -743,9 +729,9 @@ fn assert_pure_echo(name: &str, value: &Value) {
     let object = value
         .as_object()
         .unwrap_or_else(|| panic!("{name} resource content is not an object: {value}"));
-    for key in CLAIM_VOCABULARY_KEYS {
+    for (key, _) in CLAIM_VOCABULARY.iter() {
         assert!(
-            !object.contains_key(key),
+            !object.contains_key(*key),
             "{name} carries top-level {key:?}: {value} — this resource is no longer a \
              pure echo, and its classification in product-surface.v0.json is now wrong"
         );

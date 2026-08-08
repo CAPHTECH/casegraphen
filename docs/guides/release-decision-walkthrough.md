@@ -344,8 +344,8 @@ frontier: ['goal:release-0-9-0', 'work:tag-release']
 
 ## 10. A worker that reports failure
 
-[`release-decision/tag-dry-run.sh`](release-decision/tag-dry-run.sh) checks that
-`Cargo.toml` declares the version being tagged. It declares 0.8.0, so:
+[`release-decision/tag-dry-run.sh`](release-decision/tag-dry-run.sh) checks a
+pinned version against the version being tagged. It pins `0.8.0`, so:
 
 ```
 cli exit status: 0
@@ -354,7 +354,7 @@ unsatisfied: ['evidence:tag-dry-run-clean']
 obstruction: worker_execution_failed - worker worker_binding:tag-dry-run exited with Some(1)
 
 runs/…tag-dry-run~3a1/stdout:
-tag-dry-run FAILED: Cargo.toml declares 0.8.0, tag would be v0.9.0
+tag-dry-run FAILED: declared version is 0.8.0, tag would be v0.9.0
 ```
 
 The CLI exits 0: a failing gate is a domain finding, not a tool error. Evidence
@@ -370,7 +370,7 @@ sed -i '' 's/expected=0.9.0/expected=0.8.0/' "$WORK/tag-dry-run.sh"   # GNU sed:
 ```
 
 ```
-tag-dry-run ok: Cargo.toml declares 0.8.0
+tag-dry-run ok: declared version is 0.8.0
 ```
 
 Through CaseGraphen, with the same accepted plan:
@@ -511,7 +511,7 @@ rather than merged (§7); and a failing gate was a finding, not a crash (§10).
 |---|---|
 | [`release-decision/genesis.case.space.json`](release-decision/genesis.case.space.json) | The lift input: goal, two work cells, two requirement placeholders, four capability cells |
 | [`release-decision/gate-schema-ids.sh`](release-decision/gate-schema-ids.sh) | Worker: every shipped schema carries an `$id` |
-| [`release-decision/tag-dry-run.sh`](release-decision/tag-dry-run.sh) | Worker: `Cargo.toml` declares the version being tagged |
+| [`release-decision/tag-dry-run.sh`](release-decision/tag-dry-run.sh) | Worker: a pinned version matches the version being tagged |
 
 Bindings, plans, and morphism inputs are small JSON documents; their shapes are
 in [`schemas/casegraphen/`](../../schemas/casegraphen/) with an `*.example.json`
