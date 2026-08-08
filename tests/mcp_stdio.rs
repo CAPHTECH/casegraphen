@@ -544,12 +544,57 @@ fn operational_host_projects_real_store_state_and_compiles_without_a_custom_rust
                 5,
                 "tools/call",
                 json!({
-                    "authorization":"token:e2e", "name":"compile_deployment_bundle", "arguments":arguments
+                    "authorization":"token:e2e", "name":"compile_deployment_bundle", "arguments":arguments.clone()
                 }),
             ),
         ],
     );
     assert_eq!(replay[1]["result"]["structuredContent"]["replayed"], true);
+
+    // Issue #135, at the wire. The forgeries above prove the *schema* rejects
+    // a false claim; they say nothing about whether the host would ever emit
+    // one. This does: the state file that host just wrote is edited in place
+    // to carry the claim an earlier build would have journaled, and a third
+    // real `casegraphen-mcp-host` process is started against it. Nothing in
+    // the file says which build wrote it, so the host adopts it exactly as it
+    // would adopt a journal from before #120 — and must refuse rather than
+    // replay the claim.
+    let mut journal: Value = serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+    for index in ["by_request", "by_idempotency_key"] {
+        for entry in journal[index].as_object_mut().unwrap().values_mut() {
+            entry[1]["result"]["accepted"] = json!(true);
+        }
+    }
+    fs::write(&state, serde_json::to_vec(&journal).unwrap()).unwrap();
+
+    let refused = run_operational_host(
+        &state,
+        &store,
+        &artifacts,
+        &[
+            request(6, "initialize", json!({"protocolVersion":"2025-06-18"})),
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+            request(
+                7,
+                "tools/call",
+                json!({
+                    "authorization":"token:e2e", "name":"compile_deployment_bundle", "arguments":arguments
+                }),
+            ),
+        ],
+    );
+    let served = &refused[1]["result"]["structuredContent"];
+    assert_eq!(served["replayed"], true);
+    assert_eq!(served["result"], Value::Null, "{served}");
+    assert_eq!(served["refusal"]["code"], "noncanonical_journaled_response");
+    assert_eq!(refused[1]["result"]["isError"], true);
+    // The refusal this build substitutes must itself satisfy the contract it
+    // is enforcing, or the fix trades one non-conforming wire response for
+    // another.
+    assert!(
+        validates_against_control_plane_response_schema(served),
+        "the replay refusal must validate against control_plane.response.v0: {served}"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 

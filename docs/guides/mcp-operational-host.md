@@ -72,6 +72,39 @@ returns `ambiguous_prior_effect` on replay instead of duplicating the effect.
 The operator reconciles the existing CaseGraphen/artifact state and submits a
 new explicit request; the host never guesses.
 
+Nothing in the journal records which build wrote it, so a journaled response
+is re-checked against the running build's envelope and claim rules each time
+it is replayed rather than trusted because some host once checked it. A
+response that does not satisfy them — a forbidden top-level claim, a foreign
+envelope schema, a result and refusal both present or both absent — is refused
+with `noncanonical_journaled_response` instead of being replayed. Read that
+refusal as a statement about this host, not about the request: the same
+request succeeded under the host that journaled it, that response was already
+served, and whatever it was acted on for should be audited. The refusal
+withholds a response; it does not undo the original delegation's effect. This
+host does not rewrite the journal when it refuses, so its own record of what
+was served survives the refusal. Per-payload contracts are not re-checked on
+replay — a claim nested below the top level of a journaled result is served as
+it was journaled, and validating it stays the consumer's obligation.
+
+The journal's sequence counter is recomputed from its contents at startup
+rather than read from the file, because a counter sitting below the journal
+would otherwise make a later response reuse a number a reconnecting client had
+already passed, losing that response silently. For the same reason the host
+refuses to start on a journal whose sequences cannot order it — a zero, which
+no reconnect cursor can reach, or a number two entries share. That refusal is
+an `InvalidData` startup error naming the offending sequence, and it means the
+file has been edited: no build of this crate writes either shape.
+
+Treat the `--state` file as a trusted-integrity input on par with the binary
+itself. Nothing authenticates it and nothing locks it: it carries no hash
+chain, unlike the resource allocator's journal, and two hosts pointed at one
+path will overwrite each other with the last writer winning. Anyone who can
+write the file can put an arbitrary well-formed response in a caller's hands —
+the re-check above constrains what a replayed response may *claim*, not what
+it may say. Give the file the same filesystem protection as the binary, and
+keep the directory private to one host instance.
+
 Resource allocation has a separate append-only, hash-chained journal. The host
 derives active reservations, release/expiry/supersede dispositions, and rate
 capacity from that journal and its startup configuration. `reserve_resources`
