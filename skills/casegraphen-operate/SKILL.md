@@ -48,12 +48,13 @@ anything itself, so it stops at exactly two things — nothing is dispatchable, 
 
 ```sh
 casegraphen operate --store "$STORE" --case-space-id "$CS" --plan-id <id> \
-  --base-revision-id "$REV" $GATE --max-rounds 20 \
+  --base-revision-id "$REV" "${GATE[@]}" --max-rounds 20 \
   --format json --output operate-report.json
 ```
 
-`$GATE` is the operation-gate selection defined under rule 2 below; `operate`
-is a durable mutation and refuses without it, one missing flag at a time.
+`GATE` is the operation-gate selection array defined under rule 2 below;
+`operate` is a durable mutation and refuses without it, one missing flag at a
+time.
 Read `result.halt` (or the ranked `result.halts`). A halt is not a failure: it
 is the loop reaching something only you can supply — evidence, a review, an
 accepted plan, an explicit retry. Supply that one thing and call `operate`
@@ -229,18 +230,25 @@ casegraphen space reason --store "$STORE" --case-space-id "$CS" --format text --
 
 **2. Every durable mutation needs a valid operation gate.** Five resolved values
 are checked against the case space. Put reusable values in a strict named JSON
-profile and let the reference files below pass its argv selection as `$GATE`:
+profile and let the reference files below pass its argv selection as
+`"${GATE[@]}"`:
 
 ```sh
 GATE_PROFILE_FILE="<path-to-operation-gate-profiles.json>"
-GATE="--gate-profile <name> --gate-profile-file $GATE_PROFILE_FILE"
+GATE=(--gate-profile <name> --gate-profile-file "$GATE_PROFILE_FILE")
 ```
 
-`$GATE` is written unquoted at the call sites, so the shell splits it into
-separate arguments. If you build argv yourself rather than through a shell, pass
-the selection flags as separate elements. The profile document has schema
-`highergraphen.case.operation_gate_profiles.v1`, schema version `1`, and a
-`profiles` array. A complete entry looks like this:
+`GATE` is a shell array, expanded at each call site as `"${GATE[@]}"` — quoted,
+with the `[@]` subscript, so every element lands as its own argument regardless
+of shell. Do not fall back to an unquoted `$GATE` string: bash word-splits an
+unquoted expansion on whitespace, but zsh does not by default
+(`SH_WORD_SPLIT` is off), so the identical unquoted line that works in bash
+hands the whole gate selection to the binary as one argument under zsh — and
+zsh is both this machine's shell and the current macOS default interactive
+shell. If you build argv yourself rather than through a shell, pass the
+selection flags as separate elements the same way. The profile document has
+schema `highergraphen.case.operation_gate_profiles.v1`, schema version `1`,
+and a `profiles` array. A complete entry looks like this:
 
 ```json
 {

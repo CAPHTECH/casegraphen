@@ -4,7 +4,9 @@ Every change is an append to the morphism log. There is no in-place edit.
 Start a session with `REV="$(cur)"`. After each successful durable write, take
 the next revision from that command's report; do not re-read between successful
 writes. After a refusal or failure, recover with `REV="$(cur)"` before retrying.
-`$STORE`, `$CS`, `$GATE`, and `cur()` below are from SKILL.md.
+`$STORE`, `$CS`, `GATE`, and `cur()` below are from SKILL.md. `GATE` is a
+shell array; expand it at each call site as `"${GATE[@]}"`, not unquoted
+`$GATE` (SKILL.md rule 2 explains why).
 
 ```sh
 next_revision() {
@@ -68,7 +70,7 @@ casegraphen morphism propose --store "$STORE" --case-space-id "$CS" --input m.js
 casegraphen morphism check   --store "$STORE" --case-space-id "$CS" --morphism-id <id> --format json
 APPLY_REPORT=apply-report.json
 casegraphen morphism apply   --store "$STORE" --case-space-id "$CS" --morphism-id <id> \
-  --base-revision-id "$REV" --reviewer-id <id> --reason "<why>" $GATE --format json \
+  --base-revision-id "$REV" --reviewer-id <id> --reason "<why>" "${GATE[@]}" --format json \
   --output "$APPLY_REPORT"
 REV="$(next_revision "$APPLY_REPORT")"
 ```
@@ -146,7 +148,7 @@ ATTACH_REPORT=attach-report.json
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$REV" \
   --input test-results.json --satisfies <test-requirement-id> \
-  --input changelog.json --satisfies <changelog-requirement-id> $GATE \
+  --input changelog.json --satisfies <changelog-requirement-id> "${GATE[@]}" \
   --format json --output "$ATTACH_REPORT"
 REV="$(next_revision "$ATTACH_REPORT")"
 ```
@@ -163,7 +165,7 @@ citations of identical bytes land on one artifact cell.
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$REV" \
   --input test-claim.json --satisfies <requirement-id> --artifact test-run.log \
-  $GATE --format json --output "$ATTACH_REPORT"
+  "${GATE[@]}" --format json --output "$ATTACH_REPORT"
 ```
 
 Artifacts are observations, not claims: they are outside acceptability, they
@@ -180,7 +182,7 @@ the requirement:
 REVIEW_REPORT=review-report.json
 casegraphen review accept --store "$STORE" --case-space-id "$CS" \
   --target-id <requirement-id> --reviewer-id <id> --reason "<what you verified>" \
-  --base-revision-id "$REV" --evidence-id <attached evidence id> $GATE --format json \
+  --base-revision-id "$REV" --evidence-id <attached evidence id> "${GATE[@]}" --format json \
   --output "$REVIEW_REPORT"
 REV="$(next_revision "$REVIEW_REPORT")"
 ```
@@ -209,7 +211,7 @@ gh run view <run-id> --repo <owner>/<repo> \
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$REV" \
   --input gate-claim.json --satisfies <requirement-id> --artifact ci-run.json \
-  $GATE --format json --output "$ATTACH_REPORT"
+  "${GATE[@]}" --format json --output "$ATTACH_REPORT"
 ```
 
 The split is the one every artifact makes. `ci-run.json` is the observation:
@@ -235,7 +237,7 @@ a fetch would be about who read what.
 ```sh
 TRANSITION_REPORT=transition-report.json
 casegraphen cell transition --store "$STORE" --case-space-id "$CS" \
-  --base-revision-id "$REV" --cell-id <id> --to <lifecycle> --reason "<why>" $GATE \
+  --base-revision-id "$REV" --cell-id <id> --to <lifecycle> --reason "<why>" "${GATE[@]}" \
   --format json --output "$TRANSITION_REPORT"
 REV="$(next_revision "$TRANSITION_REPORT")"
 ```
@@ -254,7 +256,7 @@ self-accepting (ADR 0015).
 
 ```sh
 casegraphen packet apply --store "$STORE" --case-space-id "$CS" \
-  --base-revision-id "$REV" --packet packet.json $GATE \
+  --base-revision-id "$REV" --packet packet.json "${GATE[@]}" \
   --format json --output "$APPLY_REPORT"
 # result.status: paused_for_review
 # result.halt.halt: needs_review — this pause is a producer of the shared
@@ -270,7 +272,7 @@ operation, runs `review accept` on `result.claim_cell_id`. Only after that:
 ```sh
 casegraphen packet resume --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$REV" --packet packet.json \
-  --completed-through <the apply revision> $GATE \
+  --completed-through <the apply revision> "${GATE[@]}" \
   --format json --output "$RESUME_REPORT"
 ```
 
