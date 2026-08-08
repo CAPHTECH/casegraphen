@@ -150,6 +150,38 @@ driven by relations, so what you want enforced must exist as a relation.
 | B waits on an external event | `B --waits_for(hard)--> <cell>`. Satisfied by completion or by trusted evidence for that cell. |
 | An event finishes a work item | `event --completes--> work`. Removes it from the frontier. |
 
+A `depends_on(hard)` relation copy-pasteable into either place it is written —
+a genesis snapshot's top-level `case_relations`, or a morphism payload's
+`metadata.payload.added_relations` — because both are the identical
+`case_relation` record (`native.case.space.schema.json#/$defs/case_relation`,
+referenced by `$ref` from both sites, not two separate shapes):
+
+```json
+{
+  "id": "relation:release-depends-on-tests",
+  "relation_type": "depends_on",
+  "relation_strength": "hard",
+  "from_id": "work:ship-release",
+  "to_id": "work:run-tests",
+  "evidence_ids": [],
+  "source_ids": [],
+  "provenance": {
+    "source": { "kind": "human" },
+    "confidence": 1.0,
+    "review_status": "unreviewed"
+  },
+  "metadata": {}
+}
+```
+
+This blocks `work:ship-release` on the frontier until `work:run-tests`
+completes (see "A cell counts as complete", next). To add it after genesis,
+wrap it in a morphism: `metadata.payload.added_relations: [<this object>]` —
+see `mutating.md`'s generic-morphism section for `propose` → `check` →
+`apply`. Every other row in the table above is the same `case_relation` shape
+with a different `relation_type` and `relation_strength`; `requires_evidence`
+additionally needs the placeholder evidence cell described below.
+
 **A cell counts as complete if its lifecycle is `resolved`, `accepted`,
 `retired`, or `superseded` — or if its `provenance.review_status` is
 `accepted`.** That second clause makes it easy to author a vacuous dependency:
