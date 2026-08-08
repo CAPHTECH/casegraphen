@@ -302,14 +302,76 @@ configuration is #118's own triage and is not settled here.
   served past layer 1 and layer 2 alike, with `replayed: true` as the only
   signal, and `replayed: true` says a response is a repeat, not that it was
   never checked. Journals are still not migrated. What changed is that the
-  check no longer happens only once: `serve_journaled` re-decides this
-  build's response contract at every point a journaled response becomes a
-  wire response — `execute`'s two replay lookups and `replay_after`'s
-  reconnect cursor — reusing `wire_claim_violation` rather than restating it,
-  and refuses with `noncanonical_journaled_response` rather than replaying a
-  claim this build would not have journaled. The guarantee is now a property
-  of service rather than of provenance, so it needs no record of which build
-  wrote the state, and no epoch a maintainer has to remember to bump.
+  check no longer happens only once: `serve_journaled` re-decides **layers 1
+  and 2** at every point a journaled response becomes a wire response —
+  `execute`'s two replay lookups and `replay_after`'s reconnect cursor —
+  reusing `wire_claim_violation` rather than restating it, and refuses with
+  `noncanonical_journaled_response` rather than replaying a claim this build
+  would not have journaled. The guarantee is now a property of service rather
+  than of provenance, so it needs no record of which build wrote the state,
+  and no epoch a maintainer has to remember to bump.
+
+  **Layer 3 is not re-decided on the replay path, and stating otherwise
+  would reopen the threat this ADR warns about.** Layer 3 is the per-payload
+  contracts — the omission half of the defense, and the half that governs
+  claims nested below the top level. On the fresh path those are typed
+  structs the delegate constructs, so the shape is right by construction. A
+  journaled response is an `Option<Value>`, and re-deriving the payload
+  contract from it is not merely a second implementation of layer 3: it is
+  not well defined, because the envelope deliberately does not record which
+  tool produced the result — the same property that made this ADR pin the
+  vocabulary rather than require keys — and `replay_after` does not even have
+  the request to ask. So a nested `claim_proposal.accepted: true` in a
+  journaled result is served, with `isError: false`, exactly as it would be
+  on the fresh path; on the replay path that remains a consumer-side
+  obligation. Giving the envelope tool identity would change this, and is a
+  contract decision rather than part of a defect fix.
+
+  **`next_sequence` moved from stored to derived, and the cursor journals are
+  checked at adoption.** This closes a limit on the guarantee above rather
+  than repairing a regression: `sequence` was carried through replay
+  identically before, and is unchanged by the change itself. What the change
+  did was make the limit visible. `replay_after` uses `sequence` as both its
+  filter key and its sort key, so re-deciding what a journaled response may
+  *say* is worth much less while the value deciding whether it is served at
+  all is still taken on trust — a counter rolled back below the journal makes
+  `execute` reissue numbers the journal already holds, and a client
+  reconnecting past that point loses a genuine response with no refusal and
+  `isError: false`.
+
+  `load_durable` now recomputes the counter as the largest sequence across
+  the two response indexes and the notifications. That is exact rather than a
+  repair — `execute` and `publish_notification` are the only writers, both
+  increment before assigning and both always journal what they numbered — and
+  it leaves nothing to forge in either direction, where taking the maximum
+  with the stored value would preserve a counter forged *forward* until
+  `u64::MAX` overflows the next increment.
+
+  Deriving cannot repair a sequence already written into an entry, so
+  adoption also refuses a journal whose cursor-read sequences cannot order
+  it. A zero is invisible to every cursor, including a fresh client's
+  `after_sequence: 0` — the one value with that property, and enough to hide
+  this build's own `noncanonical_journaled_response` refusal from the surface
+  an operator reconnects on. A repeated sequence is the same harm reached the
+  other way. Neither can live in `journaled_response_violation`, the
+  natural-looking home: that predicate runs inside `serve_journaled`, and an
+  entry the cursor filters out never reaches `serve_journaled` at all, so
+  adoption is the only point that sees the whole journal. Only the two
+  journals a cursor reads are checked; `by_idempotency_key` mirrors
+  `by_request`'s responses under a second key, so its sequences legitimately
+  repeat those.
+
+  On reachability, stated honestly rather than talked up: `next_sequence` has
+  had these semantics since the control plane's first commit, so no honest
+  build of any version wrote a state whose counter disagrees with its
+  journal or whose entries carry a zero, and two hosts sharing a `--state`
+  path clobber each other with self-consistent files rather than producing
+  one. Every shape here takes a deliberately edited journal. The reason to
+  derive anyway is `CLAUDE.md`'s rule rather than a threat model — derived
+  state is never stored, the shape #139 removed from the promotion ledger in
+  0.9.1 — and the reason to check at adoption is that a guarantee which
+  stops at the reconnect surface in the one case that matters most there is
+  the kind of overstatement this amendment already had to correct once.
 
   The same reasoning reaches the notification journal, where this ADR's
   `authorizes_action = false` forcing had the identical gap, and it is closed
@@ -320,6 +382,58 @@ configuration is #118's own triage and is not settled here.
   holds no state and `ControlPlaneState` never indexes a resource value — so
   every read reaches the delegate and every read is checked, and ADR 0036's
   extension of the pin needs no replay counterpart.
+
+  **Open questions this change deliberately did not settle.**
+
+  - *Envelope identity on replay.* A replayed response carries the
+    `request_id` of the request that was journaled, not of the request being
+    replayed, and by design: the semantic idempotency digest excludes
+    `request_id`, so a reconnect under a fresh id is meant to return the
+    original response. `serve_journaled` carries those fields over on its
+    refusal arm with a comment saying so, but the same behaviour on the
+    success arm predates this change and was never explicitly decided. It is
+    recorded here rather than changed, because envelope identity semantics
+    are not part of a fix about claim re-validation.
+  - *No lock on the `--state` path.* Nothing prevents two hosts from opening
+    the same state file; last writer wins, and each write is a whole
+    self-consistent state, so the loser's journaled entries are dropped
+    outright rather than corrupted. Deriving the counter does not help there,
+    because nothing about the surviving file is inconsistent. The resource
+    allocator's journal takes an advisory writer lock
+    (`src/resource_allocator.rs`); the protocol journal does not.
+  - *Adoption guarantees are scoped to `load_durable`, not to the type.* The
+    derived counter and the cursor-journal check both live in `load_durable`,
+    which is this crate's only adoption path — `src/mcp_stdio.rs` is the sole
+    consumer and calls nothing else. But `ControlPlaneState` is `pub` and
+    derives `Deserialize`, so a library consumer that deserializes one
+    directly keeps the stored counter and skips the check. Its private fields
+    mean the only thing such a consumer can do with the value is hand it back
+    to `execute` or `replay_after`, which would then run on an underived
+    number and an unvalidated journal. Both remedies are worse than the gap:
+    a `serde(from = ...)` mirror struct duplicates all five fields, and a
+    duplicated definition of the state is precisely the shape that drifts;
+    deleting the field turns `deny_unknown_fields` into a startup rejection of
+    every existing state file, which is the epoch behaviour rejected at the
+    top of this amendment arriving by another door. So the guarantee is a
+    property of *this crate's adoption path*, and saying so is the remedy.
+
+    Note the direction. An earlier reading of this held that `Serialize` let a
+    consumer emit the raw journal past `serve_journaled`; that is wrong,
+    because the private fields give no field-level accessor and nothing in the
+    crate serializes the state to the wire. `Deserialize` is the direction
+    that matters.
+  - *`execute_durable`'s commit-failure path.* The branch where
+    `persist_durable` fails after a delegated effect returns
+    `durable_acknowledgement_failed` while `self` retains the journal entry
+    the failed commit did not persist; the hypothesis is that this leaves a
+    `pending_by_idempotency_key` marker that answers `ambiguous_prior_effect`
+    forever despite a complete journaled response. Two adversarial passes
+    raised it and neither could induce it, because both `persist_durable`
+    calls share one failure mode and one temporary path, so a filesystem-level
+    sabotage cannot fail the second without also failing the first. Settling
+    it needs a unit test with an injectable persist failure. Recorded as an
+    unsettled hypothesis with that method attached, so the next reader does
+    not re-derive the dead end. It is not recorded as cleared.
 - Stable promotion: the declared surface and the declared wire contract stop
   disagreeing about the central invariant, which repairs a latent
   misrepresentation rather than adding a blocker. The promotion ledger's

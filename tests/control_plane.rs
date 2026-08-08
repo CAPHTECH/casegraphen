@@ -634,6 +634,232 @@ fn a_non_object_resource_read_is_not_refused_because_resources_have_no_envelope_
     }
 }
 
+/// Journals three genuine responses and returns the state file, for the
+/// `next_sequence` tests below. Sequences are 1, 2, 3 and the stored counter
+/// is 3.
+fn three_journaled_responses(label: &str) -> (PathBuf, PathBuf) {
+    let directory = std::env::temp_dir().join(format!(
+        "casegraphen-sequence-{label}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("state.json");
+    let mut state = ControlPlaneState::new();
+    let mut delegate = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    for id in ["request:one", "request:two", "request:three"] {
+        state.execute(
+            &request(ControlPlaneTool::AttachRuntimeReport, id),
+            &mut delegate,
+        );
+    }
+    state.persist_durable(&path).unwrap();
+    (directory, path)
+}
+
+#[test]
+fn next_sequence_is_derived_from_the_journal_not_read_from_it() {
+    // Issue #135, the half the first pass missed. `replay_after` uses
+    // `sequence` as both its filter key and its sort key, so the value that
+    // decides whether an entry is served at all was still being taken on
+    // trust while the value's *content* was being re-decided.
+    //
+    // Rolling the stored counter back makes `execute` reissue numbers the
+    // journal already contains. A client reconnecting past that point loses
+    // a genuine response with no refusal and no error — the silent-loss case,
+    // which is worse than the wrong-content case the rest of this fix covers.
+    let (directory, path) = three_journaled_responses("rollback");
+    let mut stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(stored["next_sequence"], json!(3), "precondition");
+    stored["next_sequence"] = json!(0);
+    fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let mut attacked = ControlPlaneState::load_durable(&path).expect("state loads");
+    let mut delegate = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    let fresh = attacked.execute(
+        &request(ControlPlaneTool::AttachRuntimeReport, "request:four"),
+        &mut delegate,
+    );
+    assert!(fresh.refusal.is_none(), "{:?}", fresh.refusal);
+    assert_eq!(
+        fresh.sequence, 4,
+        "a rolled-back counter must not make a new response reuse a journaled sequence"
+    );
+
+    // The point of the sequence: a client that has seen everything through 3
+    // must still be shown the fourth response.
+    let cursor = attacked.replay_after(3);
+    assert_eq!(
+        cursor.len(),
+        1,
+        "a reconnecting client silently lost a genuine response: {:?}",
+        cursor.iter().map(|r| r.sequence).collect::<Vec<_>>()
+    );
+    assert_eq!(cursor[0].request_id, "request:four");
+
+    // And sequences stay unique, which is what makes the cursor a cursor.
+    let mut sequences = attacked
+        .replay_after(0)
+        .iter()
+        .map(|response| response.sequence)
+        .collect::<Vec<_>>();
+    let total = sequences.len();
+    sequences.sort_unstable();
+    sequences.dedup();
+    assert_eq!(sequences.len(), total, "journaled sequences must be unique");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn deriving_next_sequence_reproduces_what_an_honest_state_stored() {
+    // The derivation is exact, not a repair heuristic. `execute` and
+    // `publish_notification` are the only writers, both increment before
+    // assigning and both always journal what they numbered, so a state this
+    // crate wrote already satisfies `next_sequence == max journaled
+    // sequence`. If that ever stops holding, this fails rather than silently
+    // renumbering a healthy journal.
+    let (directory, path) = three_journaled_responses("honest");
+    let stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let loaded = ControlPlaneState::load_durable(&path).expect("state loads");
+    let after_derivation: Value =
+        serde_json::to_value(&loaded).expect("state round-trips through serde");
+    assert_eq!(
+        after_derivation, stored,
+        "deriving next_sequence changed an honest state"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_counter_forged_forward_cannot_overflow_the_next_increment() {
+    // Taking the maximum of the stored counter and the journal would preserve
+    // a counter forged forward; at `u64::MAX` the next `+= 1` overflows.
+    // Deriving outright leaves nothing to forge in either direction.
+    let (directory, path) = three_journaled_responses("forward");
+    let mut stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    stored["next_sequence"] = json!(u64::MAX);
+    fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let mut attacked = ControlPlaneState::load_durable(&path).expect("state loads");
+    let mut delegate = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    let fresh = attacked.execute(
+        &request(ControlPlaneTool::AttachRuntimeReport, "request:four"),
+        &mut delegate,
+    );
+    assert_eq!(fresh.sequence, 4);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_journal_whose_sequences_cannot_order_it_is_never_adopted() {
+    // Deriving the counter stops a rollback from renumbering *future*
+    // responses, but cannot repair a sequence already written into an entry.
+    // Both shapes below silently remove an entry from the reconnect cursor
+    // rather than misordering it, and `replay_after` filters before
+    // `serve_journaled` runs, so no refusal can be produced for them — which
+    // is why adoption, not service, is where they have to be caught.
+    for (case, forged) in [
+        // Zero is invisible to every cursor, including a fresh client's
+        // `after_sequence: 0`. It is the one value with that property, and
+        // enough to hide this build's own replay refusal from an operator.
+        ("zero_sequence", 0_u64),
+        // A repeat is the same harm reached the other way: a client that
+        // advances its cursor past the first entry never sees the second.
+        ("repeated_sequence", 2),
+    ] {
+        let (directory, path) = three_journaled_responses(case);
+        let mut stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let victim = stored["by_request"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+            .find(|entry| entry[1]["sequence"] == json!(3))
+            .expect("the third journaled response");
+        victim[1]["sequence"] = json!(forged);
+        fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+        let error = ControlPlaneState::load_durable(&path)
+            .err()
+            .unwrap_or_else(|| panic!("case {case} must not be adopted"));
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "case {case}");
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[test]
+fn a_sequence_mirrored_across_the_two_response_indexes_is_not_a_duplicate() {
+    // `by_idempotency_key` stores the same responses as `by_request` under a
+    // second key, so every sequence legitimately appears twice across the two
+    // maps. The adoption check must not read that as a duplicate — otherwise
+    // no honest state would load at all. Other tests would catch that by
+    // accident; this pins the reason.
+    let (directory, path) = three_journaled_responses("mirrored");
+    let stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let sequences = |index: &str| {
+        let mut found = stored[index]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|entry| entry[1]["sequence"].as_u64().unwrap())
+            .collect::<Vec<_>>();
+        found.sort_unstable();
+        found
+    };
+    assert_eq!(
+        sequences("by_request"),
+        sequences("by_idempotency_key"),
+        "precondition: the two indexes mirror each other"
+    );
+    assert!(ControlPlaneState::load_durable(&path).is_ok());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_forged_notification_sequence_still_bounds_the_next_response() {
+    // The derivation spans all three journals, not just the response
+    // indexes: a notification carries a sequence from the same counter, so
+    // ignoring it would let a response reuse a notification's number.
+    let (directory, path) = three_journaled_responses("notification");
+    let mut stored: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    stored["notifications"] = json!({
+        "notification:high": ["digest:ignored", {
+            "schema": CONTROL_PLANE_NOTIFICATION_SCHEMA,
+            "notification_id": "notification:high",
+            "sequence": 9,
+            "kind": "review_required",
+            "subject_uri": "casegraphen://spaces/case-1/reviews",
+            "observed_revision_id": null,
+            "payload": {},
+            "authorizes_action": false
+        }]
+    });
+    fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let mut attacked = ControlPlaneState::load_durable(&path).expect("state loads");
+    let mut delegate = CountingDelegate {
+        calls: 0,
+        stale: false,
+    };
+    let fresh = attacked.execute(
+        &request(ControlPlaneTool::AttachRuntimeReport, "request:four"),
+        &mut delegate,
+    );
+    assert_eq!(
+        fresh.sequence, 10,
+        "a response reused a sequence the notification journal already held"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Issue #135. Writes the durable state file an *earlier* build would have
 /// left behind: a legitimately journaled response whose stored envelope is
 /// then rewritten to whatever that build's contract permitted.

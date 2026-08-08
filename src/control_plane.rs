@@ -316,14 +316,136 @@ impl ControlPlaneState {
     }
 
     /// Loads crash-safe protocol state. Missing files create an empty state;
-    /// malformed files are never adopted.
+    /// malformed files are never adopted; and `next_sequence` is recomputed
+    /// from the journal rather than taken from the file.
     pub fn load_durable(path: &Path) -> io::Result<Self> {
         match fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+            Ok(bytes) => serde_json::from_slice::<Self>(&bytes)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+                .and_then(|state| {
+                    state.orderable_cursor_journals()?;
+                    Ok(state.with_derived_next_sequence())
+                }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Self::new()),
             Err(error) => Err(error),
         }
+    }
+
+    /// A sequence that cannot order an entry is a malformed journal, which
+    /// `load_durable` already refuses to adopt (issue #135).
+    ///
+    /// This and the derived counter are guarantees of `load_durable`, not of
+    /// the type. `ControlPlaneState` is `pub` and derives `Deserialize`, so a
+    /// consumer deserializing one directly gets neither; `src/mcp_stdio.rs` is
+    /// this crate's only consumer and goes through `load_durable`. ADR 0034's
+    /// open questions record why neither remedy for that was taken.
+    ///
+    /// Deriving `next_sequence` stops a rolled-back counter from renumbering
+    /// *future* responses, but it cannot repair a sequence already written
+    /// into an entry, and two such values silently remove an entry from the
+    /// reconnect cursor rather than misordering it. `replay_after` filters
+    /// strictly `sequence > after`, so a zero is invisible to every cursor
+    /// including a fresh client's `after_sequence: 0` — the one value with
+    /// that property, and enough to hide this build's own
+    /// `noncanonical_journaled_response` refusal from the surface an operator
+    /// reconnects on. A repeated sequence is the same harm reached the other
+    /// way: a client that advances its cursor past the first entry never sees
+    /// the second.
+    ///
+    /// Neither can be caught in `journaled_response_violation`, which is the
+    /// natural-looking home for it: that predicate runs inside
+    /// `serve_journaled`, and an entry the cursor filters out never reaches
+    /// `serve_journaled` at all. Adoption is the only point that sees the
+    /// whole journal, so the check belongs here.
+    ///
+    /// Only the two journals a cursor reads are checked. `by_idempotency_key`
+    /// mirrors `by_request`'s responses under a second key, so its sequences
+    /// legitimately repeat those and no cursor reads it; it contributes to the
+    /// derivation and nothing else.
+    fn orderable_cursor_journals(&self) -> io::Result<()> {
+        let responses = self
+            .by_request
+            .values()
+            .map(|(_, response)| ("response", response.sequence));
+        let notifications = self
+            .notifications
+            .values()
+            .map(|(_, notification)| ("notification", notification.sequence));
+        let mut seen = BTreeMap::new();
+        for (kind, sequence) in responses.chain(notifications) {
+            if sequence == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "journaled {kind} carries sequence 0, which no build of this crate \
+                         ever assigns and which no reconnect cursor can reach"
+                    ),
+                ));
+            }
+            if seen.insert((kind, sequence), ()).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "sequence {sequence} is journaled by more than one {kind}, so a \
+                         reconnect cursor cannot distinguish them"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `next_sequence` is derived, so it is recomputed on adoption instead of
+    /// trusted (issue #135).
+    ///
+    /// This closes a limit on the guarantee the rest of this fix adds; it is
+    /// not a regression that fix introduced. `sequence` was carried through
+    /// replay identically before, and the value is unchanged by that change.
+    /// What that change did was make the limit visible: re-deciding what a
+    /// journaled response may *say* is worth much less while the value
+    /// deciding whether it is served at all is still taken on trust, because
+    /// `replay_after` uses `sequence` as both its filter key and its sort key.
+    /// A counter rolled back below the journal makes `execute` reissue
+    /// numbers the journal already contains, and a client reconnecting past
+    /// that point loses a genuine response with no refusal and
+    /// `isError: false`. Silent loss is worse than the wrong-content case,
+    /// and it can hide this build's own `noncanonical_journaled_response`
+    /// refusal from the surface an operator reconnects on.
+    ///
+    /// The reachability is honest about itself: `next_sequence` has had these
+    /// semantics since the control plane's first commit, so no honest build
+    /// of any version ever wrote a state whose counter disagrees with its
+    /// journal, and two hosts sharing a `--state` path clobber each other
+    /// with self-consistent files rather than producing one. Getting here
+    /// takes a deliberately edited journal. The reason to derive anyway is
+    /// `CLAUDE.md`'s rule rather than a threat model: derived state is never
+    /// stored, and #139 removed this same shape from the promotion ledger in
+    /// 0.9.1. The counter is recomputable from the journal, so storing it
+    /// only creates a second answer to a question with one.
+    ///
+    /// The recomputation is exact, not a repair. `execute` and
+    /// `publish_notification` are the only two writers, both increment before
+    /// assigning, and both always journal what they numbered; `local_refusal`
+    /// reads the counter without incrementing but its responses are never
+    /// journaled. So in every state this crate writes, `next_sequence` equals
+    /// the largest journaled sequence, and zero when the journal is empty —
+    /// which is exactly what this computes. Taking the maximum with the stored
+    /// value instead would preserve a counter forged *forward*, where
+    /// `u64::MAX` makes the next increment overflow; deriving outright leaves
+    /// no stored value to forge in either direction.
+    fn with_derived_next_sequence(mut self) -> Self {
+        let journaled = self
+            .by_request
+            .values()
+            .chain(self.by_idempotency_key.values())
+            .map(|(_, response)| response.sequence)
+            .chain(
+                self.notifications
+                    .values()
+                    .map(|(_, notification)| notification.sequence),
+            );
+        self.next_sequence = journaled.max().unwrap_or(0);
+        self
     }
 
     /// Executes with a write-ahead pending marker. A crash after a delegated
@@ -751,8 +873,9 @@ fn resource_wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
     }
 }
 
-/// Turns a journaled response into a wire response, re-deciding this build's
-/// response contract instead of trusting that some build already did.
+/// Turns a journaled response into a wire response, re-deciding ADR 0034's
+/// layers 1 and 2 instead of trusting that some build already did. Layer 3 is
+/// not re-decided; see the scope note at the end of this comment.
 ///
 /// ADR 0034 justified checking a delegate result exactly once, at compute
 /// time, on the ground that "a replayed response from this host version was
@@ -776,15 +899,33 @@ fn resource_wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
 /// reconnect cursor all route through it — so adding a fourth replay surface
 /// that does not is the way to reintroduce the defect.
 ///
-/// What this does **not** establish: that a journal is trustworthy. Nothing
-/// authenticates the state file, so anyone who can write it can still put an
-/// arbitrary conforming result in the caller's hands — the seven-key
-/// vocabulary constrains what a stored response may *claim*, not what it may
-/// say. That is the same guarantee `execute` gives a freshly computed result,
-/// which is the point: the journal now buys an attacker exactly nothing that
-/// a compromised delegate would not, where before it bought them the whole
-/// vocabulary. Integrity of the state file itself remains a filesystem
-/// question, deliberately out of this issue's scope.
+/// **Scope, stated precisely, because an overstated guarantee is its own
+/// defect.** Two things this does not establish:
+///
+/// *Layer 3 is not re-decided.* ADR 0034's third layer is the per-payload
+/// contracts, where each record knows what it must say — the omission half of
+/// the defense, and the half that governs claims nested below the top level.
+/// On the fresh path those are typed structs the delegate constructs, so the
+/// shape is right by construction. A journaled response is an
+/// `Option<Value>`, and re-deriving the payload contract from it is not merely
+/// a second implementation of layer 3: it is not well defined, because the
+/// envelope does not record which tool produced the result (ADR 0034 pins the
+/// vocabulary rather than requiring keys for exactly this reason), and
+/// `replay_after` does not even have the request to ask. So a nested
+/// `claim_proposal.accepted: true` in a journaled result is served, with
+/// `isError: false`, exactly as it would be on the fresh path. On the replay
+/// path that remains a consumer-side obligation. Giving the envelope tool
+/// identity would change that, and is a contract decision, not a fix.
+///
+/// *A journal is not trustworthy.* Nothing authenticates the state file, so
+/// anyone who can write it can still put an arbitrary conforming result in
+/// the caller's hands — the seven-key vocabulary constrains what a stored
+/// response may *claim*, not what it may say. That is the same guarantee
+/// `execute` gives a freshly computed result, which is the point: the journal
+/// now buys such a writer nothing a compromised delegate would not, where
+/// before it bought them the whole vocabulary. Integrity of the state file
+/// itself is a filesystem question — see the `--state` note in
+/// `docs/guides/mcp-operational-host.md`.
 fn serve_journaled(response: &ControlPlaneResponse) -> ControlPlaneResponse {
     match journaled_response_violation(response) {
         None => ControlPlaneResponse {
@@ -819,12 +960,22 @@ fn serve_journaled(response: &ControlPlaneResponse) -> ControlPlaneResponse {
 ///
 /// The request-side checks `execute` runs before delegating (schema, identity,
 /// mutation audit context, revision context) are deliberately not re-run here.
+/// Three independent adversarial passes reached this conclusion, so treat this
+/// paragraph as the record of a decision rather than an untested opinion.
+///
 /// They are questions about an input, and a journaled entry is evidence that
 /// the input was already delegated: refusing a replay because today's build
 /// asks more of the request would tell the caller nothing happened, when a
 /// durable effect may have. That trade is worth taking for a response whose
 /// content is false — refusing beats repeating a lie — and is a pure loss for
 /// one that is merely old, so the line is drawn at what the response says.
+///
+/// Re-running them would also buy nothing against the only adversary who
+/// could exploit their absence. The replay lookups compare a digest taken
+/// over the whole request, and anyone able to write the journal computes that
+/// digest themselves, so they can already bind any response to any request
+/// they like. Checking the request again on the way out cannot take that
+/// back.
 fn journaled_response_violation(response: &ControlPlaneResponse) -> Option<String> {
     if response.schema != CONTROL_PLANE_RESPONSE_SCHEMA {
         return Some(format!(
