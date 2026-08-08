@@ -168,9 +168,9 @@ impl<D: DecisionDelegate + ResourceDelegate> McpStdioServer<D> {
                 })).collect::<Vec<_>>()
             })),
             "resources/read" => self.read_resource_request(&params),
-            "tools/list" => {
-                Ok(json!({"tools": TOOLS.iter().map(tool_definition).collect::<Vec<_>>() }))
-            }
+            "tools/list" => Ok(json!({
+                "tools": TOOLS.iter().map(|tool| tool_definition(tool, &self.delegate)).collect::<Vec<_>>()
+            })),
             "tools/call" => self.call_tool(&params),
             "casegraphen/replay" => replay_result(&self.state, &params, false),
             "casegraphen/notifications/replay" => replay_result(&self.state, &params, true),
@@ -315,7 +315,7 @@ fn replay_result(
     }
 }
 
-fn tool_definition(tool: &ControlPlaneTool) -> Value {
+fn tool_definition(tool: &ControlPlaneTool, delegate: &impl DecisionDelegate) -> Value {
     let name = serde_json::to_value(tool).expect("tool serializes");
     let mut required = vec!["request_id", "idempotency_key", "payload"];
     if tool.requires_base_revision() {
@@ -326,7 +326,7 @@ fn tool_definition(tool: &ControlPlaneTool) -> Value {
     }
     json!({
         "name": name,
-        "description": "Delegates this operation to the existing decision owner. Bearer authentication controls host access; caller_declared_audit_context is attribution only.",
+        "description": tool.description(),
         "inputSchema": {
             "type": "object",
             "additionalProperties": false,
@@ -335,7 +335,7 @@ fn tool_definition(tool: &ControlPlaneTool) -> Value {
                 "idempotency_key": {"type": "string", "minLength": 1},
                 "base_revision_id": {"type": "string", "minLength": 1},
                 "caller_declared_audit_context": {"type": "object"},
-                "payload": {}
+                "payload": delegate.payload_schema(*tool)
             },
             "required": required
         }

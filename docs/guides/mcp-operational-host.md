@@ -169,6 +169,18 @@ Configured resources are projections:
   the host;
 - none of these projections or notifications authorizes a mutation.
 
+`spaces/{id}/status` and `spaces/{id}/reviews` default to a bounded summary
+rather than the complete evaluation: `status` returns `case_space_id`,
+`current_revision_id`, `assurance`, `progress`, and `frontier_cell_ids`;
+`reviews` returns `case_space_id`, `current_revision_id`, `review_gap_ids`,
+and `reviewed_cell_ids`. Append `?detail=full` to either URI to get today's
+complete embedding back (`status`'s full `evaluation`, `reviews`'s full
+`review_gaps` and `reviewed_cells`) — every field stays reachable, only the
+default changed. An unrecognized `detail` value refuses with
+`invalid_resource_detail` rather than silently choosing one. `frontier` and
+`revisions/{revision}` are unaffected: `frontier` already returns only
+`readiness`, and `revisions/{revision}` is already an explicit drill-down.
+
 The operational host binds the workflows in
 [`../product-surface.v0.json`](../product-surface.v0.json): topology
 proposal/lint and compilation, content-addressed runtime JSONL attachment and
@@ -176,10 +188,17 @@ reconciliation, simulation, resource reservation/reconciliation, bounded
 expansion, streaming reconciliation, verification lineage reconciliation, and
 redesign proposals, plus revision-bound Memory Plane reads and proposals.
 Acceptance-ledger
-mutations refuse `unsupported_operational_host_tool` and remain owned by the
-main CLI. Host requests still require the client-observed base revision and
-caller audit context where applicable. An actual acceptance-ledger mutation is
-separately authorized by the CLI/store's canonical operation gate; the host
+mutations (`apply_evidence_packet`, `review_accept`, `review_reject`,
+`resume`, `supersede_dispatch`) refuse `unsupported_operational_host_tool`
+and remain owned by the main CLI (`casegraphen packet apply`,
+`casegraphen review accept`/`reject`, `casegraphen packet resume`,
+`casegraphen run`/`operate --supersede-trace`, respectively). The refusal
+states that this is permanent for this host release, not a transient
+condition worth retrying — `suggested_next_operation` does not suggest a
+retry that can never succeed here. Host requests still require the
+client-observed base revision and caller audit context where applicable. An
+actual acceptance-ledger mutation is separately authorized by the CLI/store's
+canonical operation gate; the host
 context cannot substitute for it.
 
 `casegraphen-mcp-host --health-check` reports process capability without

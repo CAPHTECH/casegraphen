@@ -362,7 +362,11 @@ impl DecisionDelegate for OperationalDelegate {
                 let directory = self.artifact_path.join("runtime-ingest");
                 fs::create_dir_all(&directory).map_err(io_refusal)?;
                 let path = directory.join(format!("sha256-{digest}.jsonl"));
-                match fs::OpenOptions::new().create_new(true).write(true).open(&path) {
+                match fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&path)
+                {
                     Ok(mut file) => {
                         use std::io::Write;
                         file.write_all(record.as_bytes()).map_err(io_refusal)?;
@@ -371,7 +375,10 @@ impl DecisionDelegate for OperationalDelegate {
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                         let existing = fs::read(&path).map_err(io_refusal)?;
                         if existing != record.as_bytes() {
-                            return Err(refusal("artifact_hash_collision", "stored runtime record bytes disagree"));
+                            return Err(refusal(
+                                "artifact_hash_collision",
+                                "stored runtime record bytes disagree",
+                            ));
                         }
                     }
                     Err(error) => return Err(io_refusal(error)),
@@ -386,9 +393,15 @@ impl DecisionDelegate for OperationalDelegate {
             ControlPlaneTool::CompileDeploymentBundle => {
                 let topology = topology_from_payload(&request.payload)?;
                 let input: ProposalCompilerInput = serde_json::from_value(
-                    request.payload.get("compiler_request").cloned()
-                        .ok_or_else(|| refusal("invalid_payload", "payload.compiler_request is required"))?
-                ).map_err(|error| refusal("invalid_compiler_request", &error.to_string()))?;
+                    request
+                        .payload
+                        .get("compiler_request")
+                        .cloned()
+                        .ok_or_else(|| {
+                            refusal("invalid_payload", "payload.compiler_request is required")
+                        })?,
+                )
+                .map_err(|error| refusal("invalid_compiler_request", &error.to_string()))?;
                 require_matching_revision(request, &input.base_revision_id)?;
                 let compiler_request = CompilerRequest {
                     mode: CompilationMode::Proposal,
@@ -401,19 +414,19 @@ impl DecisionDelegate for OperationalDelegate {
                     budget_policies: input.budget_policies,
                     expansion_policies: input.expansion_policies,
                 };
-                let bundle = compile_execution_topology(&topology, &compiler_request)
-                    .map_err(|report| refusal(
-                        "compilation_refused",
-                        &serde_json::to_string(&report).expect("compiler report serializes"),
-                    ))?;
+                let bundle =
+                    compile_execution_topology(&topology, &compiler_request).map_err(|report| {
+                        refusal(
+                            "compilation_refused",
+                            &serde_json::to_string(&report).expect("compiler report serializes"),
+                        )
+                    })?;
                 persist_bundle(&self.artifact_path, bundle, false)
             }
             ControlPlaneTool::CompileReviewedDeploymentBundle => {
                 let topology = topology_from_payload(&request.payload)?;
-                let input: ReviewedCompilerInput = payload_value(
-                    &request.payload,
-                    "compiler_request",
-                )?;
+                let input: ReviewedCompilerInput =
+                    payload_value(&request.payload, "compiler_request")?;
                 let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
                     refusal(
                         "explicit_revision_required",
@@ -431,10 +444,9 @@ impl DecisionDelegate for OperationalDelegate {
                     ));
                 }
                 let mode = reviewed_compilation_mode(&replay.case_space, &input.claim_cell_id)
-                    .map_err(|finding| findings_refusal(
-                        "reviewed_compilation_authority_refused",
-                        &finding,
-                    ))?;
+                    .map_err(|finding| {
+                        findings_refusal("reviewed_compilation_authority_refused", &finding)
+                    })?;
                 let compiler_request = CompilerRequest {
                     mode,
                     target: CompilationTarget::GenericJsonlV0,
@@ -446,39 +458,47 @@ impl DecisionDelegate for OperationalDelegate {
                     budget_policies: input.budget_policies,
                     expansion_policies: input.expansion_policies,
                 };
-                let bundle = compile_execution_topology(&topology, &compiler_request)
-                    .map_err(|report| findings_refusal(
-                        "reviewed_compilation_refused",
-                        report.as_ref(),
-                    ))?;
+                let bundle =
+                    compile_execution_topology(&topology, &compiler_request).map_err(|report| {
+                        findings_refusal("reviewed_compilation_refused", report.as_ref())
+                    })?;
                 persist_bundle(&self.artifact_path, bundle, true)
             }
             ControlPlaneTool::ReconcileRun => {
                 let topology = topology_from_payload(&request.payload)?;
                 let jsonl = required_string(&request.payload, "runtime_jsonl")?;
-                let base_revision_id = request
-                    .base_revision_id
-                    .as_deref()
-                    .ok_or_else(|| refusal("explicit_revision_required", "reconcile_run requires the client-observed revision"))?;
+                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(|| {
+                    refusal(
+                        "explicit_revision_required",
+                        "reconcile_run requires the client-observed revision",
+                    )
+                })?;
                 let mut reconciler = GenericJsonlReconciler::new();
                 reconciler.ingest_jsonl(jsonl);
-                let report = if let Some(bundle) = request.payload.get("resource_expectation_bundle") {
+                let report = if let Some(bundle) =
+                    request.payload.get("resource_expectation_bundle")
+                {
                     let bundle: ResourceExpectationBundle = serde_json::from_value(bundle.clone())
-                        .map_err(|error| refusal("invalid_resource_expectation_bundle", &error.to_string()))?;
-                    let expectations = bundle.validate(&topology, base_revision_id)
-                        .map_err(|findings| findings_refusal("resource_expectation_bundle_refused", &findings))?;
+                        .map_err(|error| {
+                            refusal("invalid_resource_expectation_bundle", &error.to_string())
+                        })?;
+                    let expectations =
+                        bundle
+                            .validate(&topology, base_revision_id)
+                            .map_err(|findings| {
+                                findings_refusal("resource_expectation_bundle_refused", &findings)
+                            })?;
                     for entry in &bundle.expectations {
-                        if !self.allocator.contains_exact_reservation(&entry.declaration, &entry.reservation)
+                        if !self
+                            .allocator
+                            .contains_exact_reservation(&entry.declaration, &entry.reservation)
                             .map_err(allocator_refusal)?
                         {
                             return Err(refusal("noncanonical_resource_reservation", "resource expectation does not name an exact allocator journal reservation"));
                         }
                         let journaled_authority = self
                             .allocator
-                            .reviewed_reservation_binding(
-                                &entry.declaration,
-                                &entry.reservation,
-                            )
+                            .reviewed_reservation_binding(&entry.declaration, &entry.reservation)
                             .map_err(allocator_refusal)?;
                         if journaled_authority.as_ref() != entry.reviewed_deployment.as_ref() {
                             return Err(refusal(
@@ -487,7 +507,11 @@ impl DecisionDelegate for OperationalDelegate {
                             ));
                         }
                         for assertion in &entry.disposition_evidence {
-                            if !self.allocator.contains_disposition(assertion).map_err(allocator_refusal)? {
+                            if !self
+                                .allocator
+                                .contains_disposition(assertion)
+                                .map_err(allocator_refusal)?
+                            {
                                 return Err(refusal("noncanonical_resource_disposition", "resource disposition evidence is absent from allocator journal"));
                             }
                         }
@@ -504,10 +528,8 @@ impl DecisionDelegate for OperationalDelegate {
                     .map_err(|error| refusal("serialization_failure", &error.to_string()))
             }
             ControlPlaneTool::ReconcileVerificationLineage => {
-                let input: VerificationLineageInput = payload_value(
-                    &request.payload,
-                    "verification_lineage",
-                )?;
+                let input: VerificationLineageInput =
+                    payload_value(&request.payload, "verification_lineage")?;
                 let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
                     refusal(
                         "explicit_revision_required",
@@ -533,27 +555,22 @@ impl DecisionDelegate for OperationalDelegate {
                     &self.artifact_path,
                     &input.producer_files.execution_trace_path,
                 )?;
-                let stdout_bytes = read_confined_artifact(
-                    &self.artifact_path,
-                    &input.producer_files.stdout_path,
-                )?;
-                let stderr_bytes = read_confined_artifact(
-                    &self.artifact_path,
-                    &input.producer_files.stderr_path,
-                )?;
-                let producer = derive_native_cli_run_producer_proof(
-                    NativeCliRunLineageDerivation {
+                let stdout_bytes =
+                    read_confined_artifact(&self.artifact_path, &input.producer_files.stdout_path)?;
+                let stderr_bytes =
+                    read_confined_artifact(&self.artifact_path, &input.producer_files.stderr_path)?;
+                let producer =
+                    derive_native_cli_run_producer_proof(NativeCliRunLineageDerivation {
                         case_space: &replay.case_space,
                         claim_cell_id: &input.claim_cell_id,
                         worker_report_bytes: &report_bytes,
                         execution_trace_bytes: &trace_bytes,
                         stdout_bytes: &stdout_bytes,
                         stderr_bytes: &stderr_bytes,
-                    },
-                )
-                .map_err(|findings| {
-                    findings_refusal("verification_producer_derivation_refused", &findings)
-                })?;
+                    })
+                    .map_err(|findings| {
+                        findings_refusal("verification_producer_derivation_refused", &findings)
+                    })?;
 
                 let mut review_ids = BTreeSet::new();
                 let mut verifiers = Vec::with_capacity(input.review_morphism_ids.len());
@@ -573,10 +590,7 @@ impl DecisionDelegate for OperationalDelegate {
                             review_morphism_id,
                         )
                         .map_err(|findings| {
-                            findings_refusal(
-                                "verification_verifier_derivation_refused",
-                                &findings,
-                            )
+                            findings_refusal("verification_verifier_derivation_refused", &findings)
                         })?,
                     );
                 }
@@ -647,10 +661,14 @@ impl DecisionDelegate for OperationalDelegate {
                 }))
             }
             ControlPlaneTool::ReserveResources => {
-                let input: ResourceReservationInput = payload_value(&request.payload, "resource_request")?;
-                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
-                    refusal("explicit_revision_required", "resource allocation requires a base revision")
-                )?;
+                let input: ResourceReservationInput =
+                    payload_value(&request.payload, "resource_request")?;
+                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(|| {
+                    refusal(
+                        "explicit_revision_required",
+                        "resource allocation requires a base revision",
+                    )
+                })?;
                 let case_space_id = safe_id(&input.deployment_authority.case_space_id)?;
                 let replay = NativeCaseStore::new(self.store_path.clone())
                     .replay_current_case_space(&case_space_id)
@@ -669,21 +687,23 @@ impl DecisionDelegate for OperationalDelegate {
                     &replay.case_space,
                     &input.deployment_authority.claim_cell_id,
                     &bundle,
-                ).map_err(|finding| findings_refusal(
-                    "reviewed_deployment_authority_refused",
-                    &finding,
-                ))?;
-                let outcome = self.allocator.reserve_reviewed_bounded(
-                    bundle.topology(),
-                    &authority,
-                    base_revision_id,
-                    input.declaration,
-                    input.reservation,
-                    &request.idempotency_key,
-                ).map_err(allocator_refusal)?;
-                let allocator_maintenance = self.maintain_resource_journal(
-                    outcome.snapshot.generation, outcome.replayed,
-                )?;
+                )
+                .map_err(|finding| {
+                    findings_refusal("reviewed_deployment_authority_refused", &finding)
+                })?;
+                let outcome = self
+                    .allocator
+                    .reserve_reviewed_bounded(
+                        bundle.topology(),
+                        &authority,
+                        base_revision_id,
+                        input.declaration,
+                        input.reservation,
+                        &request.idempotency_key,
+                    )
+                    .map_err(allocator_refusal)?;
+                let allocator_maintenance =
+                    self.maintain_resource_journal(outcome.snapshot.generation, outcome.replayed)?;
                 Ok(json!({
                     "topology_content_hash": execution_topology_content_hash(bundle.topology()).expect("typed topology hashes"),
                     "base_revision_id": request.base_revision_id,
@@ -696,10 +716,14 @@ impl DecisionDelegate for OperationalDelegate {
                 }))
             }
             ControlPlaneTool::ReleaseResources => {
-                let input: ResourceDispositionInput = payload_value(&request.payload, "resource_disposition")?;
-                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(||
-                    refusal("explicit_revision_required", "resource disposition requires a base revision")
-                )?;
+                let input: ResourceDispositionInput =
+                    payload_value(&request.payload, "resource_disposition")?;
+                let base_revision_id = request.base_revision_id.as_deref().ok_or_else(|| {
+                    refusal(
+                        "explicit_revision_required",
+                        "resource disposition requires a base revision",
+                    )
+                })?;
                 let binding = self
                     .allocator
                     .reviewed_reservation_binding_by_identity(
@@ -707,10 +731,12 @@ impl DecisionDelegate for OperationalDelegate {
                         &input.assertion.attempt_id,
                     )
                     .map_err(allocator_refusal)?
-                    .ok_or_else(|| refusal(
-                        "reviewed_deployment_authority_required",
-                        "resource disposition target has no reviewed deployment authority",
-                    ))?;
+                    .ok_or_else(|| {
+                        refusal(
+                            "reviewed_deployment_authority_required",
+                            "resource disposition target has no reviewed deployment authority",
+                        )
+                    })?;
                 let case_space_id = safe_id(&binding.case_space_id)?;
                 let replay = NativeCaseStore::new(self.store_path.clone())
                     .replay_current_case_space(&case_space_id)
@@ -721,14 +747,16 @@ impl DecisionDelegate for OperationalDelegate {
                         replay.current_revision_id.to_string(),
                     ));
                 }
-                let outcome = self.allocator.disposition_reviewed_bounded(
-                    base_revision_id,
-                    input.assertion,
-                    &request.idempotency_key,
-                ).map_err(allocator_refusal)?;
-                let allocator_maintenance = self.maintain_resource_journal(
-                    outcome.snapshot.generation, outcome.replayed,
-                )?;
+                let outcome = self
+                    .allocator
+                    .disposition_reviewed_bounded(
+                        base_revision_id,
+                        input.assertion,
+                        &request.idempotency_key,
+                    )
+                    .map_err(allocator_refusal)?;
+                let allocator_maintenance =
+                    self.maintain_resource_journal(outcome.snapshot.generation, outcome.replayed)?;
                 Ok(json!({
                     "base_revision_id": request.base_revision_id,
                     "allocator_event": outcome.event,
@@ -740,7 +768,8 @@ impl DecisionDelegate for OperationalDelegate {
                 }))
             }
             ControlPlaneTool::ReconcileResources => {
-                let input: ResourceReconciliationInput = payload_value(&request.payload, "resource_reconciliation")?;
+                let input: ResourceReconciliationInput =
+                    payload_value(&request.payload, "resource_reconciliation")?;
                 Ok(json!({
                     "base_revision_id": request.base_revision_id,
                     "reconciliation": reconcile_resource_allocations(
@@ -753,7 +782,8 @@ impl DecisionDelegate for OperationalDelegate {
             }
             ControlPlaneTool::SimulateExecutionTopology => {
                 let topology = topology_from_payload(&request.payload)?;
-                let simulation: GraphSimulationRequest = payload_value(&request.payload, "simulation_request")?;
+                let simulation: GraphSimulationRequest =
+                    payload_value(&request.payload, "simulation_request")?;
                 let report = simulate_execution_topology(&topology, &simulation)
                     .map_err(|findings| findings_refusal("simulation_refused", &findings))?;
                 serde_json::to_value(report)
@@ -761,7 +791,8 @@ impl DecisionDelegate for OperationalDelegate {
             }
             ControlPlaneTool::EvaluateExpansionRound => {
                 let topology = topology_from_payload(&request.payload)?;
-                let input: ExpansionEvaluationInput = payload_value(&request.payload, "expansion_round")?;
+                let input: ExpansionEvaluationInput =
+                    payload_value(&request.payload, "expansion_round")?;
                 if input.rounds.is_empty() {
                     return Err(refusal(
                         "expansion_refused",
@@ -770,16 +801,19 @@ impl DecisionDelegate for OperationalDelegate {
                 }
                 let mut controller = ExpansionController::new(input.policy, &topology)
                     .map_err(|findings| findings_refusal("expansion_refused", &findings))?;
-                controller.begin_attempt(&input.attempt_id, &topology)
+                controller
+                    .begin_attempt(&input.attempt_id, &topology)
                     .map_err(|finding| findings_refusal("expansion_refused", &[finding]))?;
                 let mut results = Vec::new();
                 for round in input.rounds {
-                    let result = controller.process_round(
-                        &input.attempt_id,
-                        round.candidates,
-                        round.accounted_round_cost,
-                        round.accounted_round_latency_ms,
-                    ).map_err(|finding| findings_refusal("expansion_refused", &[finding]))?;
+                    let result = controller
+                        .process_round(
+                            &input.attempt_id,
+                            round.candidates,
+                            round.accounted_round_cost,
+                            round.accounted_round_latency_ms,
+                        )
+                        .map_err(|finding| findings_refusal("expansion_refused", &[finding]))?;
                     let terminal = !matches!(
                         result.halt,
                         casegraphen::dynamic_expansion::ExpansionHalt::Continue
@@ -789,7 +823,8 @@ impl DecisionDelegate for OperationalDelegate {
                         break;
                     }
                 }
-                controller.finish_attempt(&input.attempt_id)
+                controller
+                    .finish_attempt(&input.attempt_id)
                     .map_err(|finding| findings_refusal("expansion_refused", &[finding]))?;
                 Ok(json!({
                     "base_revision_id": request.base_revision_id,
@@ -802,16 +837,25 @@ impl DecisionDelegate for OperationalDelegate {
                 let topology = topology_from_payload(&request.payload)?;
                 let input: StreamingRunInput = payload_value(&request.payload, "streaming_run")?;
                 let expected_revision = request.base_revision_id.as_deref().ok_or_else(|| {
-                    refusal("explicit_revision_required", "streaming reconciliation requires an exact case revision")
+                    refusal(
+                        "explicit_revision_required",
+                        "streaming reconciliation requires an exact case revision",
+                    )
                 })?;
                 let case_space_id = safe_id(&input.case_space_id)?;
                 let replay = NativeCaseStore::new(self.store_path.clone())
-                    .replay_current_case_space(&case_space_id).map_err(store_refusal)?;
+                    .replay_current_case_space(&case_space_id)
+                    .map_err(store_refusal)?;
                 if replay.current_revision_id.as_str() != expected_revision {
-                    return Err(ControlPlaneRefusal::stale(expected_revision, replay.current_revision_id.to_string()));
+                    return Err(ControlPlaneRefusal::stale(
+                        expected_revision,
+                        replay.current_revision_id.to_string(),
+                    ));
                 }
                 let acceptance = derive_streaming_acceptance(&replay.case_space, &topology)
-                    .map_err(|finding| findings_refusal("streaming_acceptance_refused", &[finding]))?;
+                    .map_err(|finding| {
+                        findings_refusal("streaming_acceptance_refused", &[finding])
+                    })?;
                 let mut reconciler = GenericJsonlReconciler::new();
                 reconciler.ingest_jsonl(&input.runtime_jsonl);
                 let integration = reconciler.reconcile_with_resources(
@@ -824,7 +868,8 @@ impl DecisionDelegate for OperationalDelegate {
                     &input.resource_expectations,
                     &integration,
                     &acceptance,
-                ).map_err(|findings| findings_refusal("streaming_resource_refused", &findings))?;
+                )
+                .map_err(|findings| findings_refusal("streaming_resource_refused", &findings))?;
                 let observed_artifacts = reconciler.artifact_observations();
                 serde_json::to_value(reconcile_stream(StreamingReconciliationInput {
                     topology: &topology,
@@ -836,14 +881,16 @@ impl DecisionDelegate for OperationalDelegate {
                     resource_permits: Some(&permits),
                     acceptance: Some(&acceptance),
                     run_closed: input.run_closed,
-                })).map_err(|error| refusal("serialization_failure", &error.to_string()))
+                }))
+                .map_err(|error| refusal("serialization_failure", &error.to_string()))
             }
             ControlPlaneTool::ProposeTopologyRedesign => {
                 let old = topology_from_payload(&request.payload)?;
                 let proposed_json = required_string(&request.payload, "proposed_topology_json")?;
                 let proposed = parse_execution_topology(proposed_json)
                     .map_err(|findings| findings_refusal("invalid_proposed_topology", &findings))?;
-                let input: RedesignProposalInput = payload_value(&request.payload, "redesign_request")?;
+                let input: RedesignProposalInput =
+                    payload_value(&request.payload, "redesign_request")?;
                 let proposal = propose_redesign(&old, &proposed, input)
                     .map_err(|findings| findings_refusal("redesign_refused", &findings))?;
                 Ok(json!({
@@ -870,12 +917,121 @@ impl DecisionDelegate for OperationalDelegate {
             | ControlPlaneTool::ReviewAccept
             | ControlPlaneTool::ReviewReject
             | ControlPlaneTool::Resume
-            | ControlPlaneTool::SupersedeDispatch => Err(refusal(
-                "unsupported_operational_host_tool",
-                "this host release supports topology proposal/lint, content-addressed runtime attachment, and canonical run reconciliation; mutation tools remain delegated to the existing CaseGraphen CLI owner",
-            )),
+            | ControlPlaneTool::SupersedeDispatch => {
+                Err(unsupported_operational_host_tool_refusal(request.tool))
+            }
         }
     }
+
+    /// Publishes the seventeen registered `casegraphen.experimental.mcp.*_input.v0`
+    /// contracts this delegate actually deserializes `payload` fields into
+    /// (#165). Each `$ref` names the same `..._SCHEMA` constant `invoke`
+    /// deserializes against, so the published contract and the enforced one
+    /// share one source and cannot drift apart. The remaining eleven tools
+    /// (five that always refuse, six that pull fields out of `payload` ad
+    /// hoc with no registered type) keep the trait's unconstrained default:
+    /// publishing a schema for a shape nothing enforces would be a claim
+    /// this delegate cannot back up.
+    fn payload_schema(&self, tool: ControlPlaneTool) -> Value {
+        match tool {
+            ControlPlaneTool::CompileDeploymentBundle => json!({
+                "type": "object",
+                "required": ["topology_json", "compiler_request"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "compiler_request": {"$ref": PROPOSAL_COMPILER_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::CompileReviewedDeploymentBundle => json!({
+                "type": "object",
+                "required": ["topology_json", "compiler_request"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "compiler_request": {"$ref": REVIEWED_COMPILER_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReserveResources => json!({
+                "type": "object",
+                "required": ["resource_request"],
+                "properties": {"resource_request": {"$ref": RESOURCE_RESERVATION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ReleaseResources => json!({
+                "type": "object",
+                "required": ["resource_disposition"],
+                "properties": {"resource_disposition": {"$ref": RESOURCE_DISPOSITION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ReconcileResources => json!({
+                "type": "object",
+                "required": ["resource_reconciliation"],
+                "properties": {"resource_reconciliation": {"$ref": RESOURCE_RECONCILIATION_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::EvaluateExpansionRound => json!({
+                "type": "object",
+                "required": ["topology_json", "expansion_round"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "expansion_round": {"$ref": EXPANSION_EVALUATION_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReconcileStreamingRun => json!({
+                "type": "object",
+                "required": ["topology_json", "streaming_run"],
+                "properties": {
+                    "topology_json": topology_json_property(),
+                    "streaming_run": {"$ref": STREAMING_RUN_INPUT_SCHEMA}
+                }
+            }),
+            ControlPlaneTool::ReconcileVerificationLineage => json!({
+                "type": "object",
+                "required": ["verification_lineage"],
+                "properties": {"verification_lineage": {"$ref": VERIFICATION_LINEAGE_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::MemoryQuery
+            | ControlPlaneTool::MemoryExplain
+            | ControlPlaneTool::MemoryHistory
+            | ControlPlaneTool::MemoryConflicts
+            | ControlPlaneTool::MemorySources => json!({
+                "type": "object",
+                "required": ["memory_request"],
+                "properties": {"memory_request": {"$ref": MEMORY_READ_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::MemoryProposeClaim
+            | ControlPlaneTool::MemoryProposeSupersession
+            | ControlPlaneTool::MemoryProposeRetraction
+            | ControlPlaneTool::MemoryProposeProcedure => json!({
+                "type": "object",
+                "required": ["memory_proposal"],
+                "properties": {"memory_proposal": {"$ref": MEMORY_PROPOSAL_INPUT_SCHEMA}}
+            }),
+            ControlPlaneTool::ProposeExecutionTopology
+            | ControlPlaneTool::LintExecutionTopology
+            | ControlPlaneTool::AttachRuntimeReport
+            | ControlPlaneTool::ReconcileRun
+            | ControlPlaneTool::SimulateExecutionTopology
+            | ControlPlaneTool::ProposeTopologyRedesign
+            | ControlPlaneTool::ApplyEvidencePacket
+            | ControlPlaneTool::ReviewAccept
+            | ControlPlaneTool::ReviewReject
+            | ControlPlaneTool::Resume
+            | ControlPlaneTool::SupersedeDispatch => json!({}),
+        }
+    }
+}
+
+/// The `topology_json` property shared by every payload schema below that
+/// requires one. Not itself a registered contract: `topology_json` carries
+/// JSON text, not a nested object, and `topology_from_payload` parses it with
+/// `parse_execution_topology` rather than `serde_json::from_value`, so there
+/// is no deserialized Rust type here to own a `..._SCHEMA` constant the
+/// `mcp_input_type_without_contract` gate would look for. The referenced
+/// schema id documents what the text must parse as without this transport
+/// layer validating it as embedded JSON.
+fn topology_json_property() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "description": "JSON text parsed as casegraphen.experimental.execution.topology.v0"
+    })
 }
 
 fn memory_read_tool(
@@ -1085,8 +1241,47 @@ fn replay_exact_memory_case(
     Ok(replay)
 }
 
+/// Which projection a `resources/read` caller asked for (#168). `Summary` is
+/// the default: it is what answers "is this space ready to act on" without
+/// embedding the complete evaluation the way `status`/`reviews` always did.
+/// `Full` restores today's complete embedding — every field this host ever
+/// returned stays reachable, just not the default.
+#[derive(Clone, Copy)]
+enum ResourceDetail {
+    Summary,
+    Full,
+}
+
+/// Splits an optional `?detail=summary|full` query parameter off a resource
+/// URI and returns the bare path plus the requested detail (#168). Not a
+/// `RESOURCE_TEMPLATES` change: `control_plane.catalog.v0`'s `const` pins
+/// the advertised list of URI templates, not the content shape any one of
+/// them returns (ADR 0036 already leaves `status`/`reviews` uncontracted),
+/// so accepting this query suffix does not touch that contract. Every
+/// resource silently ignores `detail` except the two match arms that branch
+/// on it below.
+fn resource_detail(uri: &str) -> Result<(&str, ResourceDetail), ControlPlaneRefusal> {
+    let Some((path, query)) = uri.split_once('?') else {
+        return Ok((uri, ResourceDetail::Summary));
+    };
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("detail=") {
+            return match value {
+                "summary" => Ok((path, ResourceDetail::Summary)),
+                "full" => Ok((path, ResourceDetail::Full)),
+                _ => Err(refusal(
+                    "invalid_resource_detail",
+                    "detail must be \"summary\" or \"full\"",
+                )),
+            };
+        }
+    }
+    Ok((path, ResourceDetail::Summary))
+}
+
 impl ResourceDelegate for OperationalDelegate {
     fn read_resource(&mut self, uri: &str) -> Result<Value, ControlPlaneRefusal> {
+        let (uri, detail) = resource_detail(uri)?;
         let path = uri
             .strip_prefix("casegraphen://")
             .ok_or_else(|| refusal("unsupported_resource_uri", "expected casegraphen URI"))?;
@@ -1101,18 +1296,49 @@ impl ResourceDelegate for OperationalDelegate {
                     .map_err(store_refusal)?;
                 let evaluation = evaluate_native_case(&replay.case_space)
                     .map_err(|error| refusal("case_evaluation_refused", &format!("{error:?}")))?;
-                match parts[2] {
-                    "status" => Ok(json!({
+                match (parts[2], detail) {
+                    // #168: `status` and `reviews` both embedded a complete
+                    // evaluation-derived dump with no way to ask for less —
+                    // measurement found `reviews` is the larger of the two
+                    // (it echoes full cell content), so both get the same
+                    // fix rather than leaving an identical defect standing
+                    // next to the one this issue named. `frontier` is not
+                    // touched: it already returns only `readiness`, not the
+                    // whole evaluation, so it is not the same defect.
+                    // `?detail=full` keeps every field reachable — this is a
+                    // default change, not a removal (ADR 0036 already
+                    // leaves this shape uncontracted; only the *set* of
+                    // advertised URI templates is pinned by
+                    // `control_plane.catalog.v0`'s `const`, which this does
+                    // not touch).
+                    ("status", ResourceDetail::Summary) => Ok(json!({
+                        "case_space_id": replay.case_space_id,
+                        "current_revision_id": replay.current_revision_id,
+                        "assurance": evaluation.assurance,
+                        "progress": evaluation.progress,
+                        "frontier_cell_ids": evaluation.frontier_cell_ids,
+                    })),
+                    ("status", ResourceDetail::Full) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "evaluation": evaluation,
                     })),
-                    "frontier" => Ok(json!({
+                    ("frontier", _) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "readiness": evaluation.readiness,
                     })),
-                    _ => Ok(json!({
+                    (_, ResourceDetail::Summary) => Ok(json!({
+                        "case_space_id": replay.case_space_id,
+                        "current_revision_id": replay.current_revision_id,
+                        "review_gap_ids": evaluation.review_gaps.iter()
+                            .map(|gap| &gap.id).collect::<Vec<_>>(),
+                        "reviewed_cell_ids": replay.case_space.case_cells.iter()
+                            .filter(|cell| cell.provenance.review_status != higher_graphen_core::ReviewStatus::Unreviewed)
+                            .map(|cell| &cell.id)
+                            .collect::<Vec<_>>(),
+                    })),
+                    (_, ResourceDetail::Full) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "review_gaps": evaluation.review_gaps,
@@ -1453,6 +1679,53 @@ fn refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
         supplied_base_revision_id: None,
         current_revision_id: None,
         suggested_next_operation: "inspect_host_state_and_retry_explicitly".to_owned(),
+    }
+}
+
+/// Refusal for the five mutation tools this host release never implements
+/// (#166). Deliberately not built with the generic `refusal()` above:
+/// `inspect_host_state_and_retry_explicitly` is honest advice for the
+/// transient/malformed-input refusals `refusal()` covers elsewhere in this
+/// file, but these five can never succeed on this host release — mutation
+/// is permanently delegated to the CaseGraphen CLI, not merely stalled.
+/// Suggesting a retry costs more than the tokens: an agent that believes it
+/// spends a round trip on a loop the host already knows is futile, and
+/// nothing in the generic wording said the outcome was permanent. This
+/// names the CLI command that actually performs the operation instead of
+/// suggesting the caller retry the same refusal.
+///
+/// `suggested_next_operation` stays a populated string rather than becoming
+/// optional: nothing in this codebase branches on its value (it is prose
+/// for the calling agent, not a machine-actionable directive — no schema
+/// pins an enum of legal values, and no client here parses it), so there is
+/// no established need to widen the wire contract to make it absent. What
+/// was missing was truthful wording, not a different shape.
+fn unsupported_operational_host_tool_refusal(tool: ControlPlaneTool) -> ControlPlaneRefusal {
+    let (operation, cli_command) = match tool {
+        ControlPlaneTool::ApplyEvidencePacket => {
+            ("evidence-packet application", "casegraphen packet apply")
+        }
+        ControlPlaneTool::ReviewAccept => ("review acceptance", "casegraphen review accept"),
+        ControlPlaneTool::ReviewReject => ("review rejection", "casegraphen review reject"),
+        ControlPlaneTool::Resume => ("dispatch resume", "casegraphen packet resume"),
+        ControlPlaneTool::SupersedeDispatch => (
+            "superseding a stalled dispatch trace",
+            "casegraphen run/operate --supersede-trace",
+        ),
+        _ => unreachable!(
+            "called only for the five host-release-unsupported mutation tools; see invoke()'s match arm"
+        ),
+    };
+    ControlPlaneRefusal {
+        code: "unsupported_operational_host_tool".to_owned(),
+        detail: format!(
+            "{operation} is not implemented by this host release. This is permanent for this \
+             release, not a transient condition worth retrying: the operation is delegated to \
+             the existing CaseGraphen CLI owner. Run `{cli_command}` instead."
+        ),
+        supplied_base_revision_id: None,
+        current_revision_id: None,
+        suggested_next_operation: "operate_via_casegraphen_cli".to_owned(),
     }
 }
 
