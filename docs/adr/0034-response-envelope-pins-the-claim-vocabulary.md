@@ -289,9 +289,37 @@ configuration is #118's own triage and is not settled here.
   test inherit the tightened contract with no code change; the live-emission
   sweep in the implementation plan proves every supported tool still
   validates.
-- Old durable journals written by earlier hosts are not migrated; experimental
+- ~~Old durable journals written by earlier hosts are not migrated; experimental
   v0 carries no backward-compatibility obligation, and a replayed response
-  from this host version was checked when first computed.
+  from this host version was checked when first computed.~~
+
+  **Amended by issue #135.** The second clause was true and load-bearing in
+  the wrong direction: it holds only for a response computed by *this*
+  version, and `ControlPlaneState` records nothing that establishes which
+  version wrote it, so it could never be relied on for a journal adopted at
+  startup. A response journaled before layer 2 was tightened — before #120
+  made a non-object result a violation, or before any later change — was
+  served past layer 1 and layer 2 alike, with `replayed: true` as the only
+  signal, and `replayed: true` says a response is a repeat, not that it was
+  never checked. Journals are still not migrated. What changed is that the
+  check no longer happens only once: `serve_journaled` re-decides this
+  build's response contract at every point a journaled response becomes a
+  wire response — `execute`'s two replay lookups and `replay_after`'s
+  reconnect cursor — reusing `wire_claim_violation` rather than restating it,
+  and refuses with `noncanonical_journaled_response` rather than replaying a
+  claim this build would not have journaled. The guarantee is now a property
+  of service rather than of provenance, so it needs no record of which build
+  wrote the state, and no epoch a maintainer has to remember to bump.
+
+  The same reasoning reaches the notification journal, where this ADR's
+  `authorizes_action = false` forcing had the identical gap, and it is closed
+  the identical way and with this ADR's own disposition — the protocol layer
+  owns that record outright, so `force_protocol_owned_facts` is applied when
+  a notification is served out of the journal, not only when it is published.
+  It reaches no further. `resources/read` has no journal — `read_resource`
+  holds no state and `ControlPlaneState` never indexes a resource value — so
+  every read reaches the delegate and every read is checked, and ADR 0036's
+  extension of the pin needs no replay counterpart.
 - Stable promotion: the declared surface and the declared wire contract stop
   disagreeing about the central invariant, which repairs a latent
   misrepresentation rather than adding a blocker. The promotion ledger's

@@ -438,7 +438,7 @@ impl ControlPlaneState {
         let semantic_digest = request_semantic_digest(request);
         if let Some((existing_digest, response)) = self.by_request.get(&request.request_id) {
             return if existing_digest == &digest {
-                replay(response)
+                serve_journaled(response)
             } else {
                 self.local_refusal(
                     request,
@@ -457,7 +457,7 @@ impl ControlPlaneState {
                     "idempotency key names different request content",
                 );
             }
-            return replay(response);
+            return serve_journaled(response);
         }
         if request.schema != CONTROL_PLANE_REQUEST_SCHEMA {
             return self.local_refusal(request, "unsupported_schema", "unsupported request schema");
@@ -524,13 +524,17 @@ impl ControlPlaneState {
         response
     }
 
+    /// Returns journaled responses after a reconnect cursor in logical order.
+    /// This is a second replay surface, not a debugging view — its output
+    /// reaches a caller over `casegraphen/replay` — so it serves through
+    /// `serve_journaled` exactly as `execute`'s two replay lookups do.
     pub fn replay_after(&self, sequence: u64) -> Vec<ControlPlaneResponse> {
         let mut responses = self
             .by_request
             .values()
             .map(|(_, response)| response)
             .filter(|response| response.sequence > sequence)
-            .cloned()
+            .map(serve_journaled)
             .collect::<Vec<_>>();
         responses.sort_by_key(|response| response.sequence);
         responses
@@ -541,9 +545,8 @@ impl ControlPlaneState {
         let mut notifications = self
             .notifications
             .values()
-            .map(|(_, notification)| notification)
+            .map(|(_, notification)| serve_journaled_notification(notification))
             .filter(|notification| notification.sequence > sequence)
-            .cloned()
             .collect::<Vec<_>>();
         notifications.sort_by_key(|notification| notification.sequence);
         notifications
@@ -553,14 +556,13 @@ impl ControlPlaneState {
         &mut self,
         mut notification: ControlPlaneNotification,
     ) -> Result<ControlPlaneNotification, ControlPlaneRefusal> {
-        notification.authorizes_action = false;
-        notification.schema = CONTROL_PLANE_NOTIFICATION_SCHEMA.to_owned();
+        force_protocol_owned_facts(&mut notification);
         let content_digest = notification_digest(&notification);
         if let Some((existing_digest, existing)) =
             self.notifications.get(&notification.notification_id)
         {
             return if existing_digest == &content_digest {
-                Ok(existing.clone())
+                Ok(serve_journaled_notification(existing))
             } else {
                 Err(local_refusal(
                     "notification_id_collision",
@@ -637,12 +639,17 @@ fn local_refusal(code: &str, detail: &str) -> ControlPlaneRefusal {
 /// offending key/value pair found, or `None` if the result carries no
 /// forbidden claim.
 ///
-/// This function is only ever called with a delegate's `Ok(value)` payload
-/// (see `execute`, immediately below), never with the `Err(refusal)` branch.
-/// `control_plane.response.v0`'s top-level `result`/`refusal` exclusivity pin
-/// admits `result: null` only paired with a non-null `refusal` — the shape
-/// `execute` produces from the `Err` branch, which never reaches this
-/// function. A delegate returning `Ok(Value::Null)` is therefore never that
+/// Both call sites establish the same precondition: this function only ever
+/// sees a value that is about to be, or already is, an envelope's `result`
+/// with no accompanying `refusal` — `execute` calls it on a delegate's
+/// `Ok(value)` payload and never on the `Err(refusal)` branch, and
+/// `journaled_response_violation` calls it only from its `(Some(result),
+/// None)` arm. `control_plane.response.v0`'s top-level `result`/`refusal`
+/// exclusivity pin admits `result: null` only paired with a non-null
+/// `refusal` — the shape `execute` produces from the `Err` branch, which
+/// never reaches this function, and the shape
+/// `journaled_response_violation` handles in its own `(None, Some(_))` arm
+/// without consulting this one. A value here is therefore never that
 /// legitimate shape: it would make `result` and `refusal` both serialize to
 /// `null` (`Option<Value>`'s `Some(Value::Null)` and `None` are
 /// indistinguishable on the wire), which is exactly the state the envelope's
@@ -744,11 +751,152 @@ fn resource_wire_claim_refusal(detail: &str) -> ControlPlaneRefusal {
     }
 }
 
-fn replay(response: &ControlPlaneResponse) -> ControlPlaneResponse {
-    ControlPlaneResponse {
-        replayed: true,
-        ..response.clone()
+/// Turns a journaled response into a wire response, re-deciding this build's
+/// response contract instead of trusting that some build already did.
+///
+/// ADR 0034 justified checking a delegate result exactly once, at compute
+/// time, on the ground that "a replayed response from this host version was
+/// checked when first computed". That holds only for *this* version, and
+/// `ControlPlaneState` records nothing that establishes it: it persists
+/// `next_sequence`, the two response indexes, the notifications and the
+/// pending markers, and no marker of the build that wrote them (issue #135).
+/// So a response journaled before #120 made a non-object result a violation,
+/// or before any later tightening, was served past layer 1 and layer 2 alike,
+/// with `replayed: true` as the only signal — and `replayed: true` says a
+/// response is a repeat, not that it was never checked.
+///
+/// Re-deciding here rather than recording an epoch makes the guarantee hold by
+/// construction: a non-conforming journaled response becomes unrepresentable
+/// on the wire, whatever wrote it. It also needs no new stored state, so the
+/// state format is unchanged and nothing is migrated or rejected at startup,
+/// and it depends on no value a human has to remember to bump.
+///
+/// This is the single place a journaled response becomes a wire response —
+/// `execute`'s request-id and idempotency-key lookups and `replay_after`'s
+/// reconnect cursor all route through it — so adding a fourth replay surface
+/// that does not is the way to reintroduce the defect.
+///
+/// What this does **not** establish: that a journal is trustworthy. Nothing
+/// authenticates the state file, so anyone who can write it can still put an
+/// arbitrary conforming result in the caller's hands — the seven-key
+/// vocabulary constrains what a stored response may *claim*, not what it may
+/// say. That is the same guarantee `execute` gives a freshly computed result,
+/// which is the point: the journal now buys an attacker exactly nothing that
+/// a compromised delegate would not, where before it bought them the whole
+/// vocabulary. Integrity of the state file itself remains a filesystem
+/// question, deliberately out of this issue's scope.
+fn serve_journaled(response: &ControlPlaneResponse) -> ControlPlaneResponse {
+    match journaled_response_violation(response) {
+        None => ControlPlaneResponse {
+            replayed: true,
+            ..response.clone()
+        },
+        // The journal is not rewritten. The refusal is derived from the stored
+        // entry on every service, never stored in place of it: overwriting the
+        // entry would destroy the record of what was actually served, and a
+        // stored refusal would be one more piece of state a later build has to
+        // trust rather than re-decide. `replay_after` takes `&self` for the
+        // same reason. Identity fields are carried over so the caller can
+        // correlate this refusal with the response it replaces.
+        Some(detail) => ControlPlaneResponse {
+            schema: CONTROL_PLANE_RESPONSE_SCHEMA.to_owned(),
+            sequence: response.sequence,
+            request_id: response.request_id.clone(),
+            idempotency_key: response.idempotency_key.clone(),
+            replayed: true,
+            authority_facts: response.authority_facts.clone(),
+            result: None,
+            refusal: Some(journaled_response_refusal(&detail)),
+        },
     }
+}
+
+/// The response-side contract `execute` establishes for a freshly computed
+/// response, restated as a question about a journaled one. Layer 1's envelope
+/// pin — the schema identity and `control_plane.response.v0`'s
+/// `result`/`refusal` exclusivity `oneOf` — and layer 2's claim vocabulary,
+/// via `wire_claim_violation` itself rather than a replay-path copy of it.
+///
+/// The request-side checks `execute` runs before delegating (schema, identity,
+/// mutation audit context, revision context) are deliberately not re-run here.
+/// They are questions about an input, and a journaled entry is evidence that
+/// the input was already delegated: refusing a replay because today's build
+/// asks more of the request would tell the caller nothing happened, when a
+/// durable effect may have. That trade is worth taking for a response whose
+/// content is false — refusing beats repeating a lie — and is a pure loss for
+/// one that is merely old, so the line is drawn at what the response says.
+fn journaled_response_violation(response: &ControlPlaneResponse) -> Option<String> {
+    if response.schema != CONTROL_PLANE_RESPONSE_SCHEMA {
+        return Some(format!(
+            "envelope schema is {}, but this build serves only {CONTROL_PLANE_RESPONSE_SCHEMA}",
+            response.schema
+        ));
+    }
+    match (&response.result, &response.refusal) {
+        (Some(result), None) => wire_claim_violation(result),
+        (None, Some(_)) => None,
+        (Some(_), Some(_)) => {
+            Some("envelope carries both a result and a refusal, which its oneOf forbids".to_owned())
+        }
+        (None, None) => Some(
+            "envelope carries neither a result nor a refusal, which its oneOf forbids".to_owned(),
+        ),
+    }
+}
+
+/// Replay counterpart to `wire_claim_refusal`, distinct in code for the reason
+/// `resource_wire_claim_refusal` is — a caller that branches on the code must
+/// be able to tell the surfaces apart — and because it reports a different
+/// fact. `noncanonical_wire_claim` says a delegate produced a forbidden claim
+/// just now, and nothing was served. This says a response *already served*
+/// carried one, and that this host will not serve it again.
+///
+/// The detail says both halves out loud, because the operator meeting this is
+/// meeting a request that is refused today and succeeded yesterday, and the
+/// difference is entirely in this host, not in their request. Two consequences
+/// follow that a bare claim refusal would not carry: whatever the earlier
+/// response was acted on for is suspect, and the original delegation's effect
+/// stands — this refusal withholds a response, it does not undo anything.
+/// `report_host_defect` alone would understate that, so the suggested
+/// operation names the audit first.
+fn journaled_response_refusal(detail: &str) -> ControlPlaneRefusal {
+    ControlPlaneRefusal {
+        code: "noncanonical_journaled_response".to_owned(),
+        detail: format!(
+            "a journaled response for this request does not satisfy this build's response \
+             contract and will not be replayed: {detail}. It was journaled, and served, by a \
+             host whose contract differed from this one's; any effect of that original \
+             delegation stands and is not undone by this refusal."
+        ),
+        supplied_base_revision_id: None,
+        current_revision_id: None,
+        suggested_next_operation: "audit_prior_response_and_report_host_defect".to_owned(),
+    }
+}
+
+/// The two facts `publish_notification` forces rather than accepts from its
+/// caller. Serving a notification back out of the journal forces them again,
+/// for the reason `serve_journaled` re-checks a response: the journal may have
+/// been written by a build that forced something else, or nothing.
+///
+/// The disposition differs from the response path, and does so for ADR 0034's
+/// own stated reason. A notification is a record this protocol layer
+/// constructs and owns outright, so overwriting these two fields overrules no
+/// author and hides nothing — which is why publishing forces rather than
+/// refuses. A response has an author, so its path refuses rather than
+/// launders. Keeping each path's disposition means the rule stated at publish
+/// time and the rule applied at service time are the same rule, in one place.
+fn force_protocol_owned_facts(notification: &mut ControlPlaneNotification) {
+    notification.schema = CONTROL_PLANE_NOTIFICATION_SCHEMA.to_owned();
+    notification.authorizes_action = false;
+}
+
+fn serve_journaled_notification(
+    notification: &ControlPlaneNotification,
+) -> ControlPlaneNotification {
+    let mut served = notification.clone();
+    force_protocol_owned_facts(&mut served);
+    served
 }
 
 fn authority_facts(request: &ControlPlaneRequest) -> ControlPlaneAuthorityFacts {

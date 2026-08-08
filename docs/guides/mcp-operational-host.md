@@ -72,6 +72,18 @@ returns `ambiguous_prior_effect` on replay instead of duplicating the effect.
 The operator reconciles the existing CaseGraphen/artifact state and submits a
 new explicit request; the host never guesses.
 
+Nothing in the journal records which build wrote it, so a journaled response
+is re-checked against the running build's response contract each time it is
+replayed rather than trusted because some host once checked it. A response
+that does not satisfy it — a forbidden top-level claim, a foreign envelope
+schema, a result and refusal both present or both absent — is refused with
+`noncanonical_journaled_response` instead of being replayed. Read that
+refusal as a statement about this host, not about the request: the same
+request succeeded under the host that journaled it, that response was already
+served, and whatever it was acted on for should be audited. The refusal
+withholds a response; it does not undo the original delegation's effect. The
+journal is left intact, so the record of what was served survives.
+
 Resource allocation has a separate append-only, hash-chained journal. The host
 derives active reservations, release/expiry/supersede dispositions, and rate
 capacity from that journal and its startup configuration. `reserve_resources`
