@@ -842,11 +842,24 @@ impl NativeCliCommand {
                 // `--gate-profile`/`--gate-profile-file` pairing check
                 // (`selected_operation_gate_profile`): a malformed
                 // `--gate-profile` alone reaches input parsing instead of
-                // being refused. Whether this command should *resolve* a
-                // gate — it is a durable write, and nothing found in this
-                // tree records why it does not — is left open; this only
-                // stops it from silently accepting and dropping flags that
-                // name an authorization it does not check.
+                // being refused. That write is genuinely ungated — but it is
+                // not an unchecked write: a *registered* binding is
+                // re-verified against tamper at the next gated dispatch.
+                // `inspect_worker_binding` (`ops/run.rs`), called from the
+                // gated `run --step`/`run --frontier`, rejects a mismatched
+                // content hash or resolved identity
+                // (`binding_hash_mismatch`/`binding_identity_mismatch`,
+                // surfaced through `native_halt.rs`'s
+                // `is_binding_integrity_obstruction`) against what an
+                // *accepted plan* recorded. So authorization attaches at the
+                // gated plan acceptance that references the binding, not at
+                // registration — an ordering property, not a hole. Whether
+                // registration itself should require a gate is still left
+                // open (a durable write with none is a real asymmetry, and
+                // nothing found in this tree records a decision either way
+                // — see the #164 issue thread); this only stops the command
+                // from silently accepting and dropping flags that name an
+                // authorization this arm does not check.
                 options.refuse_operation_gate_flags(
                     "binding register",
                     "binding register writes the binding file directly; it does not go through \
