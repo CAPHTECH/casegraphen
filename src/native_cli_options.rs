@@ -517,6 +517,59 @@ impl NativeOptions {
         })
     }
 
+    /// Issue #164: the seven flags `resolve_operation_gate_options` reads
+    /// (`--actor-id`, `--capability-id`, `--operation-scope-id`,
+    /// `--audience`, `--source-boundary-id`, `--gate-profile`,
+    /// `--gate-profile-file`) parse successfully on every command, because
+    /// `consume_arg` recognizes them unconditionally regardless of whether
+    /// the arm that follows ever calls `resolve_operation_gate_options`.
+    /// Most arms are reads no operator would type these on; this is for the
+    /// handful of writes where accepting-and-dropping them creates a false
+    /// belief about whether the write was authorized (#130 drew this same
+    /// line for identity flags — accepted-and-silently-dropped is worse
+    /// than an unknown flag, because nothing downstream ever reads it). Not
+    /// a per-command flag registry — this checks one fixed, named class of
+    /// flag, called from the small set of write arms it actually applies to,
+    /// not from every arm to enumerate what each command accepts.
+    /// `--gate-actor-id` is not included: it is a separate compatibility
+    /// alias belonging only to `resolve_run_family_gate`, checked there.
+    pub(super) fn refuse_operation_gate_flags(
+        &self,
+        command: &str,
+        reason: &str,
+    ) -> Result<(), NativeCliError> {
+        let mut present = Vec::new();
+        if self.actor_id.is_some() {
+            present.push("--actor-id");
+        }
+        if !self.capability_ids.is_empty() {
+            present.push("--capability-id");
+        }
+        if self.operation_scope_id.is_some() {
+            present.push("--operation-scope-id");
+        }
+        if self.audience.is_some() {
+            present.push("--audience");
+        }
+        if self.source_boundary_id.is_some() {
+            present.push("--source-boundary-id");
+        }
+        if self.gate_profile.is_some() {
+            present.push("--gate-profile");
+        }
+        if self.gate_profile_file.is_some() {
+            present.push("--gate-profile-file");
+        }
+        if present.is_empty() {
+            return Ok(());
+        }
+        let flags = present.join(", ");
+        let verb = if present.len() == 1 { "is" } else { "are" };
+        Err(NativeCliError::usage(format!(
+            "{flags} {verb} not accepted by {command}: {reason}"
+        )))
+    }
+
     fn selected_operation_gate_profile(&self) -> Result<OperationGateInputs, NativeCliError> {
         let (name, path) = match (&self.gate_profile, &self.gate_profile_file) {
             (None, None) => return Ok(OperationGateInputs::default()),

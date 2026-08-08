@@ -178,25 +178,50 @@ impl NativeCliCommand {
                 policy: options.require_path("--policy")?,
                 output: options.output,
             }),
-            "propose" => Ok(Self::MemoryPropose {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                input: options.require_path("--input")?,
-                source_record: options.require_path("--source-record")?,
-                source_artifact: options.require_path("--source-artifact")?,
-                policy: options.require_path("--policy")?,
-                output: options.output,
-            }),
-            "index" => match nested {
-                Some("rebuild") => Ok(Self::MemoryIndex {
+            "propose" => {
+                // Issue #164: unlike `morphism propose`/`plan propose`,
+                // `memory propose` (`ops/memory.rs::memory_propose`) writes
+                // nothing at all — it computes and returns the unreviewed
+                // claim proposal document. There is no write here for these
+                // flags to authorize, so refuse them rather than drop them.
+                options.refuse_operation_gate_flags(
+                    "memory propose",
+                    "memory propose computes and returns an unreviewed proposal document; it \
+                     writes nothing to the store for these flags to authorize",
+                )?;
+                Ok(Self::MemoryPropose {
                     store: options.require_store()?,
                     case_space_id: options.require_id("--case-space-id")?,
                     input: options.require_path("--input")?,
+                    source_record: options.require_path("--source-record")?,
+                    source_artifact: options.require_path("--source-artifact")?,
                     policy: options.require_path("--policy")?,
-                    mode: MemoryIndexMode::Rebuild,
-                    index: None,
                     output: options.output,
-                }),
+                })
+            }
+            "index" => match nested {
+                Some("rebuild") => {
+                    // Issue #164: `memory index rebuild`
+                    // (`ops/memory.rs::memory_index`) reports
+                    // `mutation_performed: false` — it is a pure
+                    // computed projection, not a write. Same reasoning as
+                    // `memory propose` just above.
+                    options.refuse_operation_gate_flags(
+                        "memory index rebuild",
+                        "memory index rebuild computes a projection and writes nothing to the \
+                         store (`mutation_performed: false`); there is no write here for an \
+                         operation gate to authorize",
+                    )?;
+                    Ok(Self::MemoryIndex {
+                        store: options.require_store()?,
+                        case_space_id: options.require_id("--case-space-id")?,
+                        input: options.require_path("--input")?,
+                        policy: options.require_path("--policy")?,
+                        mode: MemoryIndexMode::Rebuild,
+                        index: None,
+                        output: options.output,
+                    })
+                }
                 Some("validate") => Ok(Self::MemoryIndex {
                     store: options.require_store()?,
                     case_space_id: options.require_id("--case-space-id")?,
@@ -361,14 +386,31 @@ impl NativeCliCommand {
             NativeOptions::parse("space", args)?
         };
         match operation {
-            "new" => Ok(Self::CaseNew {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                space_id: options.require_id("--space-id")?,
-                title: options.require_string("--title")?,
-                revision_id: options.require_id("--revision-id")?,
-                output: options.output,
-            }),
+            "new" => {
+                // Issue #164: `space new` mints a case space's genesis the
+                // same way `lift` does (`ops/lift.rs`'s `case_new` — same
+                // file, same `import_case_space` call), and carries the same
+                // CLAUDE.md gate exemption: a space made this way has no
+                // capability cells, so no operation gate could ever be
+                // satisfied against it (see that function's
+                // `capability_gate` report note). Refuse the seven gate
+                // flags for the same reason `lift` does, rather than let an
+                // operator believe `space new` authorized anything.
+                options.refuse_operation_gate_flags(
+                    "space new",
+                    "space new mints a case space's genesis, the same sanctioned gate exemption \
+                     as lift (CLAUDE.md); the space it creates has no capability cells, so no \
+                     operation gate could ever be satisfied against it",
+                )?;
+                Ok(Self::CaseNew {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    space_id: options.require_id("--space-id")?,
+                    title: options.require_string("--title")?,
+                    revision_id: options.require_id("--revision-id")?,
+                    output: options.output,
+                })
+            }
             "list" => Ok(Self::CaseList {
                 store: options.require_store()?,
                 output: options.output,
@@ -454,6 +496,22 @@ impl NativeCliCommand {
                  input, never from the command line",
             ));
         }
+        // Issue #164: `lift` performs genesis import — CLAUDE.md's sanctioned
+        // exemption from operation-gate checking — so it never calls
+        // `resolve_operation_gate_options`. That left the seven gate flags
+        // in the same accepted-and-silently-dropped state #130 had already
+        // fixed for `--case-space-id`/`--space-id` above, except the false
+        // belief here is about authorization, not identity: an operator who
+        // types `--actor-id`/`--capability-id`/etc. on `lift` likely believes
+        // the import is gated. It never is, and never can be — the case
+        // space these flags would check an operation gate against does not
+        // exist until this command creates it.
+        options.refuse_operation_gate_flags(
+            "lift",
+            "lift performs genesis import, the sanctioned gate exemption (CLAUDE.md); the case \
+             space these flags would check an operation gate against does not exist until this \
+             command creates it",
+        )?;
         match adapter {
             "native" => Ok(Self::CaseImport {
                 store: options.require_store()?,
@@ -635,12 +693,28 @@ impl NativeCliCommand {
             .ok_or_else(|| NativeCliError::usage("morphism operation must be UTF-8"))?;
         let options = NativeOptions::parse("morphism", args)?;
         match operation {
-            "propose" => Ok(Self::MorphismPropose {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                input: options.require_path("--input")?,
-                output: options.output,
-            }),
+            "propose" => {
+                // Issue #164: `morphism propose` — `references/mutating.md`
+                // calls it "the only ungated write" — writes a proposal file
+                // to disk but never appends to the case space's morphism
+                // log, so it never calls `resolve_operation_gate_options`.
+                // The gate flags parsed successfully anyway and were
+                // silently dropped, letting an operator believe the
+                // proposal itself was authorized when authorization is only
+                // ever decided at the gated `morphism apply` that follows.
+                options.refuse_operation_gate_flags(
+                    "morphism propose",
+                    "morphism propose only records the candidate as an unreviewed proposal on \
+                     disk; the durable append to the case space happens at the gated `morphism \
+                     apply`, which is where these flags belong",
+                )?;
+                Ok(Self::MorphismPropose {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    input: options.require_path("--input")?,
+                    output: options.output,
+                })
+            }
             "check" => Ok(Self::MorphismCheck {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
@@ -700,12 +774,26 @@ impl NativeCliCommand {
             .ok_or_else(|| NativeCliError::usage("plan operation must be UTF-8"))?;
         let options = NativeOptions::parse("plan", args)?;
         match operation {
-            "propose" => Ok(Self::PlanPropose {
-                store: options.require_store()?,
-                case_space_id: options.require_id("--case-space-id")?,
-                input: options.require_path("--input")?,
-                output: options.output,
-            }),
+            "propose" => {
+                // Issue #164: same shape as `morphism propose` above — `plan
+                // propose` writes the plan file to disk but never appends to
+                // the case space's morphism log, so it never calls
+                // `resolve_operation_gate_options`. Refuse the gate flags
+                // rather than silently drop them; authorization is decided
+                // at the gated `plan accept`/`plan reject` that follows.
+                options.refuse_operation_gate_flags(
+                    "plan propose",
+                    "plan propose only records the candidate as an unreviewed proposal on disk; \
+                     authorization is decided at the gated `plan accept`/`plan reject` that \
+                     follows, not here",
+                )?;
+                Ok(Self::PlanPropose {
+                    store: options.require_store()?,
+                    case_space_id: options.require_id("--case-space-id")?,
+                    input: options.require_path("--input")?,
+                    output: options.output,
+                })
+            }
             "check" => Ok(Self::PlanCheck {
                 store: options.require_store()?,
                 case_space_id: options.require_id("--case-space-id")?,
@@ -746,11 +834,44 @@ impl NativeCliCommand {
     ) -> Result<Self, NativeCliError> {
         let options = NativeOptions::parse("binding", args)?;
         match operation.to_str() {
-            Some("register") => Ok(Self::BindingRegister {
-                store: options.require_store()?,
-                input: options.require_path("--input")?,
-                output: options.output,
-            }),
+            Some("register") => {
+                // Issue #164: `binding register` (`ops/binding.rs`) writes
+                // the binding file straight into the store's `bindings/`
+                // directory — it never calls `resolve_operation_gate_options`
+                // at all, so unlike every gated command it also skips the
+                // `--gate-profile`/`--gate-profile-file` pairing check
+                // (`selected_operation_gate_profile`): a malformed
+                // `--gate-profile` alone reaches input parsing instead of
+                // being refused. That write is genuinely ungated — but it is
+                // not an unchecked write: a *registered* binding is
+                // re-verified against tamper at the next gated dispatch.
+                // `inspect_worker_binding` (`ops/run.rs`), called from the
+                // gated `run --step`/`run --frontier`, rejects a mismatched
+                // content hash or resolved identity
+                // (`binding_hash_mismatch`/`binding_identity_mismatch`,
+                // surfaced through `native_halt.rs`'s
+                // `is_binding_integrity_obstruction`) against what an
+                // *accepted plan* recorded. So authorization attaches at the
+                // gated plan acceptance that references the binding, not at
+                // registration — an ordering property, not a hole. Whether
+                // registration itself should require a gate is still left
+                // open (a durable write with none is a real asymmetry, and
+                // nothing found in this tree records a decision either way
+                // — see the #164 issue thread); this only stops the command
+                // from silently accepting and dropping flags that name an
+                // authorization this arm does not check.
+                options.refuse_operation_gate_flags(
+                    "binding register",
+                    "binding register writes the binding file directly; it does not go through \
+                     the operation-gate-checked append to the case space's morphism log that \
+                     these flags would authorize",
+                )?;
+                Ok(Self::BindingRegister {
+                    store: options.require_store()?,
+                    input: options.require_path("--input")?,
+                    output: options.output,
+                })
+            }
             Some(_) | None => Err(NativeCliError::usage("unsupported native binding command")),
         }
     }
