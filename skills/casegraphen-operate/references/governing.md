@@ -2,7 +2,9 @@
 
 Use this when the work is executed by an agent runtime (LangGraph-class or any
 multi-agent harness) and CaseGraphen is the record of what was accepted.
-`$STORE`, `$CS`, `$GATE`, and `cur()` are from SKILL.md.
+`$STORE`, `$CS`, `GATE`, and `cur()` are from SKILL.md. `GATE` is a shell
+array; expand it at each call site as `"${GATE[@]}"`, not unquoted `$GATE`
+(SKILL.md rule 2 explains why).
 
 The division of labour is fixed by
 [ADR 0002](https://github.com/CAPHTECH/casegraphen/blob/main/docs/adr/0002-graph-engineering-positioning.md):
@@ -86,17 +88,17 @@ The loop per governed node, once the runtime reports:
 # 1. record what the runtime produced, untrusted
 casegraphen evidence attach --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$(cur)" --input node-output.evidence.json \
-  --satisfies <requirement-id> $GATE --format json
+  --satisfies <requirement-id> "${GATE[@]}" --format json
 
 # 2. a human (or a deterministic check) promotes it — this is the acceptance
 casegraphen review accept --store "$STORE" --case-space-id "$CS" \
   --target-id <requirement-id> --reviewer-id <id> --reason "<what was verified>" \
-  --base-revision-id "$(cur)" --evidence-id <attached id> $GATE --format json
+  --base-revision-id "$(cur)" --evidence-id <attached id> "${GATE[@]}" --format json
 
 # 3. only now does the node's state change
 casegraphen cell transition --store "$STORE" --case-space-id "$CS" \
   --base-revision-id "$(cur)" --cell-id <node> --to resolved \
-  --reason "<why>" $GATE --format json
+  --reason "<why>" "${GATE[@]}" --format json
 
 # 4. what may proceed next is derived, not decided by you
 casegraphen space frontier --store "$STORE" --case-space-id "$CS" --format json
