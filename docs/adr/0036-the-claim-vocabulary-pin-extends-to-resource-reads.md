@@ -36,6 +36,32 @@ returns:
 | `runs/{run_id}` | `read_external_projection` output | claim-bearing |
 | `topologies/{topology_id}` | `read_external_projection` output | claim-bearing |
 
+**Note (2026-08-08, issue #168):** the `status` and `reviews` shapes in this
+table are as decided here, not as currently returned. `status`'s default
+response measured 4,658–4,666 characters against a freshly lifted three-cell
+case space — the complete evaluation, even when nothing is blocked — where
+answering "is this space ready" needs `assurance`, `progress`, and
+`frontier_cell_ids`: about 150–265 characters. `reviews` turned out to carry
+the identical defect, and measured larger (6,162–6,163 characters, the whole
+`review_gaps` array plus full `reviewed_cells` content). Both now default to
+a bounded summary (`status`: `{case_space_id, current_revision_id, assurance,
+progress, frontier_cell_ids}`; `reviews`: `{case_space_id,
+current_revision_id, review_gap_ids, reviewed_cell_ids}`), with the shapes in
+the table below still fully reachable via an explicit `?detail=full` query
+suffix on the same URI. This does not reopen this ADR's decision: the
+classification (`pure echo`, uncontracted) and the layer-2 vocabulary pin are
+unaffected — `?detail=full` and `?detail=summary` are not
+`RESOURCE_TEMPLATES` entries (that list stays exactly as pinned by
+`control_plane.catalog.v0`'s `const`), only the content each of the two
+existing templates returns by default. `frontier` and
+`revisions/{revision}` were measured too (1,094 and 416 characters against
+the same fixture) and left unchanged: `frontier` already returns only
+`readiness`, not the whole evaluation, and `revisions/{revision}` is already
+an explicit drill-down by revision id. `halts`, `runs`, and `topologies`
+were also measured (272–318 characters against a minimal fixture) and are a
+different shape entirely — caller-controlled external content the host only
+wraps, not evaluation output the host itself decides how much of to return.
+
 The four pure-echo resources never place any of the seven vocabulary keys at
 their own top level. `review_status` appears only nested, inside
 `reviews`'s `reviewed_cells[*].provenance` — a real, ledger-observed review

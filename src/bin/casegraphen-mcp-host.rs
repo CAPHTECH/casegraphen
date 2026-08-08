@@ -1241,8 +1241,47 @@ fn replay_exact_memory_case(
     Ok(replay)
 }
 
+/// Which projection a `resources/read` caller asked for (#168). `Summary` is
+/// the default: it is what answers "is this space ready to act on" without
+/// embedding the complete evaluation the way `status`/`reviews` always did.
+/// `Full` restores today's complete embedding — every field this host ever
+/// returned stays reachable, just not the default.
+#[derive(Clone, Copy)]
+enum ResourceDetail {
+    Summary,
+    Full,
+}
+
+/// Splits an optional `?detail=summary|full` query parameter off a resource
+/// URI and returns the bare path plus the requested detail (#168). Not a
+/// `RESOURCE_TEMPLATES` change: `control_plane.catalog.v0`'s `const` pins
+/// the advertised list of URI templates, not the content shape any one of
+/// them returns (ADR 0036 already leaves `status`/`reviews` uncontracted),
+/// so accepting this query suffix does not touch that contract. Every
+/// resource silently ignores `detail` except the two match arms that branch
+/// on it below.
+fn resource_detail(uri: &str) -> Result<(&str, ResourceDetail), ControlPlaneRefusal> {
+    let Some((path, query)) = uri.split_once('?') else {
+        return Ok((uri, ResourceDetail::Summary));
+    };
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("detail=") {
+            return match value {
+                "summary" => Ok((path, ResourceDetail::Summary)),
+                "full" => Ok((path, ResourceDetail::Full)),
+                _ => Err(refusal(
+                    "invalid_resource_detail",
+                    "detail must be \"summary\" or \"full\"",
+                )),
+            };
+        }
+    }
+    Ok((path, ResourceDetail::Summary))
+}
+
 impl ResourceDelegate for OperationalDelegate {
     fn read_resource(&mut self, uri: &str) -> Result<Value, ControlPlaneRefusal> {
+        let (uri, detail) = resource_detail(uri)?;
         let path = uri
             .strip_prefix("casegraphen://")
             .ok_or_else(|| refusal("unsupported_resource_uri", "expected casegraphen URI"))?;
@@ -1257,18 +1296,49 @@ impl ResourceDelegate for OperationalDelegate {
                     .map_err(store_refusal)?;
                 let evaluation = evaluate_native_case(&replay.case_space)
                     .map_err(|error| refusal("case_evaluation_refused", &format!("{error:?}")))?;
-                match parts[2] {
-                    "status" => Ok(json!({
+                match (parts[2], detail) {
+                    // #168: `status` and `reviews` both embedded a complete
+                    // evaluation-derived dump with no way to ask for less —
+                    // measurement found `reviews` is the larger of the two
+                    // (it echoes full cell content), so both get the same
+                    // fix rather than leaving an identical defect standing
+                    // next to the one this issue named. `frontier` is not
+                    // touched: it already returns only `readiness`, not the
+                    // whole evaluation, so it is not the same defect.
+                    // `?detail=full` keeps every field reachable — this is a
+                    // default change, not a removal (ADR 0036 already
+                    // leaves this shape uncontracted; only the *set* of
+                    // advertised URI templates is pinned by
+                    // `control_plane.catalog.v0`'s `const`, which this does
+                    // not touch).
+                    ("status", ResourceDetail::Summary) => Ok(json!({
+                        "case_space_id": replay.case_space_id,
+                        "current_revision_id": replay.current_revision_id,
+                        "assurance": evaluation.assurance,
+                        "progress": evaluation.progress,
+                        "frontier_cell_ids": evaluation.frontier_cell_ids,
+                    })),
+                    ("status", ResourceDetail::Full) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "evaluation": evaluation,
                     })),
-                    "frontier" => Ok(json!({
+                    ("frontier", _) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "readiness": evaluation.readiness,
                     })),
-                    _ => Ok(json!({
+                    (_, ResourceDetail::Summary) => Ok(json!({
+                        "case_space_id": replay.case_space_id,
+                        "current_revision_id": replay.current_revision_id,
+                        "review_gap_ids": evaluation.review_gaps.iter()
+                            .map(|gap| &gap.id).collect::<Vec<_>>(),
+                        "reviewed_cell_ids": replay.case_space.case_cells.iter()
+                            .filter(|cell| cell.provenance.review_status != higher_graphen_core::ReviewStatus::Unreviewed)
+                            .map(|cell| &cell.id)
+                            .collect::<Vec<_>>(),
+                    })),
+                    (_, ResourceDetail::Full) => Ok(json!({
                         "case_space_id": replay.case_space_id,
                         "current_revision_id": replay.current_revision_id,
                         "review_gaps": evaluation.review_gaps,

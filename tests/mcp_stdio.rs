@@ -754,9 +754,28 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
             "resources/read",
             json!({"authorization":"token:e2e", "uri":format!("casegraphen://topologies/{topology_id}")}),
         ),
+        // Issue #168: `status` and `reviews` must default to a bounded
+        // summary and still make the complete evaluation reachable via
+        // `?detail=full`; an unrecognized `detail` value must refuse rather
+        // than silently falling back to one of the two.
+        request(
+            9,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/status?detail=full")}),
+        ),
+        request(
+            10,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/reviews?detail=full")}),
+        ),
+        request(
+            11,
+            "resources/read",
+            json!({"authorization":"token:e2e", "uri":format!("casegraphen://spaces/{case_space_id}/status?detail=bogus")}),
+        ),
     ];
     let responses = run_operational_host(&state, &store, &artifacts, &messages);
-    assert_eq!(responses.len(), 8);
+    assert_eq!(responses.len(), 11);
 
     // The four pure-echo resources read cleanly: no refusal, real ledger
     // content, and none of them ever surfaces a top-level claim key — the
@@ -765,6 +784,11 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
     assert_eq!(status["case_space_id"], case_space_id, "{status}");
     assert!(status.get("refusal").is_none(), "{status}");
     assert_pure_echo("status", &status);
+    // #168 default: bounded summary, not the whole evaluation.
+    assert!(status.get("evaluation").is_none(), "{status}");
+    assert!(status.get("assurance").is_some(), "{status}");
+    assert!(status.get("progress").is_some(), "{status}");
+    assert!(status.get("frontier_cell_ids").is_some(), "{status}");
 
     let frontier = resource_content(&responses[2]);
     assert_eq!(frontier["case_space_id"], case_space_id, "{frontier}");
@@ -775,6 +799,38 @@ fn resources_read_classifies_pure_echoes_and_claim_bearing_projections_and_rejec
     assert_eq!(reviews["case_space_id"], case_space_id, "{reviews}");
     assert!(reviews.get("refusal").is_none(), "{reviews}");
     assert_pure_echo("reviews", &reviews);
+    // #168: `reviews` measured larger than `status` and had the identical
+    // no-projection defect, so it gets the identical fix.
+    assert!(reviews.get("review_gaps").is_none(), "{reviews}");
+    assert!(reviews.get("reviewed_cells").is_none(), "{reviews}");
+    assert!(reviews.get("review_gap_ids").is_some(), "{reviews}");
+    assert!(reviews.get("reviewed_cell_ids").is_some(), "{reviews}");
+
+    // Every field the default summary dropped stays reachable at
+    // `?detail=full` — this is a default change, not a removal.
+    let status_full = resource_content(&responses[8]);
+    assert!(status_full.get("refusal").is_none(), "{status_full}");
+    assert_pure_echo("status?detail=full", &status_full);
+    assert!(status_full.get("evaluation").is_some(), "{status_full}");
+    assert_eq!(
+        status_full["evaluation"]["assurance"], status["assurance"],
+        "the full evaluation must agree with the summary it was derived from"
+    );
+
+    let reviews_full = resource_content(&responses[9]);
+    assert!(reviews_full.get("refusal").is_none(), "{reviews_full}");
+    assert_pure_echo("reviews?detail=full", &reviews_full);
+    assert!(reviews_full.get("review_gaps").is_some(), "{reviews_full}");
+    assert!(
+        reviews_full.get("reviewed_cells").is_some(),
+        "{reviews_full}"
+    );
+
+    let bad_detail = resource_content(&responses[10]);
+    assert_eq!(
+        bad_detail["refusal"]["code"], "invalid_resource_detail",
+        "{bad_detail}"
+    );
 
     let revision = resource_content(&responses[4]);
     assert_eq!(revision["revision_id"], revision_id, "{revision}");

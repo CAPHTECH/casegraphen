@@ -136,6 +136,18 @@ Configured resources are projections:
   the host;
 - none of these projections or notifications authorizes a mutation.
 
+`spaces/{id}/status` and `spaces/{id}/reviews` default to a bounded summary
+rather than the complete evaluation: `status` returns `case_space_id`,
+`current_revision_id`, `assurance`, `progress`, and `frontier_cell_ids`;
+`reviews` returns `case_space_id`, `current_revision_id`, `review_gap_ids`,
+and `reviewed_cell_ids`. Append `?detail=full` to either URI to get today's
+complete embedding back (`status`'s full `evaluation`, `reviews`'s full
+`review_gaps` and `reviewed_cells`) — every field stays reachable, only the
+default changed. An unrecognized `detail` value refuses with
+`invalid_resource_detail` rather than silently choosing one. `frontier` and
+`revisions/{revision}` are unaffected: `frontier` already returns only
+`readiness`, and `revisions/{revision}` is already an explicit drill-down.
+
 The operational host binds the workflows in
 [`../product-surface.v0.json`](../product-surface.v0.json): topology
 proposal/lint and compilation, content-addressed runtime JSONL attachment and
