@@ -392,14 +392,14 @@ Unaccepted evidence findings:
   (none)
 
 Review gaps:
-  - unreviewed_projection_loss: 1 gap(s) — Projection loss must stay visible to reviewers and close checks.
+  - [unreviewed_projection_loss]: 1 gap(s) — Projection loss must stay visible to reviewers and close checks.
     targets: projection:native-human-review
 
 Completion candidates:
   (none)
 ```
 
-23 lines, 434 bytes. `--format json` on the identical command against the same
+23 lines, 436 bytes. `--format json` on the identical command against the same
 store is 5,272 bytes. Report what it says, not what you intended: a case space
 whose blockers you have not read is a case space you have not advanced.
 

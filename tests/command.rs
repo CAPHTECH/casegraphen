@@ -8093,7 +8093,7 @@ fn space_reason_text_groups_unreviewed_morphism_gaps_by_count_not_by_line() {
     // type name, and every target id is still present in that group's
     // `targets` line — nothing hidden, nothing filtered.
     assert!(text.contains(&format!(
-        "unreviewed_morphism: {} gap(s)",
+        "[unreviewed_morphism]: {} gap(s)",
         morphism_gaps.len()
     )));
     for gap in &morphism_gaps {
