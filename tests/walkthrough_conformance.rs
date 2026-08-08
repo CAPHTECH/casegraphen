@@ -113,3 +113,92 @@ fn release_decision_walkthrough_binding_snippet_matches_its_schema() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// The line `tag-dry-run.sh` prints on its shipped, unmodified run — §10's
+/// failure transcript.
+const TAG_DRY_RUN_FAILURE_ANCHOR: &str = "tag-dry-run FAILED: declared version is";
+/// The line it prints once edited the way §11 documents.
+const TAG_DRY_RUN_SUCCESS_ANCHOR: &str = "tag-dry-run ok: declared version is";
+
+/// #138: §10 and §11 quote `tag-dry-run.sh`'s stdout verbatim, both as
+/// shipped and after the doc's own documented edit. The script used to read
+/// this repository's own real `Cargo.toml`, so those quoted lines rotted
+/// every time a release moved the version — three numbers were stale from
+/// 0.9.0 onward. `tag-dry-run.sh` now pins its `actual` value instead of
+/// reading a moving file (see the script's own comment), which makes the
+/// transcript reproducible forever; this test is what would have caught the
+/// original rot and is what keeps it from coming back; it runs the real,
+/// shipped script — not a description of it — and byte-compares its stdout
+/// against what the doc quotes, for both the as-shipped failure (§10) and
+/// the doc's own documented edit (§11), the same model
+/// `tests/entry_ladder_conformance.rs` uses for its guide.
+#[test]
+fn release_decision_walkthrough_tag_dry_run_transcript_matches_the_real_script() {
+    let doc_path = root().join("docs/guides/release-decision-walkthrough.md");
+    let markdown = fs::read_to_string(&doc_path).expect("read walkthrough");
+    let script_path = root().join("docs/guides/release-decision/tag-dry-run.sh");
+
+    // Section 10: the script exactly as it ships.
+    let failing = Command::new("sh")
+        .arg(&script_path)
+        .output()
+        .expect("run tag-dry-run.sh");
+    assert_eq!(
+        failing.status.code(),
+        Some(1),
+        "tag-dry-run.sh must still exit 1 as shipped — §10 demonstrates a failing gate"
+    );
+    let failing_stdout = String::from_utf8(failing.stdout).expect("utf8 stdout");
+    let failing_line = failing_stdout.trim_end();
+    assert!(
+        failing_line.starts_with(TAG_DRY_RUN_FAILURE_ANCHOR),
+        "tag-dry-run.sh's stdout no longer starts with {TAG_DRY_RUN_FAILURE_ANCHOR:?}: \
+         {failing_line:?}"
+    );
+    assert!(
+        markdown.contains(failing_line),
+        "docs/guides/release-decision-walkthrough.md's §10 no longer quotes tag-dry-run.sh's \
+         real stdout ({failing_line:?}) verbatim — this is the #138 failure mode"
+    );
+
+    // Section 11: apply the doc's own documented edit (expected -> actual)
+    // to a scratch copy and confirm it now passes on its own, exactly as
+    // §11 narrates.
+    let script = fs::read_to_string(&script_path).expect("read tag-dry-run.sh");
+    let edited = script.replacen("expected=0.9.0", "expected=0.8.0", 1);
+    assert_ne!(
+        edited, script,
+        "tag-dry-run.sh no longer pins expected=0.9.0 — update this test's substitution to \
+         match §11's documented edit"
+    );
+    let edited_path = std::env::temp_dir().join(format!(
+        "casegraphen-walkthrough-tag-dry-run-edited-{}.sh",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&edited_path);
+    fs::write(&edited_path, &edited).expect("write edited script");
+
+    let passing = Command::new("sh")
+        .arg(&edited_path)
+        .output()
+        .expect("run edited tag-dry-run.sh");
+    let _ = fs::remove_file(&edited_path);
+    assert!(
+        passing.status.success(),
+        "§11's documented edit no longer makes tag-dry-run.sh pass on its own: {}",
+        String::from_utf8_lossy(&passing.stderr)
+    );
+    let passing_stdout = String::from_utf8(passing.stdout).expect("utf8 stdout");
+    let passing_line = passing_stdout.trim_end();
+    assert!(
+        passing_line.starts_with(TAG_DRY_RUN_SUCCESS_ANCHOR),
+        "edited tag-dry-run.sh's stdout no longer starts with {TAG_DRY_RUN_SUCCESS_ANCHOR:?}: \
+         {passing_line:?}"
+    );
+    assert!(
+        markdown.contains(passing_line),
+        "docs/guides/release-decision-walkthrough.md's §11 no longer quotes the edited \
+         tag-dry-run.sh's real stdout ({passing_line:?}) verbatim — this is the #138 failure \
+         mode"
+    );
+}
